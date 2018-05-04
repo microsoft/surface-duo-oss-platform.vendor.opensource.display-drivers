@@ -583,7 +583,6 @@ struct msm_drm_private {
 	struct msm_kms *kms;
 
 	struct sde_power_handle phandle;
-	struct sde_power_client *pclient;
 
 	/* subordinate devices, if present: */
 	struct platform_device *gpu_pdev;

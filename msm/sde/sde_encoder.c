@@ -484,36 +484,6 @@ int sde_encoder_in_cont_splash(struct drm_encoder *drm_enc)
 		sde_enc->cur_master->cont_splash_enabled;
 }
 
-static inline int _sde_encoder_power_enable(struct sde_encoder_virt *sde_enc,
-								bool enable)
-{
-	struct drm_encoder *drm_enc;
-	struct msm_drm_private *priv;
-	struct sde_kms *sde_kms;
-
-	if (!sde_enc) {
-		SDE_ERROR("invalid sde enc\n");
-		return -EINVAL;
-	}
-
-	drm_enc = &sde_enc->base;
-	if (!drm_enc->dev || !drm_enc->dev->dev_private) {
-		SDE_ERROR("drm device invalid\n");
-		return -EINVAL;
-	}
-
-	priv = drm_enc->dev->dev_private;
-	if (!priv->kms) {
-		SDE_ERROR("invalid kms\n");
-		return -EINVAL;
-	}
-
-	sde_kms = to_sde_kms(priv->kms);
-
-	return sde_power_resource_enable(&priv->phandle, sde_kms->core_client,
-									enable);
-}
-
 void sde_encoder_helper_report_irq_timeout(struct sde_encoder_phys *phys_enc,
 		enum sde_intr_idx intr_idx)
 {
@@ -2457,9 +2427,8 @@ static int _sde_encoder_resource_control_helper(struct drm_encoder *drm_enc,
 
 	if (enable) {
 		/* enable SDE core clks */
-		rc = sde_power_resource_enable(&priv->phandle,
-				sde_kms->core_client, true);
-		if (rc) {
+		rc = pm_runtime_get_sync(drm_enc->dev->dev);
+		if (rc < 0) {
 			SDE_ERROR("failed to enable power resource %d\n", rc);
 			SDE_EVT32(rc, SDE_EVTLOG_ERROR);
 			return rc;
@@ -2471,8 +2440,7 @@ static int _sde_encoder_resource_control_helper(struct drm_encoder *drm_enc,
 				true);
 		if (rc) {
 			SDE_ERROR("failed to enable clk control %d\n", rc);
-			sde_power_resource_enable(&priv->phandle,
-					sde_kms->core_client, false);
+			pm_runtime_put_sync(drm_enc->dev->dev);
 			return rc;
 		}
 
@@ -2493,8 +2461,7 @@ static int _sde_encoder_resource_control_helper(struct drm_encoder *drm_enc,
 		sde_connector_clk_ctrl(sde_enc->cur_master->connector, false);
 
 		/* disable SDE core clks */
-		sde_power_resource_enable(&priv->phandle,
-				sde_kms->core_client, false);
+		pm_runtime_put_sync(drm_enc->dev->dev);
 	}
 
 	return 0;
@@ -4282,7 +4249,6 @@ static void _sde_encoder_kickoff_phys(struct sde_encoder_virt *sde_enc)
 			sde_kms = to_sde_kms(priv->kms);
 			if (sde_kms != NULL) {
 				sde_power_scale_reg_bus(&priv->phandle,
-						sde_kms->core_client,
 						VOTE_INDEX_LOW,
 						false);
 			}
@@ -4676,14 +4642,16 @@ static void sde_encoder_vsync_event_work_handler(struct kthread_work *work)
 	bool autorefresh_enabled = false;
 	int rc = 0;
 	ktime_t wakeup_time;
+	struct drm_encoder *drm_enc;
 
 	if (!sde_enc) {
 		SDE_ERROR("invalid sde encoder\n");
 		return;
 	}
 
-	rc = _sde_encoder_power_enable(sde_enc, true);
-	if (rc) {
+	drm_enc = &sde_enc->base;
+	rc = pm_runtime_get_sync(drm_enc->dev->dev);
+	if (rc < 0) {
 		SDE_ERROR_ENC(sde_enc, "sde enc power enabled failed:%d\n", rc);
 		return;
 	}
@@ -4707,7 +4675,7 @@ static void sde_encoder_vsync_event_work_handler(struct kthread_work *work)
 			nsecs_to_jiffies(ktime_to_ns(wakeup_time)));
 
 exit:
-	_sde_encoder_power_enable(sde_enc, false);
+	pm_runtime_put_sync(drm_enc->dev->dev);
 }
 
 int sde_encoder_poll_line_counts(struct drm_encoder *drm_enc)
@@ -5222,6 +5190,7 @@ static ssize_t _sde_encoder_misr_setup(struct file *file,
 	char buf[MISR_BUFF_SIZE + 1];
 	size_t buff_copy;
 	u32 frame_count, enable;
+	struct drm_encoder *drm_enc;
 
 	if (!file || !file->private_data)
 		return -EINVAL;
@@ -5237,8 +5206,9 @@ static ssize_t _sde_encoder_misr_setup(struct file *file,
 	if (sscanf(buf, "%u %u", &enable, &frame_count) != 2)
 		return -EINVAL;
 
-	rc = _sde_encoder_power_enable(sde_enc, true);
-	if (rc)
+	drm_enc = &sde_enc->base;
+	rc = pm_runtime_get_sync(drm_enc->dev->dev);
+	if (rc < 0)
 		return rc;
 
 	mutex_lock(&sde_enc->enc_lock);
@@ -5253,8 +5223,8 @@ static ssize_t _sde_encoder_misr_setup(struct file *file,
 		phys->ops.setup_misr(phys, enable, frame_count);
 	}
 	mutex_unlock(&sde_enc->enc_lock);
-	_sde_encoder_power_enable(sde_enc, false);
 
+	pm_runtime_put_sync(drm_enc->dev->dev);
 	return count;
 }
 
@@ -5262,6 +5232,7 @@ static ssize_t _sde_encoder_misr_read(struct file *file,
 		char __user *user_buff, size_t count, loff_t *ppos)
 {
 	struct sde_encoder_virt *sde_enc;
+	struct drm_encoder *drm_enc;
 	int i = 0, len = 0;
 	char buf[MISR_BUFF_SIZE + 1] = {'\0'};
 	int rc;
@@ -5274,8 +5245,10 @@ static ssize_t _sde_encoder_misr_read(struct file *file,
 
 	sde_enc = file->private_data;
 
-	rc = _sde_encoder_power_enable(sde_enc, true);
-	if (rc)
+	drm_enc = &sde_enc->base;
+
+	rc = pm_runtime_get_sync(drm_enc->dev->dev);
+	if (rc < 0)
 		return rc;
 
 	mutex_lock(&sde_enc->enc_lock);
@@ -5317,7 +5290,7 @@ buff_check:
 
 end:
 	mutex_unlock(&sde_enc->enc_lock);
-	_sde_encoder_power_enable(sde_enc, false);
+	pm_runtime_put_sync(drm_enc->dev->dev);
 	return len;
 }
 

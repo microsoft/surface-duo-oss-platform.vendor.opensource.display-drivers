@@ -112,35 +112,6 @@ static inline struct sde_kms *_sde_crtc_get_kms(struct drm_crtc *crtc)
 	return to_sde_kms(priv->kms);
 }
 
-static inline int _sde_crtc_power_enable(struct sde_crtc *sde_crtc, bool enable)
-{
-	struct drm_crtc *crtc;
-	struct msm_drm_private *priv;
-	struct sde_kms *sde_kms;
-
-	if (!sde_crtc) {
-		SDE_ERROR("invalid sde crtc\n");
-		return -EINVAL;
-	}
-
-	crtc = &sde_crtc->base;
-	if (!crtc->dev || !crtc->dev->dev_private) {
-		SDE_ERROR("invalid drm device\n");
-		return -EINVAL;
-	}
-
-	priv = crtc->dev->dev_private;
-	if (!priv->kms) {
-		SDE_ERROR("invalid kms\n");
-		return -EINVAL;
-	}
-
-	sde_kms = to_sde_kms(priv->kms);
-
-	return sde_power_resource_enable(&priv->phandle, sde_kms->core_client,
-									enable);
-}
-
 /**
  * sde_crtc_calc_fps() - Calculates fps value.
  * @sde_crtc   : CRTC structure
@@ -4492,9 +4463,9 @@ static int _sde_crtc_vblank_enable_no_lock(
 
 		/* drop lock since power crtc cb may try to re-acquire lock */
 		mutex_unlock(&sde_crtc->crtc_lock);
-		ret = _sde_crtc_power_enable(sde_crtc, true);
+		ret = pm_runtime_get_sync(crtc->dev->dev);
 		mutex_lock(&sde_crtc->crtc_lock);
-		if (ret)
+		if (ret < 0)
 			return ret;
 
 		list_for_each_entry(enc, &dev->mode_config.encoder_list, head) {
@@ -4524,7 +4495,7 @@ static int _sde_crtc_vblank_enable_no_lock(
 
 		/* drop lock since power crtc cb may try to re-acquire lock */
 		mutex_unlock(&sde_crtc->crtc_lock);
-		_sde_crtc_power_enable(sde_crtc, false);
+		pm_runtime_put_sync(crtc->dev->dev);
 		mutex_lock(&sde_crtc->crtc_lock);
 	}
 
@@ -6490,8 +6461,8 @@ static ssize_t _sde_crtc_misr_setup(struct file *file,
 	if (sscanf(buf, "%u %u", &enable, &frame_count) != 2)
 		return -EINVAL;
 
-	rc = _sde_crtc_power_enable(sde_crtc, true);
-	if (rc)
+	rc = pm_runtime_get_sync(crtc->dev->dev);
+	if (rc < 0)
 		return rc;
 
 	mutex_lock(&sde_crtc->crtc_lock);
@@ -6504,7 +6475,7 @@ static ssize_t _sde_crtc_misr_setup(struct file *file,
 
 end:
 	mutex_unlock(&sde_crtc->crtc_lock);
-	_sde_crtc_power_enable(sde_crtc, false);
+	pm_runtime_put_sync(crtc->dev->dev);
 
 	return count;
 }
@@ -6533,8 +6504,8 @@ static ssize_t _sde_crtc_misr_read(struct file *file,
 	if (!sde_kms)
 		return -EINVAL;
 
-	rc = _sde_crtc_power_enable(sde_crtc, true);
-	if (rc)
+	rc = pm_runtime_get_sync(crtc->dev->dev);
+	if (rc < 0)
 		return rc;
 
 	mutex_lock(&sde_crtc->crtc_lock);
@@ -6578,7 +6549,7 @@ buff_check:
 
 end:
 	mutex_unlock(&sde_crtc->crtc_lock);
-	_sde_crtc_power_enable(sde_crtc, false);
+	pm_runtime_put_sync(crtc->dev->dev);
 	return len;
 }
 
@@ -7068,7 +7039,6 @@ static int _sde_crtc_event_enable(struct sde_kms *kms,
 {
 	struct sde_crtc *crtc = NULL;
 	struct sde_crtc_irq_info *node;
-	struct msm_drm_private *priv;
 	unsigned long flags;
 	bool found = false;
 	int ret, i = 0;
@@ -7109,13 +7079,10 @@ static int _sde_crtc_event_enable(struct sde_kms *kms,
 		return -EINVAL;
 	}
 
-	priv = kms->dev->dev_private;
 	ret = 0;
 	if (crtc_drm->enabled) {
-		ret = sde_power_resource_enable(&priv->phandle,
-				kms->core_client, true);
-		if (ret) {
-			SDE_ERROR("failed to enable power resource %d\n", ret);
+		ret = pm_runtime_get_sync(crtc_drm->dev->dev);
+		if (ret < 0) {
 			SDE_EVT32(ret, SDE_EVTLOG_ERROR);
 			kfree(node);
 			return ret;
@@ -7133,8 +7100,7 @@ static int _sde_crtc_event_enable(struct sde_kms *kms,
 		}
 		mutex_unlock(&crtc->crtc_lock);
 
-		sde_power_resource_enable(&priv->phandle, kms->core_client,
-				false);
+		pm_runtime_put_sync(crtc_drm->dev->dev);
 	}
 
 	if (add_event)
@@ -7156,7 +7122,6 @@ static int _sde_crtc_event_disable(struct sde_kms *kms,
 {
 	struct sde_crtc *crtc = NULL;
 	struct sde_crtc_irq_info *node = NULL;
-	struct msm_drm_private *priv;
 	unsigned long flags;
 	bool found = false;
 	int ret;
@@ -7184,9 +7149,8 @@ static int _sde_crtc_event_disable(struct sde_kms *kms,
 		kfree(node);
 		return 0;
 	}
-	priv = kms->dev->dev_private;
-	ret = sde_power_resource_enable(&priv->phandle, kms->core_client, true);
-	if (ret) {
+	ret = pm_runtime_get_sync(crtc_drm->dev->dev);
+	if (ret < 0) {
 		SDE_ERROR("failed to enable power resource %d\n", ret);
 		SDE_EVT32(ret, SDE_EVTLOG_ERROR);
 		kfree(node);
@@ -7195,7 +7159,7 @@ static int _sde_crtc_event_disable(struct sde_kms *kms,
 
 	ret = node->func(crtc_drm, false, &node->irq);
 	kfree(node);
-	sde_power_resource_enable(&priv->phandle, kms->core_client, false);
+	pm_runtime_put_sync(crtc_drm->dev->dev);
 	return ret;
 }
 

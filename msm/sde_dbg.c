@@ -13,6 +13,8 @@
 #include <linux/dma-buf.h>
 #include <linux/slab.h>
 #include <linux/list_sort.h>
+#include <linux/pm.h>
+#include <linux/pm_runtime.h>
 
 #include "sde_dbg.h"
 #include "sde/sde_hw_catalog.h"
@@ -196,7 +198,6 @@ struct sde_dbg_regbuf {
  * @reg_base_list: list of register dumping regions
  * @dev: device pointer
  * @mutex: mutex to serialize access to serialze dumps, debugfs access
- * @power_ctrl: callback structure for enabling power for reading hw registers
  * @req_dump_blks: list of blocks requested for dumping
  * @panic_on_err: whether to kernel panic after triggering dump via debugfs
  * @dump_work: work struct for deferring register dump work to separate thread
@@ -216,7 +217,6 @@ static struct sde_dbg_base {
 	struct list_head reg_base_list;
 	struct device *dev;
 	struct mutex mutex;
-	struct sde_dbg_power_ctrl power_ctrl;
 
 	struct sde_dbg_reg_base *req_dump_blks[SDE_DBG_BASE_MAX];
 
@@ -3369,21 +3369,6 @@ static u32 dsi_dbg_bus_sdm845[] = {
 };
 
 /**
- * _sde_dbg_enable_power - use callback to turn power on for hw register access
- * @enable: whether to turn power on or off
- * Return: zero if success; error code otherwise
- */
-static inline int _sde_dbg_enable_power(int enable)
-{
-	if (!sde_dbg_base.power_ctrl.enable_fn)
-		return -EINVAL;
-	return sde_dbg_base.power_ctrl.enable_fn(
-			sde_dbg_base.power_ctrl.handle,
-			sde_dbg_base.power_ctrl.client,
-			enable);
-}
-
-/**
  * _sde_power_check - check if power needs to enabled
  * @dump_mode: to check if power need to be enabled
  * Return: true if success; false otherwise
@@ -3454,8 +3439,8 @@ static void _sde_dump_reg(const char *dump_name, u32 reg_dump_flag,
 	}
 
 	if (_sde_power_check(sde_dbg_base.dump_mode)) {
-		rc = _sde_dbg_enable_power(true);
-		if (rc) {
+		rc = pm_runtime_get_sync(sde_dbg_base.dev);
+		if (rc < 0) {
 			pr_err("failed to enable power %d\n", rc);
 			return;
 		}
@@ -3486,7 +3471,7 @@ static void _sde_dump_reg(const char *dump_name, u32 reg_dump_flag,
 	}
 
 	if (_sde_power_check(sde_dbg_base.dump_mode))
-		_sde_dbg_enable_power(false);
+		pm_runtime_put_sync(sde_dbg_base.dev);
 }
 
 /**
@@ -3734,8 +3719,8 @@ static void _sde_dbg_dump_sde_dbg_bus(struct sde_dbg_sde_debug_bus *bus)
 	}
 
 	if (_sde_power_check(sde_dbg_base.dump_mode)) {
-		rc = _sde_dbg_enable_power(true);
-		if (rc) {
+		rc = pm_runtime_get_sync(sde_dbg_base.dev);
+		if (rc < 0) {
 			pr_err("failed to enable power %d\n", rc);
 			return;
 		}
@@ -3782,7 +3767,7 @@ static void _sde_dbg_dump_sde_dbg_bus(struct sde_dbg_sde_debug_bus *bus)
 	}
 
 	if (_sde_power_check(sde_dbg_base.dump_mode))
-		_sde_dbg_enable_power(false);
+		pm_runtime_put_sync(sde_dbg_base.dev);
 
 	dev_info(sde_dbg_base.dev, "======== end %s dump =========\n",
 			bus->cmn.name);
@@ -3895,10 +3880,9 @@ static void _sde_dbg_dump_vbif_dbg_bus(struct sde_dbg_vbif_debug_bus *bus)
 		}
 	}
 
-
 	if (_sde_power_check(sde_dbg_base.dump_mode)) {
-		rc = _sde_dbg_enable_power(true);
-		if (rc) {
+		rc = pm_runtime_get_sync(sde_dbg_base.dev);
+		if (rc < 0) {
 			pr_err("failed to enable power %d\n", rc);
 			return;
 		}
@@ -3954,7 +3938,7 @@ static void _sde_dbg_dump_vbif_dbg_bus(struct sde_dbg_vbif_debug_bus *bus)
 	}
 
 	if (_sde_power_check(sde_dbg_base.dump_mode))
-		_sde_dbg_enable_power(false);
+		pm_runtime_put_sync(sde_dbg_base.dev);
 
 	dev_info(sde_dbg_base.dev, "======== end %s dump =========\n",
 			bus->cmn.name);
@@ -4912,8 +4896,8 @@ static ssize_t sde_dbg_reg_base_reg_write(struct file *file,
 		return -EFAULT;
 	}
 
-	rc = _sde_dbg_enable_power(true);
-	if (rc) {
+	rc = pm_runtime_get_sync(sde_dbg_base.dev);
+	if (rc < 0) {
 		mutex_unlock(&sde_dbg_base.mutex);
 		pr_err("failed to enable power %d\n", rc);
 		return rc;
@@ -4921,7 +4905,7 @@ static ssize_t sde_dbg_reg_base_reg_write(struct file *file,
 
 	writel_relaxed(data, dbg->base + off);
 
-	_sde_dbg_enable_power(false);
+	pm_runtime_put_sync(sde_dbg_base.dev);
 
 	mutex_unlock(&sde_dbg_base.mutex);
 
@@ -4979,8 +4963,8 @@ static ssize_t sde_dbg_reg_base_reg_read(struct file *file,
 		ptr = dbg->base + dbg->off;
 		tot = 0;
 
-		rc = _sde_dbg_enable_power(true);
-		if (rc) {
+		rc = pm_runtime_get_sync(sde_dbg_base.dev);
+		if (rc < 0) {
 			mutex_unlock(&sde_dbg_base.mutex);
 			pr_err("failed to enable power %d\n", rc);
 			return rc;
@@ -5002,7 +4986,7 @@ static ssize_t sde_dbg_reg_base_reg_read(struct file *file,
 				break;
 		}
 
-		_sde_dbg_enable_power(false);
+		pm_runtime_put_sync(sde_dbg_base.dev);
 
 		dbg->buf_len = tot;
 	}
@@ -5153,9 +5137,9 @@ void sde_dbg_init_dbg_buses(u32 hwversion)
 	}
 }
 
-int sde_dbg_init(struct device *dev, struct sde_dbg_power_ctrl *power_ctrl)
+int sde_dbg_init(struct device *dev)
 {
-	if (!dev || !power_ctrl) {
+	if (!dev) {
 		pr_err("invalid params\n");
 		return -EINVAL;
 	}
@@ -5163,7 +5147,6 @@ int sde_dbg_init(struct device *dev, struct sde_dbg_power_ctrl *power_ctrl)
 	mutex_init(&sde_dbg_base.mutex);
 	INIT_LIST_HEAD(&sde_dbg_base.reg_base_list);
 	sde_dbg_base.dev = dev;
-	sde_dbg_base.power_ctrl = *power_ctrl;
 
 	sde_dbg_base.evtlog = sde_evtlog_init();
 	if (IS_ERR_OR_NULL(sde_dbg_base.evtlog))

@@ -6,6 +6,8 @@
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
 #include <linux/clk.h>
+#include <linux/pm_runtime.h>
+#include <drm/drmP.h>
 #include "dp_power.h"
 #include "dp_catalog.h"
 
@@ -21,8 +23,6 @@ struct dp_power_private {
 	struct clk *bond_pixel_parent;
 
 	struct dp_power dp_power;
-	struct sde_power_client *dp_core_client;
-	struct sde_power_handle *phandle;
 
 	bool core_clks_on;
 	bool link_clks_on;
@@ -462,14 +462,13 @@ static int dp_power_config_gpios(struct dp_power_private *power, bool flip,
 }
 
 static int dp_power_client_init(struct dp_power *dp_power,
-		struct sde_power_handle *phandle)
+	struct sde_power_handle *phandle, struct drm_device *drm_dev)
 {
 	int rc = 0;
 	struct dp_power_private *power;
-	char dp_client_name[DP_CLIENT_NAME_SIZE];
 
-	if (!dp_power) {
-		pr_err("invalid power data\n");
+	if (!drm_dev) {
+		pr_err("invalid drm_dev\n");
 		return -EINVAL;
 	}
 
@@ -486,20 +485,11 @@ static int dp_power_client_init(struct dp_power *dp_power,
 		pr_err("failed to init clocks\n");
 		goto error_clk;
 	}
+	dp_power->phandle = phandle;
+	dp_power->drm_dev = drm_dev;
 
-	power->phandle = phandle;
-	snprintf(dp_client_name, DP_CLIENT_NAME_SIZE, "dp_core_client");
-	power->dp_core_client = sde_power_client_create(phandle,
-			dp_client_name);
-	if (IS_ERR_OR_NULL(power->dp_core_client)) {
-		pr_err("[%s] client creation failed for DP", dp_client_name);
-		rc = -EINVAL;
-		goto error_client;
-	}
 	return 0;
 
-error_client:
-	dp_power_clk_init(power, false);
 error_clk:
 	dp_power_regulator_deinit(power);
 error_power:
@@ -517,7 +507,6 @@ static void dp_power_client_deinit(struct dp_power *dp_power)
 
 	power = container_of(dp_power, struct dp_power_private, dp_power);
 
-	sde_power_client_destroy(power->phandle, power->dp_core_client);
 	dp_power_clk_init(power, false);
 	dp_power_regulator_deinit(power);
 }
@@ -586,9 +575,8 @@ static int dp_power_init(struct dp_power *dp_power, bool flip)
 		goto err_gpio;
 	}
 
-	rc = sde_power_resource_enable(power->phandle,
-		power->dp_core_client, true);
-	if (rc) {
+	rc = pm_runtime_get_sync(dp_power->drm_dev->dev);
+	if (rc < 0) {
 		pr_err("Power resource enable failed\n");
 		goto err_sde_power;
 	}
@@ -602,7 +590,7 @@ static int dp_power_init(struct dp_power *dp_power, bool flip)
 	return 0;
 
 err_clk:
-	sde_power_resource_enable(power->phandle, power->dp_core_client, false);
+	pm_runtime_put_sync(dp_power->drm_dev->dev);
 err_sde_power:
 	dp_power_config_gpios(power, flip, false);
 err_gpio:
@@ -631,12 +619,8 @@ static int dp_power_deinit(struct dp_power *dp_power)
 	if (power->link_clks_on)
 		dp_power_clk_enable(dp_power, DP_LINK_PM, false);
 
-	rc = sde_power_resource_enable(power->phandle,
-			power->dp_core_client, false);
-	if (rc) {
-		pr_err("Power resource disable failed, rc=%d\n", rc);
-		goto exit;
-	}
+	pm_runtime_put_sync(dp_power->drm_dev->dev);
+
 	dp_power_config_gpios(power, false, false);
 	dp_power_pinctrl_set(power, false);
 	dp_power_regulator_ctrl(power, false);

@@ -46,7 +46,6 @@ struct sde_core_perf_tune {
  * @debugfs_root: top level debug folder
  * @catalog: Pointer to catalog configuration
  * @phandle: Pointer to power handler
- * @pclient: Pointer to power client
  * @clk_name: core clock name
  * @core_clk: Pointer to core clock structure
  * @core_clk_rate: current core clock rate
@@ -65,7 +64,6 @@ struct sde_core_perf {
 	struct dentry *debugfs_root;
 	struct sde_mdss_cfg *catalog;
 	struct sde_power_handle *phandle;
-	struct sde_power_client *pclient;
 	char *clk_name;
 	struct clk *core_clk;
 	u64 core_clk_rate;
@@ -116,14 +114,12 @@ void sde_core_perf_destroy(struct sde_core_perf *perf);
  * @dev: Pointer to drm device
  * @catalog: Pointer to catalog
  * @phandle: Pointer to power handle
- * @pclient: Pointer to power client
  * @clk_name: core clock name
  */
 int sde_core_perf_init(struct sde_core_perf *perf,
 		struct drm_device *dev,
 		struct sde_mdss_cfg *catalog,
 		struct sde_power_handle *phandle,
-		struct sde_power_client *pclient,
 		char *clk_name);
 
 /**

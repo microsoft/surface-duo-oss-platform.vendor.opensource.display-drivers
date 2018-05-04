@@ -20,7 +20,8 @@
  */
 struct dp_power {
 	bool sim_mode;
-
+	struct drm_device *drm_dev;
+	struct sde_power_handle *phandle;
 	int (*init)(struct dp_power *power, bool flip);
 	int (*deinit)(struct dp_power *power);
 	int (*clk_enable)(struct dp_power *power, enum dp_pm_type pm_type,
@@ -28,7 +29,8 @@ struct dp_power {
 	int (*set_pixel_clk_parent)(struct dp_power *power, u32 stream_id,
 				enum dp_phy_bond_mode bond_mode);
 	int (*power_client_init)(struct dp_power *power,
-				struct sde_power_handle *phandle);
+		struct sde_power_handle *phandle,
+		struct drm_device *drm_dev);
 	void (*power_client_deinit)(struct dp_power *power);
 };
 

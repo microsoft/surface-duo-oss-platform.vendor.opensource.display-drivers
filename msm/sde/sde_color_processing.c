@@ -1682,7 +1682,6 @@ static void sde_cp_notify_ad_event(struct drm_crtc *crtc_drm, void *arg)
 	struct sde_crtc *crtc;
 	struct drm_event event;
 	int i;
-	struct msm_drm_private *priv;
 	struct sde_kms *kms;
 	int ret;
 
@@ -1707,9 +1706,8 @@ static void sde_cp_notify_ad_event(struct drm_crtc *crtc_drm, void *arg)
 		return;
 	}
 
-	priv = kms->dev->dev_private;
-	ret = sde_power_resource_enable(&priv->phandle, kms->core_client, true);
-	if (ret) {
+	ret = pm_runtime_get_sync(kms->dev->dev);
+	if (ret < 0) {
 		SDE_ERROR("failed to enable power resource %d\n", ret);
 		SDE_EVT32(ret, SDE_EVTLOG_ERROR);
 		return;
@@ -1718,12 +1716,13 @@ static void sde_cp_notify_ad_event(struct drm_crtc *crtc_drm, void *arg)
 	hw_dspp->ops.ad_read_intr_resp(hw_dspp, AD4_IN_OUT_BACKLIGHT,
 			&input_bl, &output_bl);
 
-	sde_power_resource_enable(&priv->phandle, kms->core_client,
-					false);
+	pm_runtime_put_sync(kms->dev->dev);
+
 	if (!input_bl || input_bl < output_bl)
 		return;
 
 	scale = (output_bl * MAX_AD_BL_SCALE_LEVEL) / input_bl;
+
 	event.length = sizeof(u32);
 	event.type = DRM_EVENT_AD_BACKLIGHT;
 	msm_mode_object_event_notify(&crtc_drm->base, crtc_drm->dev,
@@ -1941,7 +1940,6 @@ static void sde_cp_notify_hist_event(struct drm_crtc *crtc_drm, void *arg)
 	struct sde_crtc *crtc;
 	struct drm_event event;
 	struct drm_msm_hist *hist_data;
-	struct msm_drm_private *priv;
 	struct sde_kms *kms;
 	int ret;
 	u32 i;
@@ -1966,9 +1964,8 @@ static void sde_cp_notify_hist_event(struct drm_crtc *crtc_drm, void *arg)
 		return;
 	}
 
-	priv = kms->dev->dev_private;
-	ret = sde_power_resource_enable(&priv->phandle, kms->core_client, true);
-	if (ret) {
+	ret = pm_runtime_get_sync(kms->dev->dev);
+	if (ret < 0) {
 		SDE_ERROR("failed to enable power resource %d\n", ret);
 		SDE_EVT32(ret, SDE_EVTLOG_ERROR);
 		return;
@@ -1982,15 +1979,14 @@ static void sde_cp_notify_hist_event(struct drm_crtc *crtc_drm, void *arg)
 		if (!hw_dspp || !hw_dspp->ops.read_histogram) {
 			DRM_ERROR("invalid dspp %pK or read_histogram func\n",
 				hw_dspp);
-			sde_power_resource_enable(&priv->phandle,
-						kms->core_client, false);
+			pm_runtime_put_sync(kms->dev->dev);
 			return;
 		}
 		hw_dspp->ops.read_histogram(hw_dspp, hist_data);
 	}
 
-	sde_power_resource_enable(&priv->phandle, kms->core_client,
-					false);
+	pm_runtime_put_sync(kms->dev->dev);
+
 	/* send histogram event with blob id */
 	event.length = sizeof(u32);
 	event.type = DRM_EVENT_HISTOGRAM;

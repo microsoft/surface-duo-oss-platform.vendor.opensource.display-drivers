@@ -154,7 +154,6 @@ struct sde_rsc_bw_config {
  * struct sde_rsc_priv: sde resource state coordinator(rsc) private handle
  * @version:		rsc sequence version
  * @phandle:		module power handle for clocks
- * @pclient:		module power client of phandle
  * @fs:			"MDSS GDSC" handle
  * @sw_fs_enabled:	track "MDSS GDSC" sw vote during probe
  * @need_hwinit:	rsc hw init is required for the next update
@@ -193,11 +192,11 @@ struct sde_rsc_bw_config {
  * rsc_vsync_wait:   Refcount to indicate if we have to wait for the vsync.
  * rsc_vsync_waitq:   Queue to wait for the vsync.
  * bw_config:		check sde_rsc_bw_config structure description.
+ * dev:			rsc device node
  */
 struct sde_rsc_priv {
 	u32 version;
 	struct sde_power_handle phandle;
-	struct sde_power_client *pclient;
 	struct regulator *fs;
 	bool sw_fs_enabled;
 	bool need_hwinit;
@@ -234,6 +233,7 @@ struct sde_rsc_priv {
 	wait_queue_head_t rsc_vsync_waitq;
 
 	struct sde_rsc_bw_config bw_config;
+	struct device *dev;
 };
 
 /**
