@@ -10,7 +10,6 @@
 
 struct dsi_core_clks {
 	struct dsi_core_clk_info clks;
-	u32 bus_handle;
 };
 
 struct dsi_link_clks {
@@ -267,8 +266,6 @@ int dsi_core_clk_start(struct dsi_core_clks *c_clks)
 
 	return rc;
 
-	if (c_clks->clks.core_mmss_clk)
-		clk_disable_unprepare(c_clks->clks.core_mmss_clk);
 error_disable_bus_clk:
 	if (c_clks->clks.bus_clk)
 		clk_disable_unprepare(c_clks->clks.bus_clk);
@@ -1387,7 +1384,6 @@ void *dsi_display_clk_mngr_register(struct dsi_clk_info *info)
 			sizeof(struct dsi_link_hs_clk_info));
 		memcpy(&mngr->link_clks[i].lp_clks, &info->l_lp_clks[i],
 			sizeof(struct dsi_link_lp_clk_info));
-		mngr->core_clks[i].bus_handle = info->bus_handle[i];
 		mngr->ctrl_index[i] = info->ctrl_index[i];
 	}
 
