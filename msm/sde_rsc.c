@@ -64,6 +64,21 @@
 static struct sde_rsc_priv *rsc_prv_list[MAX_RSC_COUNT];
 static struct device *rpmh_dev[MAX_RSC_COUNT];
 
+static void sde_rsc_set_data_bus_mode(struct sde_power_handle *phandle, u32 tag)
+{
+	int i = 0, j = 0;
+
+	for (i = 0; i < SDE_POWER_HANDLE_DBUS_ID_MAX; i++) {
+		if (!phandle->data_bus_handle[i].bus_active_only)
+			continue;
+
+		for (j = 0; j < phandle->data_bus_handle[i].data_paths_cnt; j++)
+			icc_set_tag(phandle->data_bus_handle[i].data_bus_hdl[j],
+				    tag);
+
+	}
+}
+
 /**
  * sde_rsc_client_create() - create the client for sde rsc.
  * Different displays like DSI, HDMI, DP, WB, etc should call this
@@ -549,8 +564,11 @@ static int sde_rsc_switch_to_cmd_v2(struct sde_rsc_priv *rsc,
 
 	if (rsc->hw_ops.state_update) {
 		rc = rsc->hw_ops.state_update(rsc, SDE_RSC_CMD_STATE);
-		if (!rc)
+		if (!rc) {
 			rpmh_mode_solver_set(rsc->rpmh_dev, true);
+			sde_rsc_set_data_bus_mode(&rsc->phandle,
+						  QCOM_ICC_TAG_WAKE);
+		}
 	}
 
 vsync_wait:
@@ -600,8 +618,11 @@ static int sde_rsc_switch_to_clk_v3(struct sde_rsc_priv *rsc,
 
 	if (rsc->hw_ops.state_update) {
 		rc = rsc->hw_ops.state_update(rsc, SDE_RSC_CLK_STATE);
-		if (!rc)
+		if (!rc) {
 			rpmh_mode_solver_set(rsc->rpmh_dev, false);
+			sde_rsc_set_data_bus_mode(&rsc->phandle,
+						  QCOM_ICC_TAG_AMC);
+		}
 	}
 
 	/* indicate wait for vsync for cmd/vid to clk state switch */
@@ -742,9 +763,13 @@ static int sde_rsc_switch_to_vid_v3(struct sde_rsc_priv *rsc,
 
 	if (rsc->hw_ops.state_update) {
 		rc = rsc->hw_ops.state_update(rsc, SDE_RSC_VID_STATE);
-		if (!rc)
+		if (!rc) {
 			rpmh_mode_solver_set(rsc->rpmh_dev,
 				rsc->version == SDE_RSC_REV_3 ? true : false);
+			sde_rsc_set_data_bus_mode(&rsc->phandle,
+				rsc->version == SDE_RSC_REV_3 ?
+				QCOM_ICC_TAG_WAKE : QCOM_ICC_TAG_AMC);
+		}
 	}
 
 vsync_wait:
@@ -881,8 +906,11 @@ static int sde_rsc_switch_to_idle_v3(struct sde_rsc_priv *rsc,
 			rc = CLK_MODE_SWITCH_SUCCESS;
 	} else if (rsc->hw_ops.state_update) {
 		rc = rsc->hw_ops.state_update(rsc, SDE_RSC_IDLE_STATE);
-		if (!rc)
+		if (!rc) {
 			rpmh_mode_solver_set(rsc->rpmh_dev, true);
+			sde_rsc_set_data_bus_mode(&rsc->phandle,
+						  QCOM_ICC_TAG_WAKE);
+		}
 	}
 
 	return rc;
