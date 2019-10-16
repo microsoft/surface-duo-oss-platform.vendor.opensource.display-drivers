@@ -193,6 +193,7 @@ struct sde_rsc_bw_config {
  * rsc_vsync_waitq:   Queue to wait for the vsync.
  * bw_config:		check sde_rsc_bw_config structure description.
  * dev:			rsc device node
+ * resource_refcount:	Track rsc resource refcount
  */
 struct sde_rsc_priv {
 	u32 version;
@@ -234,6 +235,7 @@ struct sde_rsc_priv {
 
 	struct sde_rsc_bw_config bw_config;
 	struct device *dev;
+	atomic_t resource_refcount;
 };
 
 /**

@@ -15,7 +15,6 @@
 #include <linux/mutex.h>
 #include <linux/of_platform.h>
 #include <linux/module.h>
-#include <linux/pm_runtime.h>
 
 #include <soc/qcom/rpmh.h>
 #include <drm/drmP.h>
@@ -445,6 +444,66 @@ static u32 sde_rsc_timer_calculate(struct sde_rsc_priv *rsc,
 	}
 
 	return ret;
+}
+
+static int sde_rsc_resource_disable(struct sde_rsc_priv *rsc)
+{
+	struct dss_module_power *mp;
+
+	if (!rsc) {
+		pr_err("invalid drv data\n");
+		return -EINVAL;
+	}
+
+	if (atomic_read(&rsc->resource_refcount) == 0) {
+		pr_err("%pS: invalid rsc resource disable call\n",
+			__builtin_return_address(0));
+		return -EINVAL;
+	}
+
+	if (atomic_dec_return(&rsc->resource_refcount) != 0)
+		return 0;
+
+	mp = &rsc->phandle.mp;
+	msm_dss_enable_clk(mp->clk_config, mp->num_clk, false);
+	msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, false);
+
+	return 0;
+}
+
+static int sde_rsc_resource_enable(struct sde_rsc_priv *rsc)
+{
+	struct dss_module_power *mp;
+	int rc = 0;
+
+	if (!rsc) {
+		pr_err("invalid drv data\n");
+		return -EINVAL;
+	}
+
+	if (atomic_inc_return(&rsc->resource_refcount) != 1)
+		return 0;
+
+	mp = &rsc->phandle.mp;
+	rc = msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, true);
+	if (rc) {
+		pr_err("failed to enable vregs rc=%d\n", rc);
+		goto end;
+	}
+
+	rc = msm_dss_enable_clk(mp->clk_config, mp->num_clk, true);
+	if (rc) {
+		pr_err("clock enable failed rc:%d\n", rc);
+		goto clk_err;
+	}
+
+	return rc;
+
+clk_err:
+	msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, false);
+end:
+	atomic_dec(&rsc->resource_refcount);
+	return rc;
 }
 
 static int sde_rsc_switch_to_cmd_v3(struct sde_rsc_priv *rsc,
@@ -1073,7 +1132,7 @@ static int sde_rsc_hw_init(struct sde_rsc_priv *rsc)
 
 	rsc->sw_fs_enabled = true;
 
-	ret = pm_runtime_get_sync(rsc->dev);
+	ret = sde_rsc_resource_enable(rsc);
 	if (ret < 0) {
 		pr_err("failed to enable sde rsc power resources\n");
 		goto sde_rsc_fail;
@@ -1083,7 +1142,7 @@ static int sde_rsc_hw_init(struct sde_rsc_priv *rsc)
 	if (ret)
 		goto sde_rsc_fail;
 
-	pm_runtime_put_sync(rsc->dev);
+	sde_rsc_resource_disable(rsc);
 
 sde_rsc_fail:
 	return ret;
@@ -1157,7 +1216,7 @@ int sde_rsc_client_state_update(struct sde_rsc_client *caller_client,
 	}
 
 	if (rsc->current_state == SDE_RSC_IDLE_STATE)
-		pm_runtime_get_sync(rsc->dev);
+		sde_rsc_resource_enable(rsc);
 
 	switch (state) {
 	case SDE_RSC_IDLE_STATE:
@@ -1221,7 +1280,7 @@ int sde_rsc_client_state_update(struct sde_rsc_client *caller_client,
 
 clk_disable:
 	if (rsc->current_state == SDE_RSC_IDLE_STATE)
-		pm_runtime_put_sync(rsc->dev);
+		sde_rsc_resource_disable(rsc);
 end:
 	mutex_unlock(&rsc->client_lock);
 	return rc;
@@ -1298,7 +1357,7 @@ int sde_rsc_client_trigger_vote(struct sde_rsc_client *caller_client,
 		rsc->bw_config.ib_vote[i] = rsc->bw_config.new_ib_vote[i];
 	}
 
-	rc = pm_runtime_get_sync(rsc->dev);
+	rc = sde_rsc_resource_enable(rsc);
 	if (rc < 0)
 		goto clk_enable_fail;
 
@@ -1329,7 +1388,7 @@ int sde_rsc_client_trigger_vote(struct sde_rsc_client *caller_client,
 		rsc->hw_ops.tcs_use_ok(rsc);
 
 end:
-	pm_runtime_put_sync(rsc->dev);
+	sde_rsc_resource_disable(rsc);
 clk_enable_fail:
 	mutex_unlock(&rsc->client_lock);
 
@@ -1643,7 +1702,7 @@ static void sde_rsc_deinit(struct platform_device *pdev,
 	if (!rsc)
 		return;
 
-	pm_runtime_put_sync(rsc->dev);
+	sde_rsc_resource_disable(rsc);
 	if (rsc->sw_fs_enabled)
 		regulator_disable(rsc->fs);
 	if (rsc->fs)
@@ -1657,53 +1716,6 @@ static void sde_rsc_deinit(struct platform_device *pdev,
 	debugfs_remove_recursive(rsc->debugfs_root);
 	kfree(rsc);
 }
-
-#ifdef CONFIG_PM
-static int sde_rsc_runtime_suspend(struct device *dev)
-{
-	struct sde_rsc_priv *rsc = dev_get_drvdata(dev);
-	struct dss_module_power *mp;
-
-	if (!rsc) {
-		pr_err("invalid drv data\n");
-		return -EINVAL;
-	}
-
-	mp = &rsc->phandle.mp;
-	msm_dss_enable_clk(mp->clk_config, mp->num_clk, false);
-	msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, false);
-
-	return 0;
-}
-
-static int sde_rsc_runtime_resume(struct device *dev)
-{
-	struct sde_rsc_priv *rsc = dev_get_drvdata(dev);
-	struct dss_module_power *mp;
-	int rc = 0;
-
-	if (!rsc) {
-		pr_err("invalid drv data\n");
-		return -EINVAL;
-	}
-
-	mp = &rsc->phandle.mp;
-	rc = msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, true);
-	if (rc) {
-		pr_err("failed to enable vregs rc=%d\n", rc);
-		goto end;
-	}
-
-	rc = msm_dss_enable_clk(mp->clk_config, mp->num_clk, true);
-	if (rc) {
-		pr_err("clock enable failed rc:%d\n", rc);
-		msm_dss_enable_vreg(mp->vreg_config, mp->num_vreg, false);
-	}
-
-end:
-	return rc;
-}
-#endif
 
 /**
  * sde_rsc_bind - bind rsc device with controlling device
@@ -1873,8 +1885,7 @@ static int sde_rsc_probe(struct platform_device *pdev)
 
 	rsc->sw_fs_enabled = true;
 
-	pm_runtime_enable(rsc->dev);
-	ret = pm_runtime_get_sync(rsc->dev);
+	ret = sde_rsc_resource_enable(rsc);
 	if (ret < 0) {
 		pr_err("failed to enable sde rsc power resources rc:%d\n", ret);
 		goto sde_rsc_fail;
@@ -1883,12 +1894,13 @@ static int sde_rsc_probe(struct platform_device *pdev)
 	if (sde_rsc_timer_calculate(rsc, NULL, SDE_RSC_IDLE_STATE))
 		goto sde_rsc_fail;
 
-	pm_runtime_put_sync(rsc->dev);
+	sde_rsc_resource_disable(rsc);
 
 	INIT_LIST_HEAD(&rsc->client_list);
 	INIT_LIST_HEAD(&rsc->event_list);
 	mutex_init(&rsc->client_lock);
 	init_waitqueue_head(&rsc->rsc_vsync_waitq);
+	atomic_set(&rsc->resource_refcount, 0);
 
 	pr_info("sde rsc index:%d probed successfully\n",
 				SDE_RSC_INDEX + counter);
@@ -1931,8 +1943,6 @@ static int sde_rsc_pm_freeze_late(struct device *dev)
 
 static const struct dev_pm_ops sde_rsc_pm_ops = {
 	.freeze_late = sde_rsc_pm_freeze_late,
-	SET_RUNTIME_PM_OPS(sde_rsc_runtime_suspend,
-				sde_rsc_runtime_resume, NULL)
 };
 
 static const struct of_device_id dt_match[] = {
