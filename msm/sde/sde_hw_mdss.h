@@ -407,6 +407,21 @@ enum sde_3d_blend_mode {
 	BLEND_3D_MAX
 };
 
+/**
+ * enum sde_layout
+ * Describes SSPP to LM staging layout when using more than 1 pair of LMs
+ * @SDE_LAYOUT_NONE    : SSPPs to LMs staging layout not enabled
+ * @SDE_LAYOUT_LEFT    : SSPPs will be staged on left two LMs
+ * @SDE_LAYOUT_RIGHT   : SSPPs will be staged on right two LMs
+ * @SDE_LAYOUT_MAX     :
+ */
+enum sde_layout {
+	SDE_LAYOUT_NONE = 0,
+	SDE_LAYOUT_LEFT,
+	SDE_LAYOUT_RIGHT,
+	SDE_LAYOUT_MAX,
+};
+
 /** struct sde_format - defines the format configuration which
  * allows SDE HW to correctly fetch and decode the format
  * @base: base msm_format struture containing fourcc code
