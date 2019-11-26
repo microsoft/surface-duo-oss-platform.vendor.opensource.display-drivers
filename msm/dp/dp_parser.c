@@ -184,6 +184,9 @@ static int dp_parser_misc(struct dp_parser *parser)
 	if (!parser->display_type)
 		parser->display_type = "unknown";
 
+	parser->force_bond_mode = of_property_read_bool(of_node,
+			"qcom,dp-force-bond-mode");
+
 	return 0;
 }
 

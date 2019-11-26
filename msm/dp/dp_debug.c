@@ -770,6 +770,33 @@ static ssize_t dp_debug_mst_sideband_mode_write(struct file *file,
 	return count;
 }
 
+static ssize_t dp_debug_force_bond_mode_write(struct file *file,
+		const char __user *user_buff, size_t count, loff_t *ppos)
+{
+	struct dp_debug_private *debug = file->private_data;
+	char buf[SZ_8];
+	size_t len = 0;
+	int force_bond = 0;
+
+	if (!debug)
+		return -ENODEV;
+
+	/* Leave room for termination char */
+	len = min_t(size_t, count, SZ_8 - 1);
+	if (copy_from_user(buf, user_buff, len))
+		return -EFAULT;
+
+	buf[len] = '\0';
+
+	if (kstrtoint(buf, 10, &force_bond) != 0)
+		return -EINVAL;
+
+	debug->dp_debug.force_bond_mode = !!force_bond;
+	pr_debug("force_bond_mode: %d\n", force_bond);
+
+	return count;
+}
+
 static ssize_t dp_debug_widebus_mode_write(struct file *file,
 		const char __user *user_buff, size_t count, loff_t *ppos)
 {
@@ -1817,6 +1844,11 @@ static const struct file_operations mst_sideband_mode_fops = {
 	.write = dp_debug_mst_sideband_mode_write,
 };
 
+static const struct file_operations force_bond_mode_fops = {
+	.open = simple_open,
+	.write = dp_debug_force_bond_mode_write,
+};
+
 static const struct file_operations max_pclk_khz_fops = {
 	.open = simple_open,
 	.write = dp_debug_max_pclk_khz_write,
@@ -2014,6 +2046,15 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		pr_err("[%s] debugfs max_bw_code failed, rc=%d\n",
+		       DEBUG_NAME, rc);
+		goto error_remove_dir;
+	}
+
+	file = debugfs_create_file("force_bond_mode", 0644, dir,
+			debug, &force_bond_mode_fops);
+	if (IS_ERR_OR_NULL(file)) {
+		rc = PTR_ERR(file);
+		pr_err("[%s] debugfs force_bond_mode, rc=%d\n",
 		       DEBUG_NAME, rc);
 		goto error_remove_dir;
 	}
