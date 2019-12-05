@@ -28,6 +28,9 @@ int dp_pll_clock_register_10nm(struct platform_device *pdev,
 
 int dp_pll_clock_register_7nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);
+
+int edp_pll_clock_register_7nm(struct platform_device *pdev,
+				struct mdss_pll_resources *pll_res);
 #else
 static inline int dp_pll_clock_register_14nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res)
@@ -42,6 +45,12 @@ static inline int dp_pll_clock_register_10nm(struct platform_device *pdev,
 }
 
 static inline int dp_pll_clock_register_7nm(struct platform_device *pdev,
+				struct mdss_pll_resources *pll_res)
+{
+	return 0;
+}
+
+static inline int edp_pll_clock_register_7nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res)
 {
 	return 0;
