@@ -246,6 +246,8 @@ static int dp_config_vco_rate_7nm(struct dp_pll_vco_clk *vco,
 	struct mdss_pll_resources *dp_res = vco->priv;
 	struct dp_pll_db_7nm *pdb = (struct dp_pll_db_7nm *)dp_res->priv;
 
+	pr_debug("DP%d %lu", dp_res->index, rate);
+
 	res = dp_vco_pll_init_db_7nm(pdb, rate);
 	if (res) {
 		pr_err("VCO Init DB failed\n");
@@ -402,6 +404,8 @@ static int dp_pll_enable_7nm(struct clk_hw *hw)
 	struct dp_pll_db_7nm *pdb = (struct dp_pll_db_7nm *)dp_res->priv;
 	u32 bias_en, drvr_en;
 
+	pr_debug("DP%d", dp_res->index);
+
 	MDSS_PLL_REG_W(dp_res->phy_base, DP_PHY_AUX_CFG2, 0x24);
 	MDSS_PLL_REG_W(dp_res->phy_base, DP_PHY_CFG, 0x01);
 	MDSS_PLL_REG_W(dp_res->phy_base, DP_PHY_CFG, 0x05);
@@ -499,6 +503,8 @@ static int dp_pll_disable_7nm(struct clk_hw *hw)
 	struct dp_pll_vco_clk *vco = to_dp_vco_hw(hw);
 	struct mdss_pll_resources *dp_res = vco->priv;
 
+	pr_debug("DP%d", dp_res->index);
+
 	/* Assert DP PHY power down */
 	MDSS_PLL_REG_W(dp_res->phy_base, DP_PHY_PD_CTL, 0x2);
 	/*
@@ -524,7 +530,7 @@ int dp_vco_prepare_7nm(struct clk_hw *hw)
 	vco = to_dp_vco_hw(hw);
 	dp_res = vco->priv;
 
-	pr_debug("rate=%ld\n", vco->rate);
+	pr_debug("DP%d rate=%ld\n", dp_res->index, vco->rate);
 	rc = mdss_pll_resource_enable(dp_res, true);
 	if (rc) {
 		pr_err("Failed to enable mdss DP pll resources\n");
@@ -536,8 +542,8 @@ int dp_vco_prepare_7nm(struct clk_hw *hw)
 		rc = vco->hw.init->ops->set_rate(hw,
 			dp_res->vco_cached_rate, dp_res->vco_cached_rate);
 		if (rc) {
-			pr_err("index=%d vco_set_rate failed. rc=%d\n",
-				rc, dp_res->index);
+			pr_err("DP%d vco_set_rate failed. rc=%d\n",
+				dp_res->index, rc);
 			mdss_pll_resource_enable(dp_res, false);
 			goto error;
 		}
@@ -546,7 +552,7 @@ int dp_vco_prepare_7nm(struct clk_hw *hw)
 	rc = dp_pll_enable_7nm(hw);
 	if (rc) {
 		mdss_pll_resource_enable(dp_res, false);
-		pr_err("ndx=%d failed to enable dp pll\n", dp_res->index);
+		pr_err("DP%d failed to enable dp pll\n", dp_res->index);
 		goto error;
 	}
 
@@ -607,7 +613,7 @@ int dp_vco_set_rate_7nm(struct clk_hw *hw, unsigned long rate,
 		return rc;
 	}
 
-	pr_debug("DP lane CLK rate=%ld\n", rate);
+	pr_debug("DP%d lane CLK rate=%ld\n", dp_res->index, rate);
 
 	rc = dp_config_vco_rate_7nm(vco, rate);
 	if (rc)
@@ -643,7 +649,8 @@ unsigned long dp_vco_recalc_rate_7nm(struct clk_hw *hw,
 		return 0;
 	}
 
-	pr_debug("input rates: parent=%lu, vco=%lu\n", parent_rate, vco->rate);
+	pr_debug("DP%d input rates: parent=%lu, vco=%lu\n",
+		dp_res->index, parent_rate, vco->rate);
 
 	hsclk_sel = MDSS_PLL_REG_R(dp_res->pll_base, QSERDES_COM_HSCLK_SEL);
 	hsclk_sel &= 0x0f;
@@ -687,8 +694,9 @@ unsigned long dp_vco_recalc_rate_7nm(struct clk_hw *hw,
 			vco_rate = DP_VCO_HSCLK_RATE_8100MHZDIV1000;
 	}
 
-	pr_debug("hsclk: sel=0x%x, div=0x%x; lclk: sel=%u, div=%u, rate=%lu\n",
-		hsclk_sel, hsclk_div, link_clk_divsel, link_clk_div, vco_rate);
+	pr_debug("DP%d hsclk: sel=0x%x, div=0x%x; lclk: sel=%u, div=%u, rate=%lu\n",
+		dp_res->index, hsclk_sel, hsclk_div,
+		link_clk_divsel, link_clk_div, vco_rate);
 
 	mdss_pll_resource_enable(dp_res, false);
 
