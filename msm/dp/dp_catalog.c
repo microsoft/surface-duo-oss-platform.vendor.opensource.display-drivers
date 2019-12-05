@@ -122,6 +122,15 @@ struct dp_catalog_private {
 	char exe_mode[SZ_4];
 };
 
+static inline bool dp_catalog_is_edp_mode(struct dp_catalog_private *catalog)
+{
+	if (catalog->dp_catalog.phy_mode == DP_PHY_MODE_EDP ||
+		catalog->dp_catalog.phy_mode == DP_PHY_MODE_EDP_HIGH_SWING)
+		return true;
+
+	return false;
+}
+
 /* aux related catalog functions */
 static u32 dp_catalog_aux_read_data(struct dp_catalog_aux *aux)
 {
@@ -390,6 +399,11 @@ static u32 dp_catalog_ctrl_read_hdcp_status(struct dp_catalog_ctrl *ctrl)
 	}
 
 	catalog = dp_catalog_get_priv(ctrl);
+
+	if (dp_catalog_is_edp_mode(catalog))
+		/* HDCP isn't supported, always return AUTH_FAIL */
+		return (1 << 2);
+
 	io_data = catalog->io.dp_ahb;
 
 	return dp_read(catalog->exe_mode, io_data, DP_HDCP_STATUS);
@@ -1728,6 +1742,10 @@ static void dp_catalog_ctrl_mst_config(struct dp_catalog_ctrl *ctrl,
 
 	catalog = dp_catalog_get_priv(ctrl);
 
+	if (dp_catalog_is_edp_mode(catalog))
+		/* MST isn't supported */
+		return;
+
 	io_data = catalog->io.dp_link;
 
 	reg = dp_read(catalog->exe_mode, io_data, DP_MAINLINK_CTRL);
@@ -2109,6 +2127,10 @@ static void dp_catalog_audio_init(struct dp_catalog_audio *audio)
 
 	catalog = dp_catalog_get_priv(audio);
 
+	if (dp_catalog_is_edp_mode(catalog))
+		/* Audio isn't available */
+		return;
+
 	catalog->audio_map = sdp_map;
 }
 
@@ -2133,6 +2155,11 @@ static void dp_catalog_audio_config_sdp(struct dp_catalog_audio *audio)
 	}
 
 	catalog = dp_catalog_get_priv(audio);
+
+	if (dp_catalog_is_edp_mode(catalog))
+		/* Audio isn't available */
+		return;
+
 	io_data = catalog->io.dp_link;
 
 	sdp_cfg = dp_read(catalog->exe_mode, io_data,
@@ -2178,6 +2205,10 @@ static void dp_catalog_audio_get_header(struct dp_catalog_audio *audio)
 
 	catalog = dp_catalog_get_priv(audio);
 
+	if (dp_catalog_is_edp_mode(catalog))
+		/* Audio isn't available */
+		return;
+
 	io_data    = catalog->io.dp_link;
 	sdp_map = catalog->audio_map;
 	sdp     = audio->sdp_type;
@@ -2200,6 +2231,10 @@ static void dp_catalog_audio_set_header(struct dp_catalog_audio *audio)
 
 	catalog = dp_catalog_get_priv(audio);
 
+	if (dp_catalog_is_edp_mode(catalog))
+		/* Audio isn't available */
+		return;
+
 	io_data    = catalog->io.dp_link;
 	sdp_map = catalog->audio_map;
 	sdp     = audio->sdp_type;
@@ -2216,6 +2251,10 @@ static void dp_catalog_audio_config_acr(struct dp_catalog_audio *audio)
 	u32 acr_ctrl, select;
 
 	catalog = dp_catalog_get_priv(audio);
+
+	if (dp_catalog_is_edp_mode(catalog))
+		/* Audio isn't available */
+		return;
 
 	select = audio->data;
 	io_data   = catalog->io.dp_link;
@@ -2235,6 +2274,10 @@ static void dp_catalog_audio_enable(struct dp_catalog_audio *audio)
 	u32 audio_ctrl;
 
 	catalog = dp_catalog_get_priv(audio);
+
+	if (dp_catalog_is_edp_mode(catalog))
+		/* Audio isn't available */
+		return;
 
 	io_data = catalog->io.dp_link;
 	enable = !!audio->data;
@@ -2490,6 +2533,8 @@ static int dp_catalog_init(struct device *dev, struct dp_catalog *catalog,
 		rc = dp_catalog_get_v420(dev, catalog, &catalog_priv->io);
 	else if (parser->hw_cfg.phy_version == DP_PHY_VERSION_2_0_0)
 		rc = dp_catalog_get_v200(dev, catalog, &catalog_priv->io);
+	else if (parser->hw_cfg.phy_version == DP_PHY_VERSION_5_0_0)
+		rc = dp_catalog_get_v500(dev, catalog, &catalog_priv->io);
 
 	return rc;
 }
@@ -2604,6 +2649,7 @@ struct dp_catalog *dp_catalog_get(struct device *dev, u32 cell_idx,
 
 	dp_catalog = &catalog->dp_catalog;
 
+	dp_catalog->phy_mode = parser->hw_cfg.phy_mode;
 	dp_catalog->aux   = aux;
 	dp_catalog->ctrl  = ctrl;
 	dp_catalog->hpd   = hpd;
