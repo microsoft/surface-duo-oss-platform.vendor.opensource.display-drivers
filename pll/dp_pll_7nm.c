@@ -390,10 +390,12 @@ int dp_pll_clock_register_7nm(struct platform_device *pdev,
 	case DP_PHY_INDEX_DP_0:
 		dp_vco_divided_clk_src_mux.clkr.regmap = regmap;
 		dp0_vco_clk.priv = pll_res;
+		dp0_vco_clk.brother = &dp1_vco_clk;
 		break;
 	case DP_PHY_INDEX_DP_1:
 		dptx1_phy_pll_vco_div_clk.clkr.regmap = regmap;
 		dp1_vco_clk.priv = pll_res;
+		dp1_vco_clk.brother = &dp0_vco_clk;
 		break;
 	}
 	mux_clk_ops = clk_regmap_mux_closest_ops;
