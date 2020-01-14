@@ -18,6 +18,7 @@ struct dp_power_private {
 	struct clk *pixel_parent;
 	struct clk *pixel1_clk_rcg;
 	struct clk *pixel1_parent;
+	struct clk *bond_pixel_parent;
 
 	struct dp_power dp_power;
 	struct sde_power_client *dp_core_client;
@@ -192,6 +193,13 @@ static int dp_power_clk_init(struct dp_power_private *power, bool enable)
 			pr_debug("Unable to get DP pixel1 RCG parent\n");
 			power->pixel1_parent = NULL;
 		}
+
+		power->bond_pixel_parent = devm_clk_get(dev,
+						"bond_pixel_parent");
+		if (IS_ERR(power->bond_pixel_parent)) {
+			pr_debug("Unable to get DP bond pixel RCG parent\n");
+			power->bond_pixel_parent = NULL;
+		}
 	} else {
 		if (power->pixel_parent)
 			devm_clk_put(dev, power->pixel_parent);
@@ -204,6 +212,9 @@ static int dp_power_clk_init(struct dp_power_private *power, bool enable)
 
 		if (power->pixel1_clk_rcg)
 			devm_clk_put(dev, power->pixel1_clk_rcg);
+
+		if (power->bond_pixel_parent)
+			devm_clk_put(dev, power->bond_pixel_parent);
 
 		for (module = DP_CORE_PM; module < DP_MAX_PM; module++) {
 			struct dss_module_power *pm =
@@ -511,7 +522,8 @@ static void dp_power_client_deinit(struct dp_power *dp_power)
 	dp_power_regulator_deinit(power);
 }
 
-static int dp_power_set_pixel_clk_parent(struct dp_power *dp_power, u32 strm_id)
+static int dp_power_set_pixel_clk_parent(struct dp_power *dp_power, u32 strm_id,
+			enum dp_phy_bond_mode bond_mode)
 {
 	int rc = 0;
 	struct dp_power_private *power;
@@ -525,9 +537,15 @@ static int dp_power_set_pixel_clk_parent(struct dp_power *dp_power, u32 strm_id)
 	power = container_of(dp_power, struct dp_power_private, dp_power);
 
 	if (strm_id == DP_STREAM_0) {
-		if (power->pixel_clk_rcg && power->pixel_parent)
-			clk_set_parent(power->pixel_clk_rcg,
-					power->pixel_parent);
+		if (IS_PCLK_BOND_MODE(bond_mode)) {
+			if (power->pixel_clk_rcg && power->bond_pixel_parent)
+				clk_set_parent(power->pixel_clk_rcg,
+						power->bond_pixel_parent);
+		} else {
+			if (power->pixel_clk_rcg && power->pixel_parent)
+				clk_set_parent(power->pixel_clk_rcg,
+						power->pixel_parent);
+		}
 	} else if (strm_id == DP_STREAM_1) {
 		if (power->pixel1_clk_rcg && power->pixel1_parent)
 			clk_set_parent(power->pixel1_clk_rcg,

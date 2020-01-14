@@ -633,7 +633,7 @@ static int dp_ctrl_enable_stream_clocks(struct dp_ctrl_private *ctrl,
 	char clk_name[32] = "";
 
 	ret = ctrl->power->set_pixel_clk_parent(ctrl->power,
-			dp_panel->stream_id);
+			dp_panel->stream_id, ctrl->phy_bond_mode);
 
 	if (ret)
 		return ret;
@@ -1059,7 +1059,8 @@ static int dp_ctrl_stream_on(struct dp_ctrl *dp_ctrl, struct dp_panel *panel)
 		return rc;
 	}
 
-	rc = panel->hw_cfg(panel, true);
+	rc = panel->hw_cfg(panel, true,
+			!IS_PCLK_BOND_MODE(ctrl->phy_bond_mode));
 	if (rc)
 		return rc;
 
@@ -1144,7 +1145,8 @@ static void dp_ctrl_stream_off(struct dp_ctrl *dp_ctrl, struct dp_panel *panel)
 	if (!ctrl->power_on)
 		return;
 
-	panel->hw_cfg(panel, false);
+	panel->hw_cfg(panel, false,
+			!IS_PCLK_BOND_MODE(ctrl->phy_bond_mode));
 
 	dp_ctrl_disable_stream_clocks(ctrl, panel);
 	ctrl->stream_count--;
