@@ -212,6 +212,7 @@ struct dp_catalog_panel {
 
 	u32 misc_val;
 
+	u32 cell_idx;
 	enum dp_stream_id stream_id;
 
 	bool widebus_en;
@@ -344,7 +345,8 @@ static inline void dp_write(char *exe_mode, struct dp_io_data *io_data,
 	}
 }
 
-struct dp_catalog *dp_catalog_get(struct device *dev, struct dp_parser *parser);
+struct dp_catalog *dp_catalog_get(struct device *dev, u32 cell_idx,
+		struct dp_parser *parser);
 void dp_catalog_put(struct dp_catalog *catalog);
 
 int dp_catalog_get_v420(struct device *dev, struct dp_catalog *catalog,

@@ -375,6 +375,8 @@
 #define MMSS_DP_PIXEL_N_V420			(0x01B8)
 #define MMSS_DP_PIXEL1_M_V420			(0x01CC)
 #define MMSS_DP_PIXEL1_N_V420			(0x01D0)
+#define MMSS_DP_PIXEL2_M_V420			(0x01FC)
+#define MMSS_DP_PIXEL2_N_V420			(0x0200)
 
 /* DP HDCP 1.3 registers */
 #define DP_HDCP_CTRL                                   (0x0A0)
