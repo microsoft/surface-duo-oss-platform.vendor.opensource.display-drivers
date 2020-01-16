@@ -301,7 +301,23 @@ static int shd_crtc_atomic_check(struct drm_crtc *crtc,
 {
 	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
 	struct shd_crtc *shd_crtc = sde_crtc->priv_handle;
+	struct sde_crtc_state *sde_crtc_state = to_sde_crtc_state(state);
 	int rc;
+
+	/* update topology name */
+	if (sde_crtc_state->topology_name == SDE_RM_TOPOLOGY_NONE) {
+		struct drm_crtc_state *base_crtc_state;
+		struct sde_crtc_state *base_cstate;
+
+		base_crtc_state = drm_atomic_get_existing_crtc_state(
+				state->state, shd_crtc->display->base->crtc);
+		if (!base_crtc_state)
+			base_crtc_state = shd_crtc->display->base->crtc->state;
+
+		base_cstate = to_sde_crtc_state(base_crtc_state);
+		sde_crtc_state_set_topology_name(state,
+				base_cstate->topology_name);
+	}
 
 	rc = shd_crtc->orig_helper_funcs->atomic_check(crtc, state);
 	if (rc)
