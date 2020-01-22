@@ -1474,6 +1474,11 @@ static ssize_t dp_debug_read_hdr(struct file *file,
 	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))
 		goto error;
 
+	rc = snprintf(buf + len, max_size, "hdr_plus_app_ver = %d\n",
+			c_conn->hdr_plus_app_ver);
+	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))
+		goto error;
+
 	rc = snprintf(buf + len, max_size, "max_luminance = %d\n",
 		connector->hdr_max_luminance);
 	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))

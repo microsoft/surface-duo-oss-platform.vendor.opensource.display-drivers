@@ -2343,6 +2343,7 @@ static int dp_panel_deinit_panel_info(struct dp_panel *dp_panel, u32 flags)
 	struct dp_catalog_hdr_data *hdr;
 	struct drm_connector *connector;
 	struct sde_connector_state *c_state;
+	struct sde_connector *sde_conn;
 
 	if (!dp_panel) {
 		pr_err("invalid input\n");
@@ -2366,6 +2367,7 @@ static int dp_panel_deinit_panel_info(struct dp_panel *dp_panel, u32 flags)
 	panel->panel_on = false;
 
 	connector = dp_panel->connector;
+	sde_conn = to_sde_connector(connector);
 	c_state = to_sde_connector_state(connector->state);
 
 	connector->hdr_eotf = 0;
@@ -2374,6 +2376,7 @@ static int dp_panel_deinit_panel_info(struct dp_panel *dp_panel, u32 flags)
 	connector->hdr_avg_luminance = 0;
 	connector->hdr_min_luminance = 0;
 	connector->hdr_supported = false;
+	sde_conn->hdr_plus_app_ver = 0;
 
 	memset(&c_state->hdr_meta, 0, sizeof(c_state->hdr_meta));
 

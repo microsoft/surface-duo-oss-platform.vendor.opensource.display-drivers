@@ -1321,6 +1321,7 @@ static void sde_connector_update_hdr_props(struct drm_connector *connector)
 	hdr.hdr_max_luminance = connector->hdr_max_luminance;
 	hdr.hdr_avg_luminance = connector->hdr_avg_luminance;
 	hdr.hdr_min_luminance = connector->hdr_min_luminance;
+	hdr.hdr_plus_supported = c_conn->hdr_plus_app_ver;
 
 	msm_property_set_blob(&c_conn->property_info, &c_conn->blob_ext_hdr,
 			&hdr, sizeof(hdr), CONNECTOR_PROP_EXT_HDR_INFO);
