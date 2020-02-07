@@ -1465,12 +1465,12 @@ static ssize_t dp_debug_read_hdr(struct file *file,
 		goto error;
 
 	rc = snprintf(buf + len, max_size, "eotf = %d\n",
-		connector->hdr_eotf);
+		c_conn->hdr_eotf);
 	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))
 		goto error;
 
 	rc = snprintf(buf + len, max_size, "type_one = %d\n",
-		connector->hdr_metadata_type_one);
+		c_conn->hdr_metadata_type_one);
 	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))
 		goto error;
 
@@ -1480,17 +1480,17 @@ static ssize_t dp_debug_read_hdr(struct file *file,
 		goto error;
 
 	rc = snprintf(buf + len, max_size, "max_luminance = %d\n",
-		connector->hdr_max_luminance);
+		c_conn->hdr_max_luminance);
 	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))
 		goto error;
 
 	rc = snprintf(buf + len, max_size, "avg_luminance = %d\n",
-		connector->hdr_avg_luminance);
+		c_conn->hdr_avg_luminance);
 	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))
 		goto error;
 
 	rc = snprintf(buf + len, max_size, "min_luminance = %d\n",
-		connector->hdr_min_luminance);
+		c_conn->hdr_min_luminance);
 	if (dp_debug_check_buffer_overflow(rc, &max_size, &len))
 		goto error;
 
