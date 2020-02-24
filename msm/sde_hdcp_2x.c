@@ -594,6 +594,11 @@ static void sde_hdcp_2x_msg_sent(struct sde_hdcp_2x_ctrl *hdcp)
 						HDCP_TRANSPORT_CMD_INVALID };
 	cdata.context = hdcp->client_data;
 
+	if (atomic_read(&hdcp->hdcp_off)) {
+		pr_debug("invalid state, hdcp off\n");
+		return;
+	}
+
 	switch (hdcp->app_data.response.data[0]) {
 	case SKE_SEND_TYPE_ID:
 		sde_hdcp_2x_set_hw_key(hdcp);
