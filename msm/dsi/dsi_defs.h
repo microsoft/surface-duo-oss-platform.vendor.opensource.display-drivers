@@ -450,6 +450,7 @@ struct dsi_split_link_config {
  * @ext_bridge_num:      Connected external bridge count.
  * @ext_bridge_map:      External bridge config reg needs to match with the port
  *                       reg config.
+ * @builtin_bridge_pos:  Attach built-in DSI bridge at pos in the bridge chain.
  * @force_hs_clk_lane:   Send continuous clock to the panel.
  * @phy_type:            DPHY/CPHY is enabled for this panel.
  * @dsi_split_link_config:  Split Link Configuration.
@@ -473,6 +474,7 @@ struct dsi_host_common_cfg {
 	bool append_tx_eot;
 	u32 ext_bridge_num;
 	u32 ext_bridge_map[MAX_DSI_CTRLS_PER_DISPLAY];
+	u32 builtin_bridge_pos;
 	bool force_hs_clk_lane;
 	enum dsi_phy_type phy_type;
 	struct dsi_split_link_config split_link;
