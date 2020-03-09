@@ -4796,11 +4796,12 @@ static int dsi_display_link_clk_force_update_ctrl(void *handle)
 }
 
 int dsi_display_clk_ctrl(void *handle,
-	enum dsi_clk_type clk_type, enum dsi_clk_state clk_state)
+	u32 clk_type, u32 clk_state)
 {
 	int rc = 0;
 
-	if (!handle) {
+	if ((!handle) || (clk_type > DSI_ALL_CLKS) ||
+			(clk_state > DSI_CLK_EARLY_GATE)) {
 		pr_err("%s: Invalid arg\n", __func__);
 		return -EINVAL;
 	}
