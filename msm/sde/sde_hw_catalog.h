@@ -12,6 +12,8 @@
 #include <linux/err.h>
 #include <drm/drmP.h>
 
+#include "sde_hw_mdss.h"
+
 /**
  * Max hardware block count: For ex: max 12 SSPP pipes or
  * 5 ctl paths. In all cases, it can have max 12 hardware blocks
