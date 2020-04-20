@@ -3,8 +3,6 @@
  * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/iopoll.h>
-
 #include "sde_kms.h"
 #include "sde_hw_catalog.h"
 #include "sde_hwio.h"
@@ -248,34 +246,11 @@ static void sde_hw_lm_setup_misr(struct sde_hw_mixer *ctx,
 	SDE_REG_WRITE(c, LM_MISR_CTRL, config);
 }
 
-static int sde_hw_lm_collect_misr(struct sde_hw_mixer *ctx, bool nonblock,
-		u32 *misr_value)
+static u32 sde_hw_lm_collect_misr(struct sde_hw_mixer *ctx)
 {
 	struct sde_hw_blk_reg_map *c = &ctx->hw;
-	u32 ctrl = 0;
 
-	if (!misr_value)
-		return -EINVAL;
-
-	ctrl = SDE_REG_READ(c, LM_MISR_CTRL);
-	if (!nonblock) {
-		if (ctrl & MISR_CTRL_ENABLE) {
-			int rc;
-
-			rc = readl_poll_timeout(c->base_off + c->blk_off +
-					LM_MISR_CTRL, ctrl,
-					(ctrl & MISR_CTRL_STATUS) > 0, 500,
-					84000);
-			if (rc)
-				return rc;
-		} else {
-			return -EINVAL;
-		}
-	}
-
-	*misr_value  = SDE_REG_READ(c, LM_MISR_SIGNATURE);
-
-	return 0;
+	return SDE_REG_READ(c, LM_MISR_SIGNATURE);
 }
 
 static void _setup_mixer_ops(struct sde_mdss_cfg *m,
@@ -284,8 +259,12 @@ static void _setup_mixer_ops(struct sde_mdss_cfg *m,
 {
 	ops->setup_mixer_out = sde_hw_lm_setup_out;
 	if (IS_SDM845_TARGET(m->hwversion) || IS_SDM670_TARGET(m->hwversion) ||
-			IS_SDE_MAJOR_SAME(m->hwversion, SDE_HW_VER_500) ||
-			IS_SDE_MAJOR_SAME(m->hwversion, SDE_HW_VER_600))
+			IS_SM8150_TARGET(m->hwversion) ||
+			IS_SDMSHRIKE_TARGET(m->hwversion) ||
+			IS_SM6150_TARGET(m->hwversion) ||
+			IS_SDMMAGPIE_TARGET(m->hwversion) ||
+			IS_SDMTRINKET_TARGET(m->hwversion) ||
+			IS_ATOLL_TARGET(m->hwversion))
 		ops->setup_blend_config = sde_hw_lm_setup_blend_config_sdm845;
 	else
 		ops->setup_blend_config = sde_hw_lm_setup_blend_config;

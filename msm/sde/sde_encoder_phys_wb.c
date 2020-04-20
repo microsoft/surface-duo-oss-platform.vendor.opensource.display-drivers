@@ -128,12 +128,31 @@ static void sde_encoder_phys_wb_set_qos_remap(
 	qos_params.client_type = phys_enc->in_clone_mode ?
 					VBIF_CWB_CLIENT : VBIF_NRT_CLIENT;
 
-	SDE_DEBUG("[qos_remap] wb:%d vbif:%d xin:%d clone:%d\n",
+	SDE_DEBUG("[qos_remap] wb:%d vbif:%d xin:%d rt:%d clone:%d\n",
 			qos_params.num,
 			qos_params.vbif_idx,
 			qos_params.xin_id, qos_params.client_type);
 
 	sde_vbif_set_qos_remap(phys_enc->sde_kms, &qos_params);
+}
+
+static u64 _sde_encoder_phys_wb_get_qos_lut(const struct sde_qos_lut_tbl *tbl,
+		u32 total_fl)
+{
+	int i;
+
+	if (!tbl || !tbl->nentry || !tbl->entries)
+		return 0;
+
+	for (i = 0; i < tbl->nentry; i++)
+		if (total_fl <= tbl->entries[i].fl)
+			return tbl->entries[i].lut;
+
+	/* if last fl is zero, use as default */
+	if (!tbl->entries[i-1].fl)
+		return tbl->entries[i-1].lut;
+
+	return 0;
 }
 
 /**
@@ -144,14 +163,14 @@ static void sde_encoder_phys_wb_set_qos(struct sde_encoder_phys *phys_enc)
 {
 	struct sde_encoder_phys_wb *wb_enc;
 	struct sde_hw_wb *hw_wb;
-	struct sde_hw_wb_qos_cfg qos_cfg = {0};
-	struct sde_perf_cfg *perf;
-	u32 fps_index = 0, lut_index, index, frame_rate, qos_count;
+	struct sde_hw_wb_qos_cfg qos_cfg;
+	struct sde_mdss_cfg *catalog;
 
 	if (!phys_enc || !phys_enc->sde_kms || !phys_enc->sde_kms->catalog) {
 		SDE_ERROR("invalid parameter(s)\n");
 		return;
 	}
+	catalog = phys_enc->sde_kms->catalog;
 
 	wb_enc = to_sde_encoder_phys_wb(phys_enc);
 	if (!wb_enc->hw_wb) {
@@ -159,38 +178,35 @@ static void sde_encoder_phys_wb_set_qos(struct sde_encoder_phys *phys_enc)
 		return;
 	}
 
-	perf = &phys_enc->sde_kms->catalog->perf;
-	frame_rate = phys_enc->cached_mode.vrefresh;
-
 	hw_wb = wb_enc->hw_wb;
-	qos_count = perf->qos_refresh_count;
-	while (qos_count && perf->qos_refresh_rate) {
-		if (frame_rate >= perf->qos_refresh_rate[qos_count - 1]) {
-			fps_index = qos_count - 1;
-			break;
-		}
-		qos_count--;
-	}
 
+	memset(&qos_cfg, 0, sizeof(struct sde_hw_wb_qos_cfg));
 	qos_cfg.danger_safe_en = true;
+	qos_cfg.danger_lut =
+		catalog->perf.danger_lut_tbl[SDE_QOS_LUT_USAGE_NRT];
 
 	if (phys_enc->in_clone_mode)
-		lut_index = SDE_QOS_LUT_USAGE_CWB;
+		qos_cfg.safe_lut = (u32) _sde_encoder_phys_wb_get_qos_lut(
+			&catalog->perf.sfe_lut_tbl[SDE_QOS_LUT_USAGE_CWB], 0);
 	else
-		lut_index = SDE_QOS_LUT_USAGE_NRT;
-	index = (fps_index * SDE_QOS_LUT_USAGE_MAX) + lut_index;
+		qos_cfg.safe_lut = (u32) _sde_encoder_phys_wb_get_qos_lut(
+			&catalog->perf.sfe_lut_tbl[SDE_QOS_LUT_USAGE_NRT], 0);
 
-	qos_cfg.danger_lut = perf->danger_lut[index];
-	qos_cfg.safe_lut = (u32) perf->safe_lut[index];
-	qos_cfg.creq_lut = perf->creq_lut[index];
+	if (phys_enc->in_clone_mode)
+		qos_cfg.creq_lut = _sde_encoder_phys_wb_get_qos_lut(
+			&catalog->perf.qos_lut_tbl[SDE_QOS_LUT_USAGE_CWB], 0);
+	else
+		qos_cfg.creq_lut = _sde_encoder_phys_wb_get_qos_lut(
+			&catalog->perf.qos_lut_tbl[SDE_QOS_LUT_USAGE_NRT], 0);
 
-	SDE_DEBUG("wb_enc:%d hw idx:%d fps:%d mode:%d luts[0x%x,0x%x 0x%llx]\n",
-		DRMID(phys_enc->parent), hw_wb->idx - WB_0,
-		frame_rate, phys_enc->in_clone_mode,
-		qos_cfg.danger_lut, qos_cfg.safe_lut, qos_cfg.creq_lut);
+	if (hw_wb->ops.setup_danger_safe_lut)
+		hw_wb->ops.setup_danger_safe_lut(hw_wb, &qos_cfg);
 
-	if (hw_wb->ops.setup_qos_lut)
-		hw_wb->ops.setup_qos_lut(hw_wb, &qos_cfg);
+	if (hw_wb->ops.setup_creq_lut)
+		hw_wb->ops.setup_creq_lut(hw_wb, &qos_cfg);
+
+	if (hw_wb->ops.setup_qos_ctrl)
+		hw_wb->ops.setup_qos_ctrl(hw_wb, &qos_cfg);
 }
 
 /**
@@ -449,7 +465,7 @@ static void _sde_encoder_phys_wb_setup_cwb(struct sde_encoder_phys *phys_enc,
 	struct sde_hw_ctl *hw_ctl = phys_enc->hw_ctl;
 	struct sde_crtc *crtc = to_sde_crtc(wb_enc->crtc);
 	struct sde_hw_pingpong *hw_pp = phys_enc->hw_pp;
-	bool need_merge = (crtc->num_mixers > 1);
+	bool need_merge = crtc->num_mixers > 1 ? true : false;
 	int i = 0;
 
 	if (!phys_enc->in_clone_mode) {
@@ -641,7 +657,7 @@ static int _sde_enc_phys_wb_validate_cwb(struct sde_encoder_phys *phys_enc,
 		if (cstate->ds_cfg[i].scl3_cfg.enable) {
 			ds_in_use = true;
 			ds_outw += cstate->ds_cfg[i].scl3_cfg.dst_width;
-			ds_outh = cstate->ds_cfg[i].scl3_cfg.dst_height;
+			ds_outh += cstate->ds_cfg[i].scl3_cfg.dst_height;
 		}
 
 	/* if ds in use check wb roi against ds output dimensions */
@@ -1027,16 +1043,14 @@ static void _sde_encoder_phys_wb_frame_done_helper(void *arg, bool frame_error)
 		event |= SDE_ENCODER_FRAME_EVENT_DONE |
 			SDE_ENCODER_FRAME_EVENT_SIGNAL_RETIRE_FENCE;
 
-		if (phys_enc->in_clone_mode)
-			event |= SDE_ENCODER_FRAME_EVENT_CWB_DONE;
-		else
+		if (!phys_enc->in_clone_mode)
 			event |= SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE;
 
 		phys_enc->parent_ops.handle_frame_done(phys_enc->parent,
 				phys_enc, event);
 	}
 
-	if (!phys_enc->in_clone_mode && phys_enc->parent_ops.handle_vblank_virt)
+	if (phys_enc->parent_ops.handle_vblank_virt && !phys_enc->in_clone_mode)
 		phys_enc->parent_ops.handle_vblank_virt(phys_enc->parent,
 				phys_enc);
 
@@ -1152,9 +1166,7 @@ static void sde_encoder_phys_wb_mode_set(
 	}
 
 	if (IS_ERR_OR_NULL(phys_enc->hw_ctl)) {
-		SDE_ERROR("failed init ctl: %ld\n",
-			(!phys_enc->hw_ctl) ?
-			-EINVAL : PTR_ERR(phys_enc->hw_ctl));
+		SDE_ERROR("failed init ctl: %ld\n", PTR_ERR(phys_enc->hw_ctl));
 		phys_enc->hw_ctl = NULL;
 		return;
 	}
@@ -1169,8 +1181,8 @@ static void sde_encoder_phys_wb_mode_set(
 
 	if (IS_ERR(phys_enc->hw_cdm)) {
 		SDE_ERROR("CDM required but not allocated: %ld\n",
-			PTR_ERR(phys_enc->hw_cdm));
-		phys_enc->hw_cdm = NULL;
+				PTR_ERR(phys_enc->hw_cdm));
+		phys_enc->hw_ctl = NULL;
 	}
 }
 
@@ -1184,9 +1196,7 @@ static int sde_encoder_phys_wb_frame_timeout(struct sde_encoder_phys *phys_enc)
 		event = SDE_ENCODER_FRAME_EVENT_SIGNAL_RETIRE_FENCE
 			| SDE_ENCODER_FRAME_EVENT_ERROR;
 
-		if (phys_enc->in_clone_mode)
-			event |= SDE_ENCODER_FRAME_EVENT_CWB_DONE;
-		else
+		if (!phys_enc->in_clone_mode)
 			event |= SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE;
 
 		phys_enc->parent_ops.handle_frame_done(
@@ -1198,7 +1208,10 @@ static int sde_encoder_phys_wb_frame_timeout(struct sde_encoder_phys *phys_enc)
 
 	return event;
 }
-
+/**
+ * sde_encoder_phys_wb_wait_for_commit_done - wait until request is committed
+ * @phys_enc:	Pointer to physical encoder
+ */
 static int _sde_encoder_phys_wb_wait_for_commit_done(
 		struct sde_encoder_phys *phys_enc, bool is_disable)
 {
@@ -1206,7 +1219,7 @@ static int _sde_encoder_phys_wb_wait_for_commit_done(
 	u32 event = 0;
 	u64 wb_time = 0;
 	int rc = 0;
-	struct sde_encoder_wait_info wait_info = {0};
+	struct sde_encoder_wait_info wait_info;
 
 	/* Return EWOULDBLOCK since we know the wait isn't necessary */
 	if (phys_enc->enable_state == SDE_ENC_DISABLED) {
@@ -1215,8 +1228,8 @@ static int _sde_encoder_phys_wb_wait_for_commit_done(
 	}
 
 	SDE_EVT32(DRMID(phys_enc->parent), WBID(wb_enc), wb_enc->frame_count,
-		wb_enc->kickoff_count, !!wb_enc->wb_fb, is_disable,
-		phys_enc->in_clone_mode);
+			wb_enc->kickoff_count, !!wb_enc->wb_fb, is_disable,
+			phys_enc->in_clone_mode);
 
 	if (!is_disable && phys_enc->in_clone_mode &&
 	    (atomic_read(&phys_enc->pending_retire_fence_cnt) <= 1))
@@ -1242,6 +1255,7 @@ static int _sde_encoder_phys_wb_wait_for_commit_done(
 		event = sde_encoder_phys_wb_frame_timeout(phys_enc);
 	}
 
+
 	/* cleanup writeback framebuffer */
 	if (wb_enc->wb_fb && wb_enc->wb_aspace) {
 		msm_framebuffer_cleanup(wb_enc->wb_fb, wb_enc->wb_aspace);
@@ -1263,7 +1277,8 @@ skip_wait:
 
 	/* cleanup previous buffer if pending */
 	if (wb_enc->cwb_old_fb && wb_enc->cwb_old_aspace) {
-		msm_framebuffer_cleanup(wb_enc->cwb_old_fb, wb_enc->cwb_old_aspace);
+		msm_framebuffer_cleanup(wb_enc->cwb_old_fb,
+				wb_enc->cwb_old_aspace);
 		drm_framebuffer_put(wb_enc->cwb_old_fb);
 		wb_enc->cwb_old_fb = NULL;
 		wb_enc->cwb_old_aspace = NULL;
@@ -1283,33 +1298,6 @@ static int sde_encoder_phys_wb_wait_for_commit_done(
 		struct sde_encoder_phys *phys_enc)
 {
 	return _sde_encoder_phys_wb_wait_for_commit_done(phys_enc, false);
-}
-
-static int sde_encoder_phys_wb_wait_for_cwb_done(
-		struct sde_encoder_phys *phys_enc)
-{
-	struct sde_encoder_phys_wb *wb_enc = to_sde_encoder_phys_wb(phys_enc);
-	struct sde_encoder_wait_info wait_info = {0};
-	int rc = 0;
-
-	if (!phys_enc->in_clone_mode)
-		return 0;
-
-	SDE_EVT32(atomic_read(&phys_enc->pending_retire_fence_cnt));
-
-	wait_info.wq = &phys_enc->pending_kickoff_wq;
-	wait_info.atomic_cnt = &phys_enc->pending_retire_fence_cnt;
-	wait_info.timeout_ms = max_t(u32, wb_enc->wbdone_timeout,
-				KICKOFF_TIMEOUT_MS);
-
-	rc = sde_encoder_helper_wait_for_irq(phys_enc, INTR_IDX_WB_DONE,
-		&wait_info);
-
-	if (rc == -ETIMEDOUT)
-		SDE_EVT32(DRMID(phys_enc->parent), WBID(wb_enc),
-			wb_enc->frame_count, SDE_EVTLOG_ERROR);
-
-	return rc;
 }
 
 /**
@@ -1609,7 +1597,6 @@ static void sde_encoder_phys_wb_disable(struct sde_encoder_phys *phys_enc)
 	sde_encoder_helper_trigger_start(phys_enc);
 	_sde_encoder_phys_wb_wait_for_commit_done(phys_enc, true);
 	sde_encoder_phys_wb_irq_ctrl(phys_enc, false);
-
 exit:
 	/*
 	 * frame count and kickoff count are only used for debug purpose. Frame
@@ -1689,6 +1676,12 @@ static int sde_encoder_phys_wb_init_debugfs(
 		return -ENOMEM;
 	}
 
+	if (!debugfs_create_u32("bypass_irqreg", 0600,
+			debugfs_root, &wb_enc->bypass_irqreg)) {
+		SDE_ERROR("failed to create debugfs/bypass_irqreg\n");
+		return -ENOMEM;
+	}
+
 	return 0;
 }
 #else
@@ -1745,7 +1738,6 @@ static void sde_encoder_phys_wb_init_ops(struct sde_encoder_phys_ops *ops)
 	ops->trigger_start = sde_encoder_helper_trigger_start;
 	ops->hw_reset = sde_encoder_helper_hw_reset;
 	ops->irq_control = sde_encoder_phys_wb_irq_ctrl;
-	ops->wait_for_tx_complete = sde_encoder_phys_wb_wait_for_cwb_done;
 }
 
 /**

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
@@ -61,8 +61,7 @@ sde_wb_connector_detect(struct drm_connector *connector,
 	return rc;
 }
 
-int sde_wb_connector_get_modes(struct drm_connector *connector, void *display,
-		const struct msm_resource_caps_info *avail_res)
+int sde_wb_connector_get_modes(struct drm_connector *connector, void *display)
 {
 	struct sde_wb_device *wb_dev;
 	int num_modes = 0;
@@ -85,7 +84,7 @@ int sde_wb_connector_get_modes(struct drm_connector *connector, void *display,
 				SDE_ERROR("failed to create mode\n");
 				break;
 			}
-			ret = drm_mode_convert_umode(wb_dev->drm_dev, mode,
+			ret = drm_mode_convert_umode(mode,
 					&wb_dev->modes[i]);
 			if (ret) {
 				SDE_ERROR("failed to convert mode %d\n", ret);
@@ -199,8 +198,8 @@ int sde_wb_connector_set_modes(struct sde_wb_device *wb_dev,
 			struct drm_display_mode dispmode;
 
 			memset(&dispmode, 0, sizeof(dispmode));
-			ret = drm_mode_convert_umode(wb_dev->drm_dev,
-					&dispmode, &modeinfo[i]);
+			ret = drm_mode_convert_umode(&dispmode,
+						&modeinfo[i]);
 			if (ret) {
 				SDE_ERROR(
 					"failed to convert mode %d:\"%s\" %d %d %d %d %d %d %d %d %d %d 0x%x 0x%x status:%d rc:%d\n",
@@ -319,7 +318,7 @@ int sde_wb_get_info(struct drm_connector *connector,
 int sde_wb_get_mode_info(struct drm_connector *connector,
 		const struct drm_display_mode *drm_mode,
 		struct msm_mode_info *mode_info,
-		void *display, const struct msm_resource_caps_info *avail_res)
+		u32 max_mixer_width, void *display)
 {
 	const u32 dual_lm = 2;
 	const u32 single_lm = 1;
@@ -330,8 +329,7 @@ int sde_wb_get_mode_info(struct drm_connector *connector,
 	u16 hdisplay;
 	int i;
 
-	if (!drm_mode || !mode_info || !avail_res ||
-			!avail_res->max_mixer_width || !display) {
+	if (!drm_mode || !mode_info || !max_mixer_width || !display) {
 		pr_err("invalid params\n");
 		return -EINVAL;
 	}
@@ -343,8 +341,7 @@ int sde_wb_get_mode_info(struct drm_connector *connector,
 		hdisplay = max(hdisplay, wb_dev->modes[i].hdisplay);
 
 	topology = &mode_info->topology;
-	topology->num_lm = (avail_res->max_mixer_width <= hdisplay) ?
-			dual_lm : single_lm;
+	topology->num_lm = (max_mixer_width < hdisplay) ? dual_lm : single_lm;
 	topology->num_enc = no_enc;
 	topology->num_intf = single_intf;
 

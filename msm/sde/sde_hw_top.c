@@ -12,8 +12,6 @@
 #define SSPP_SPARE                        0x28
 #define UBWC_DEC_HW_VERSION               0x058
 #define UBWC_STATIC                       0x144
-#define UBWC_CTRL_2                       0x150
-#define UBWC_PREDICTION_MODE              0x154
 
 #define FLD_SPLIT_DISPLAY_CMD             BIT(1)
 #define FLD_SMART_PANEL_FREE_RUN          BIT(2)
@@ -21,8 +19,6 @@
 #define FLD_INTF_2_SW_TRG_MUX             BIT(8)
 #define FLD_TE_LINE_INTER_WATERLEVEL_MASK 0xFFFF
 
-#define MDP_DSPP_DBGBUS_CTRL              0x348
-#define MDP_DSPP_DBGBUS_STATUS            0x34C
 #define DANGER_STATUS                     0x360
 #define SAFE_STATUS                       0x364
 
@@ -39,7 +35,6 @@
 #define MDP_WD_TIMER_1_CTL                0x390
 #define MDP_WD_TIMER_1_CTL2               0x394
 #define MDP_WD_TIMER_1_LOAD_VALUE         0x398
-#define MDP_PERIPH_DBGBUS_CTRL            0x418
 #define MDP_WD_TIMER_2_CTL                0x420
 #define MDP_WD_TIMER_2_CTL2               0x424
 #define MDP_WD_TIMER_2_LOAD_VALUE         0x428
@@ -53,9 +48,6 @@
 #define MDP_TICK_COUNT                    16
 #define XO_CLK_RATE                       19200
 #define MS_TICKS_IN_SEC                   1000
-
-#define AUTOREFRESH_TEST_POINT	0x2
-#define TEST_MASK(id, tp)	((id << 4) | (tp << 1) | BIT(0))
 
 #define CALCULATE_WD_LOAD_VALUE(fps) \
 	((uint32_t)((MS_TICKS_IN_SEC * XO_CLK_RATE)/(MDP_TICK_COUNT * fps)))
@@ -139,6 +131,8 @@ static void sde_hw_setup_pp_split(struct sde_hw_mdp *mdp,
 	} else if (cfg->en && cfg->pp_split_slave != INTF_MAX) {
 		ppb_config |= (cfg->pp_split_slave - INTF_0 + 1) << 20;
 		ppb_config |= BIT(16); /* split enable */
+		/* overlap pixel width */
+		ppb_config |= ((cfg->overlap_pixel_width & 0x1F) << 24);
 		ppb_control = BIT(5); /* horz split*/
 	}
 
@@ -153,25 +147,6 @@ static void sde_hw_setup_pp_split(struct sde_hw_mdp *mdp,
 		SDE_REG_WRITE(&mdp->hw, PPB1_CONFIG, 0x0);
 		SDE_REG_WRITE(&mdp->hw, PPB1_CNTL, 0x0);
 	}
-}
-
-static void sde_hw_setup_cdm_output(struct sde_hw_mdp *mdp,
-		struct cdm_output_cfg *cfg)
-{
-	struct sde_hw_blk_reg_map *c;
-	u32 out_ctl = 0;
-
-	if (!mdp || !cfg)
-		return;
-
-	c = &mdp->hw;
-
-	if (cfg->wb_en)
-		out_ctl |= BIT(24);
-	else if (cfg->intf_en)
-		out_ctl |= BIT(19);
-
-	SDE_REG_WRITE(c, MDP_OUT_CTL_0, out_ctl);
 }
 
 static bool sde_hw_setup_clk_force_ctrl(struct sde_hw_mdp *mdp,
@@ -393,23 +368,7 @@ void sde_hw_reset_ubwc(struct sde_hw_mdp *mdp, struct sde_mdss_cfg *m)
 	c.blk_off = 0x0;
 	ubwc_version = SDE_REG_READ(&c, UBWC_DEC_HW_VERSION);
 
-	if (IS_UBWC_40_SUPPORTED(ubwc_version)) {
-		u32 ver = 2;
-		u32 mode = 1;
-		u32 reg = (m->mdp[0].ubwc_swizzle & 0x7) |
-			((m->mdp[0].ubwc_static & 0x1) << 3) |
-			((m->mdp[0].highest_bank_bit & 0x7) << 4) |
-			((m->macrotile_mode & 0x1) << 12);
-
-		if (IS_UBWC_30_SUPPORTED(m->ubwc_version)) {
-			ver = 1;
-			mode = 0;
-		}
-
-		SDE_REG_WRITE(&c, UBWC_STATIC, reg);
-		SDE_REG_WRITE(&c, UBWC_CTRL_2, ver);
-		SDE_REG_WRITE(&c, UBWC_PREDICTION_MODE, mode);
-	} else if (IS_UBWC_20_SUPPORTED(ubwc_version)) {
+	if (IS_UBWC_20_SUPPORTED(ubwc_version)) {
 		SDE_REG_WRITE(&c, UBWC_STATIC, m->mdp[0].ubwc_static);
 	} else if (IS_UBWC_30_SUPPORTED(ubwc_version)) {
 		u32 reg = m->mdp[0].ubwc_static |
@@ -426,6 +385,19 @@ void sde_hw_reset_ubwc(struct sde_hw_mdp *mdp, struct sde_mdss_cfg *m)
 	} else {
 		SDE_ERROR("Unsupported UBWC version 0x%08x\n", ubwc_version);
 	}
+}
+
+static void sde_hw_intf_dp_select(struct sde_hw_mdp *mdp,
+		struct sde_mdss_cfg *m)
+{
+	struct sde_hw_blk_reg_map *c;
+
+	if (!mdp)
+		return;
+
+	c = &mdp->hw;
+
+	SDE_REG_WRITE(c, DP_PHY_INTF_SEL, 0x41);
 }
 
 static void sde_hw_intf_audio_select(struct sde_hw_mdp *mdp)
@@ -456,6 +428,11 @@ struct sde_hw_sid *sde_hw_sid_init(void __iomem *addr,
 	u32 sid_len, const struct sde_mdss_cfg *m)
 {
 	struct sde_hw_sid *c;
+
+	if (!addr) {
+		SDE_DEBUG("Invalid addr\n");
+		return NULL;
+	}
 
 	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
@@ -488,65 +465,11 @@ static void sde_hw_program_cwb_ppb_ctrl(struct sde_hw_mdp *mdp,
 	}
 }
 
-static void sde_hw_set_hdr_plus_metadata(struct sde_hw_mdp *mdp,
-		u8 *payload, u32 len, u32 stream_id)
-{
-	u32 i;
-	size_t length = len - 1;
-	u32 offset = 0, data = 0, byte_idx = 0;
-	const u32 dword_size = sizeof(u32);
-
-	if (!payload || !len) {
-		SDE_ERROR("invalid payload with length: %d\n", len);
-		return;
-	}
-
-	if (stream_id)
-		offset = DP_DHDR_MEM_POOL_1_DATA - DP_DHDR_MEM_POOL_0_DATA;
-
-	/* payload[0] is set in VSCEXT header byte 1, skip programming here */
-	SDE_REG_WRITE(&mdp->hw, DP_DHDR_MEM_POOL_0_NUM_BYTES + offset, length);
-	for (i = 1; i < len; i++) {
-		if (byte_idx && !(byte_idx % dword_size)) {
-			SDE_REG_WRITE(&mdp->hw, DP_DHDR_MEM_POOL_0_DATA +
-				offset, data);
-			data = 0;
-		}
-
-		data |= payload[i] << (8 * (byte_idx++ % dword_size));
-	}
-
-	SDE_REG_WRITE(&mdp->hw, DP_DHDR_MEM_POOL_0_DATA + offset, data);
-}
-
-static u32 sde_hw_get_autorefresh_status(struct sde_hw_mdp *mdp, u32 intf_idx)
-{
-	struct sde_hw_blk_reg_map *c;
-	u32 autorefresh_status;
-	u32 blk_id = (intf_idx == INTF_2) ? 65 : 64;
-
-	if (!mdp)
-		return 0;
-
-	c = &mdp->hw;
-
-	SDE_REG_WRITE(&mdp->hw, MDP_PERIPH_DBGBUS_CTRL,
-			TEST_MASK(blk_id, AUTOREFRESH_TEST_POINT));
-	SDE_REG_WRITE(&mdp->hw, MDP_DSPP_DBGBUS_CTRL, 0x7001);
-	wmb(); /* make sure test bits were written */
-
-	autorefresh_status = SDE_REG_READ(&mdp->hw, MDP_DSPP_DBGBUS_STATUS);
-	SDE_REG_WRITE(&mdp->hw, MDP_PERIPH_DBGBUS_CTRL, 0x0);
-
-	return autorefresh_status;
-}
-
 static void _setup_mdp_ops(struct sde_hw_mdp_ops *ops,
 		unsigned long cap)
 {
 	ops->setup_split_pipe = sde_hw_setup_split_pipe;
 	ops->setup_pp_split = sde_hw_setup_pp_split;
-	ops->setup_cdm_output = sde_hw_setup_cdm_output;
 	ops->setup_clk_force_ctrl = sde_hw_setup_clk_force_ctrl;
 	ops->get_danger_status = sde_hw_get_danger_status;
 	ops->setup_vsync_source = sde_hw_setup_vsync_source;
@@ -555,15 +478,14 @@ static void _setup_mdp_ops(struct sde_hw_mdp_ops *ops,
 	ops->get_split_flush_status = sde_hw_get_split_flush;
 	ops->setup_dce = sde_hw_setup_dce;
 	ops->reset_ubwc = sde_hw_reset_ubwc;
+	ops->intf_dp_select = sde_hw_intf_dp_select;
 	ops->intf_audio_select = sde_hw_intf_audio_select;
 	ops->set_mdp_hw_events = sde_hw_mdp_events;
 	if (cap & BIT(SDE_MDP_VSYNC_SEL))
 		ops->setup_vsync_source = sde_hw_setup_vsync_source;
 	else
 		ops->setup_vsync_source = sde_hw_setup_vsync_source_v1;
-	if (cap & BIT(SDE_MDP_DHDR_MEMPOOL))
-		ops->set_hdr_plus_metadata = sde_hw_set_hdr_plus_metadata;
-	ops->get_autorefresh_status = sde_hw_get_autorefresh_status;
+
 }
 
 static const struct sde_mdp_cfg *_top_offset(enum sde_mdp mdp,

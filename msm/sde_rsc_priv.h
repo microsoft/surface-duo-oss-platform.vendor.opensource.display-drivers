@@ -24,15 +24,6 @@
 
 #define MAX_COUNT_SIZE_SUPPORTED	128
 
-#define SDE_RSC_REV_1			0x1
-#define SDE_RSC_REV_2			0x2
-#define SDE_RSC_REV_3			0x3
-
-#define SDE_RSC_HW_MAJOR_MINOR_STEP(major, minor, step) \
-	(((major & 0xff) << 16) |\
-	((minor & 0xff) << 8) | \
-	(step & 0xff))
-
 struct sde_rsc_priv;
 
 /**
@@ -127,6 +118,23 @@ struct sde_rsc_timer_config {
 	u32 bwi_threshold_time_ns;
 };
 
+struct sde_rsc_state_switch_ops {
+	int (*switch_to_idle)(struct sde_rsc_priv *rsc,
+		struct sde_rsc_cmd_config *config,
+		struct sde_rsc_client *caller_client,
+		int *wait_vblank_crtc_id);
+	int (*switch_to_vid)(struct sde_rsc_priv *rsc,
+		struct sde_rsc_cmd_config *config,
+		struct sde_rsc_client *caller_client,
+		int *wait_vblank_crtc_id);
+	int (*switch_to_cmd)(struct sde_rsc_priv *rsc,
+		struct sde_rsc_cmd_config *config,
+		struct sde_rsc_client *caller_client,
+		int *wait_vblank_crtc_id);
+	int (*switch_to_clk)(struct sde_rsc_priv *rsc,
+		int *wait_vblank_crtc_id);
+};
+
 /**
  * struct sde_rsc_bw_config: bandwidth configuration
  *
@@ -145,12 +153,13 @@ struct sde_rsc_bw_config {
 /**
  * struct sde_rsc_priv: sde resource state coordinator(rsc) private handle
  * @version:		rsc sequence version
- * @hw_drv_ver:		rscc hw version
  * @phandle:		module power handle for clocks
+ * @pclient:		module power client of phandle
  * @fs:			"MDSS GDSC" handle
  * @sw_fs_enabled:	track "MDSS GDSC" sw vote during probe
+ * @need_hwinit:	rsc hw init is required for the next update
  *
- * @rpmh_dev:		rpmh device node
+ * @disp_rsc:		display rsc handle
  * @drv_io:		sde drv io data mapping
  * @wrapper_io:		wrapper io data mapping
  *
@@ -184,18 +193,16 @@ struct sde_rsc_bw_config {
  * rsc_vsync_wait:   Refcount to indicate if we have to wait for the vsync.
  * rsc_vsync_waitq:   Queue to wait for the vsync.
  * bw_config:		check sde_rsc_bw_config structure description.
- * dev:			rsc device node
- * resource_refcount:	Track rsc resource refcount
- * post_poms:		bool if a panel mode change occurred
  */
 struct sde_rsc_priv {
 	u32 version;
-	u32 hw_drv_ver;
 	struct sde_power_handle phandle;
+	struct sde_power_client *pclient;
 	struct regulator *fs;
 	bool sw_fs_enabled;
+	bool need_hwinit;
 
-	struct device *rpmh_dev;
+	struct rpmh_client *disp_rsc;
 	struct dss_io_data drv_io;
 	struct dss_io_data wrapper_io;
 
@@ -207,6 +214,7 @@ struct sde_rsc_priv {
 	struct sde_rsc_cmd_config cmd_config;
 	u32	current_state;
 	u32	vsync_source;
+	struct sde_rsc_state_switch_ops state_ops;
 
 	u32 debug_mode;
 	struct dentry *debugfs_root;
@@ -226,10 +234,6 @@ struct sde_rsc_priv {
 	wait_queue_head_t rsc_vsync_waitq;
 
 	struct sde_rsc_bw_config bw_config;
-	struct device *dev;
-	atomic_t resource_refcount;
-
-	bool post_poms;
 };
 
 /**

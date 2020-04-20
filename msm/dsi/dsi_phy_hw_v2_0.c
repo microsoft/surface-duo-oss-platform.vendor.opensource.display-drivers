@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
+#define pr_fmt(fmt) "dsi-phy-hw:" fmt
 #include <linux/math64.h>
 #include <linux/delay.h>
 #include "dsi_hw.h"
@@ -140,7 +141,8 @@
 #define DSIPHY_CKLN_TIMING_CTRL_7		0x0324
 #define DSIPHY_CKLN_TIMING_CTRL_8		0x0328
 
-#define DSIPHY_PLL_RESETSM_CNTRL5		0x043c
+#define DSIPHY_PLL_RESETSM_CNTRL5               0x043c
+
 /**
  * regulator_enable() - enable regulators for DSI PHY
  * @phy:      Pointer to DSI PHY hardware object.
@@ -162,7 +164,7 @@ void dsi_phy_hw_v2_0_regulator_enable(struct dsi_phy_hw *phy,
 	/* make sure all values are written to hardware */
 	wmb();
 
-	DSI_PHY_DBG(phy, "Phy regulators enabled\n");
+	pr_debug("[DSI_%d] Phy regulators enabled\n", phy->index);
 }
 
 /**
@@ -171,7 +173,7 @@ void dsi_phy_hw_v2_0_regulator_enable(struct dsi_phy_hw *phy,
  */
 void dsi_phy_hw_v2_0_regulator_disable(struct dsi_phy_hw *phy)
 {
-	DSI_PHY_DBG(phy, "Phy regulators disabled\n");
+	pr_debug("[DSI_%d] Phy regulators disabled\n", phy->index);
 }
 
 /**
@@ -266,7 +268,7 @@ void dsi_phy_hw_v2_0_enable(struct dsi_phy_hw *phy,
 	if (cfg->pll_source == DSI_PLL_SOURCE_NON_NATIVE)
 		DSI_W32(phy, DSIPHY_PLL_PLL_BANDGAP, 0x3);
 
-	DSI_PHY_DBG(phy, "Phy enabled\n");
+	pr_debug("[DSI_%d]Phy enabled ", phy->index);
 }
 
 /**
@@ -279,7 +281,7 @@ void dsi_phy_hw_v2_0_disable(struct dsi_phy_hw *phy,
 	DSI_W32(phy, DSIPHY_PLL_CLKBUFLR_EN, 0);
 	DSI_W32(phy, DSIPHY_CMN_GLBL_TEST_CTRL, 0);
 	DSI_W32(phy, DSIPHY_CMN_CTRL_0, 0);
-	DSI_PHY_DBG(phy, "Phy disabled\n");
+	pr_debug("[DSI_%d]Phy disabled ", phy->index);
 }
 
 /**
@@ -303,10 +305,10 @@ void dsi_phy_hw_v2_0_idle_on(struct dsi_phy_hw *phy, struct dsi_phy_cfg *cfg)
 			DSI_W32(phy, DSIPHY_DLNX_STRENGTH_CTRL(i+1, j),
 				strength->lane[i][j]);
 	}
-	wmb(); /* make sure write happens */
-	DSI_PHY_DBG(phy, "Phy enabled out of idle screen\n");
-}
 
+	wmb(); /* make sure write happens */
+	pr_debug("[DSI_%d]Phy enabled out of idle screen\n", phy->index);
+}
 
 /**
  * dsi_phy_hw_v2_0_idle_off() - Disable DSI PHY hardware during idle screen
@@ -318,6 +320,7 @@ void dsi_phy_hw_v2_0_idle_off(struct dsi_phy_hw *phy)
 	bool is_split_link = test_bit(DSI_PHY_SPLIT_LINK, phy->feature_map);
 
 	DSI_W32(phy, DSIPHY_CMN_CTRL_0, 0x7f);
+
 	for (i = DSI_LOGICAL_LANE_0; i < DSI_LANE_MAX; i++)
 		DSI_W32(phy, DSIPHY_DLNX_VREG_CNTRL(i), 0x1c);
 	if (is_split_link)
@@ -333,7 +336,7 @@ void dsi_phy_hw_v2_0_idle_off(struct dsi_phy_hw *phy)
 		DSIPHY_DLNX_STRENGTH_CTRL(DSI_LOGICAL_CLOCK_LANE+1, 1), 0x0);
 
 	wmb(); /* make sure write happens */
-	DSI_PHY_DBG(phy, "Phy disabled during idle screen\n");
+	pr_debug("[DSI_%d]Phy disabled during idle screen\n", phy->index);
 }
 
 int dsi_phy_hw_timing_val_v2_0(struct dsi_phy_per_lane_cfgs *timing_cfg,
@@ -342,7 +345,7 @@ int dsi_phy_hw_timing_val_v2_0(struct dsi_phy_per_lane_cfgs *timing_cfg,
 	int i = 0, j = 0;
 
 	if (size != (DSI_LANE_MAX * DSI_MAX_SETTINGS)) {
-		DSI_ERR("Unexpected timing array size %d\n", size);
+		pr_err("Unexpected timing array size %d\n", size);
 		return -EINVAL;
 	}
 
@@ -360,7 +363,7 @@ void dsi_phy_hw_v2_0_clamp_ctrl(struct dsi_phy_hw *phy, bool enable)
 	u32 clamp_reg = 0;
 
 	if (!phy->phy_clamp_base) {
-		DSI_PHY_DBG(phy, "phy_clamp_base NULL\n");
+		pr_debug("phy_clamp_base NULL\n");
 		return;
 	}
 
@@ -368,22 +371,24 @@ void dsi_phy_hw_v2_0_clamp_ctrl(struct dsi_phy_hw *phy, bool enable)
 		clamp_reg |= BIT(0);
 		DSI_MISC_W32(phy, DSI_MDP_ULPS_CLAMP_ENABLE_OFF,
 				clamp_reg);
-		DSI_PHY_DBG(phy, "clamp enabled\n");
+		pr_debug("clamp enabled\n");
 	} else {
 		clamp_reg &= ~BIT(0);
 		DSI_MISC_W32(phy, DSI_MDP_ULPS_CLAMP_ENABLE_OFF,
 				clamp_reg);
-		DSI_PHY_DBG(phy, "clamp disabled\n");
+		pr_debug("clamp disabled\n");
 	}
 }
 
 void dsi_phy_hw_v2_0_dyn_refresh_config(struct dsi_phy_hw *phy,
-		struct dsi_phy_cfg *cfg, bool is_master)
+		struct dsi_phy_cfg *cfg, bool is_master, bool is_cphy)
 {
 	u32 glbl_tst_cntrl;
 
+
 	if (is_master) {
 		glbl_tst_cntrl = DSI_R32(phy, DSIPHY_CMN_GLBL_TEST_CTRL);
+
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL0,
 				DSIPHY_CMN_GLBL_TEST_CTRL,
 				DSIPHY_PLL_PLL_BANDGAP,
@@ -440,8 +445,7 @@ void dsi_phy_hw_v2_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 				DSIPHY_DLN3_TIMING_CTRL_7,
 				DSIPHY_CKLN_TIMING_CTRL_7,
 				cfg->timing.lane[3][3], cfg->timing.lane[4][3]);
-				DSI_DYN_REF_REG_W(phy->dyn_pll_base,
-				DSI_DYN_REFRESH_PLL_CTRL16,
+		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL16,
 				DSIPHY_DLN0_TIMING_CTRL_8,
 				DSIPHY_DLN1_TIMING_CTRL_8,
 				cfg->timing.lane[0][4], cfg->timing.lane[1][4]);
@@ -463,6 +467,7 @@ void dsi_phy_hw_v2_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 				((glbl_tst_cntrl) & (~BIT(2))),
 				((glbl_tst_cntrl) & (~BIT(2))));
 	} else {
+
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL0,
 				DSIPHY_DLN0_CFG1, DSIPHY_DLN1_CFG1, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL1,
@@ -529,29 +534,29 @@ void dsi_phy_hw_v2_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL19,
 				0x0110, 0x0110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL20,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL21,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL22,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL23,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL24,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL25,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL26,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL27,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL28,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL29,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL30,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL31,
-				0x0110, 0x0110, 0, 0);
+				0x110, 0x110, 0, 0);
 		DSI_GEN_W32(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_UPPER_ADDR,
 				0x0);
 		DSI_GEN_W32(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_UPPER_ADDR2,
@@ -562,7 +567,7 @@ void dsi_phy_hw_v2_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 }
 
 void dsi_phy_hw_v2_0_dyn_refresh_pipe_delay(struct dsi_phy_hw *phy,
-			struct dsi_dyn_clk_delay *delay)
+		struct dsi_dyn_clk_delay *delay)
 {
 	if (!delay)
 		return;
@@ -577,6 +582,7 @@ void dsi_phy_hw_v2_0_dyn_refresh_pipe_delay(struct dsi_phy_hw *phy,
 
 void dsi_phy_hw_v2_0_dyn_refresh_helper(struct dsi_phy_hw *phy, u32 offset)
 {
+
 	u32 reg;
 
 	/*

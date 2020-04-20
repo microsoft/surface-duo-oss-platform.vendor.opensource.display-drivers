@@ -38,7 +38,7 @@ static int mdss_pll_read_stored_trim_codes(
 		struct dfps_codes_info *codes_info =
 			&dsi_pll_res->dfps->codes_dfps[i];
 
-		pr_debug("valid=%d vco_rate=%d, code %d %d\n",
+		pr_debug("valid=%d, vco_rate=%d, code %d %d\n",
 			codes_info->is_valid, codes_info->clk_rate,
 			codes_info->pll_codes.pll_codes_1,
 			codes_info->pll_codes.pll_codes_2);
@@ -421,10 +421,10 @@ static void mdss_dsi_pll_14nm_input_init(struct mdss_pll_resources *pll,
 
 	pdb->in.pll_ie_trim = 4;	/* 4, reg: 0x0400 */
 	pdb->in.pll_ip_trim = 4;	/* 4, reg: 0x0404 */
-	pdb->in.pll_cpcset_cur = 0;	/* 0, reg: 0x04f0, bit 0 - 2 */
+	pdb->in.pll_cpcset_cur = 1;	/* 1, reg: 0x04f0, bit 0 - 2 */
 	pdb->in.pll_cpmset_cur = 1;	/* 1, reg: 0x04f0, bit 3 - 5 */
-	pdb->in.pll_icpmset = 7;	/* 7, reg: 0x04fc, bit 3 - 5 */
-	pdb->in.pll_icpcset = 7;	/* 7, reg: 0x04fc, bit 0 - 2 */
+	pdb->in.pll_icpmset = 7;	/* 4, reg: 0x04fc, bit 3 - 5 */
+	pdb->in.pll_icpcset = 7;	/* 4, reg: 0x04fc, bit 0 - 2 */
 	pdb->in.pll_icpmset_p = 0;	/* 0, reg: 0x04f4, bit 0 - 2 */
 	pdb->in.pll_icpmset_m = 0;	/* 0, reg: 0x04f4, bit 3 - 5 */
 	pdb->in.pll_icpcset_p = 0;	/* 0, reg: 0x04f8, bit 0 - 2 */
@@ -1032,11 +1032,10 @@ long pll_vco_round_rate_14nm(struct clk_hw *hw, unsigned long rate,
 						unsigned long *parent_rate)
 {
 	unsigned long rrate = rate;
-	u64 div;
+	u32 div;
 	struct dsi_pll_vco_clk *vco = to_vco_clk_hw(hw);
 
-	div = vco->min_rate;
-	do_div(div, rate);
+	div = vco->min_rate / rate;
 	if (div > 15) {
 		/* rate < 86.67 Mhz */
 		pr_err("rate=%lu NOT supportted\n", rate);
@@ -1103,7 +1102,7 @@ void pll_vco_unprepare_14nm(struct clk_hw *hw)
 		return;
 	}
 
-	pll->vco_cached_rate = clk_hw_get_rate(hw);
+	pll->vco_cached_rate = clk_get_rate(hw->clk);
 	dsi_pll_disable(hw);
 }
 

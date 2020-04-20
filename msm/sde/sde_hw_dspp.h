@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_DSPP_H
@@ -158,57 +158,6 @@ struct sde_hw_dspp_ops {
 	void (*ad_read_intr_resp)(struct sde_hw_dspp *ctx, u32 event,
 			u32 *resp_in, u32 *resp_out);
 
-	/**
-	 * setup_ltm_init - setup LTM INIT
-	 * @ctx: Pointer to dspp context
-	 * @cfg: Pointer to configuration
-	 */
-	void (*setup_ltm_init)(struct sde_hw_dspp *ctx, void *cfg);
-
-	/**
-	 * setup_ltm_roi - setup LTM ROI
-	 * @ctx: Pointer to dspp context
-	 * @cfg: Pointer to configuration
-	 */
-	void (*setup_ltm_roi)(struct sde_hw_dspp *ctx, void *cfg);
-
-	/**
-	 * setup_ltm_vlut - setup LTM VLUT
-	 * @ctx: Pointer to dspp context
-	 * @cfg: Pointer to configuration
-	 */
-	void (*setup_ltm_vlut)(struct sde_hw_dspp *ctx, void *cfg);
-
-	/**
-	 * setup_ltm_hist_ctrl - setup LTM histogram control
-	 * @ctx: Pointer to dspp context
-	 * @cfg: Pointer to configuration
-	 * @enable: feature enable/disable value
-	 * @iova: aligned hist buffer address
-	 */
-	void (*setup_ltm_hist_ctrl)(struct sde_hw_dspp *ctx, void *cfg,
-				    bool enable, u64 iova);
-
-	/**
-	 * setup_ltm_hist_buffer - setup LTM histogram buffer
-	 * @ctx: Pointer to dspp context
-	 * @iova: aligned hist buffer address
-	 */
-	void (*setup_ltm_hist_buffer)(struct sde_hw_dspp *ctx, u64 iova);
-
-	/**
-	 * setup_ltm_thresh - setup LTM histogram thresh
-	 * @ctx: Pointer to dspp context
-	 * @cfg: Pointer to configuration
-	 */
-	void (*setup_ltm_thresh)(struct sde_hw_dspp *ctx, void *cfg);
-
-	/**
-	 * ltm_read_intr_status - function to read ltm interrupt status
-	 * @ctx: Pointer to dspp context
-	 * @status: Pointer to u32 where ltm status value is dumped.
-	 */
-	void (*ltm_read_intr_status)(struct sde_hw_dspp *ctx, u32 *status);
 };
 
 /**

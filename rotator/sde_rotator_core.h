@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef SDE_ROTATOR_CORE_H
@@ -313,28 +313,6 @@ struct sde_rot_entry {
 };
 
 /*
- * struct sde_rot_trace_entry - structure used to pass info to trace
- */
-struct sde_rot_trace_entry {
-	u32 wb_idx;
-	u32 flags;
-	u32 input_format;
-	u32 input_width;
-	u32 input_height;
-	u32 src_x;
-	u32 src_y;
-	u32 src_w;
-	u32 src_h;
-	u32 output_format;
-	u32 output_width;
-	u32 output_height;
-	u32 dst_x;
-	u32 dst_y;
-	u32 dst_w;
-	u32 dst_h;
-};
-
-/*
  * struct sde_rot_perf - rotator session performance configuration
  * @list: list of performance configuration under one session
  * @config: current rotation configuration
@@ -407,6 +385,7 @@ struct sde_rot_bus_data_type {
  * @regulator_enable: true if foot switch is enabled; false otherwise
  * @res_ref_cnt: reference count of how many times resource is requested
  * @rot_enable_clk_cnt: reference count of how many times clock is requested
+ * @pm_rot_enable_clk_cnt : tracks the clock enable count on pm suspend
  * @rot_clk: array of rotator and periphery clocks
  * @num_rot_clk: size of the rotator clock array
  * @rdot_limit: current read OT limit
@@ -453,6 +432,7 @@ struct sde_rot_mgr {
 
 	int res_ref_cnt;
 	int rot_enable_clk_cnt;
+	int pm_rot_enable_clk_cnt;
 	struct sde_rot_clk *rot_clk;
 	int num_rot_clk;
 	u32 rdot_limit;

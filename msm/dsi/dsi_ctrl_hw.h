@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_CTRL_HW_H_
@@ -12,13 +12,6 @@
 #include <linux/bitmap.h>
 
 #include "dsi_defs.h"
-
-#define DSI_CTRL_HW_DBG(c, fmt, ...)	DRM_DEV_DEBUG(NULL, "[msm-dsi-debug]: DSI_%d: "\
-		fmt, c ? c->index : -1,	##__VA_ARGS__)
-#define DSI_CTRL_HW_ERR(c, fmt, ...)	DRM_DEV_ERROR(NULL, "[msm-dsi-error]: DSI_%d: "\
-		fmt, c ? c->index : -1,	##__VA_ARGS__)
-#define DSI_CTRL_HW_INFO(c, fmt, ...)	DRM_DEV_INFO(NULL, "[msm-dsi-info]: DSI_%d: "\
-		fmt, c ? c->index : -1,	##__VA_ARGS__)
 
 /**
  * Modifier flag for command transmission. If this flag is set, command
@@ -580,6 +573,12 @@ struct dsi_ctrl_hw_ops {
 				 u32 *hw_read_cnt);
 
 	/**
+	 * get_cont_splash_status() - get continuous splash status
+	 * @ctrl:           Pointer to the controller host hardware.
+	 */
+	bool (*get_cont_splash_status)(struct dsi_ctrl_hw *ctrl);
+
+	/**
 	 * wait_for_lane_idle() - wait for DSI lanes to go to idle state
 	 * @ctrl:          Pointer to the controller host hardware.
 	 * @lanes:         ORed list of lanes (enum dsi_data_lanes) which need
@@ -830,6 +829,7 @@ struct dsi_ctrl_hw_ops {
 	 * @ctrl:         Pointer to the controller host hardware.
 	 */
 	int (*wait4dynamic_refresh_done)(struct dsi_ctrl_hw *ctrl);
+
 	/**
 	 * hw.ops.hs_req_sel() - enable continuous clk support through phy
 	 * @ctrl:	Pointer to the controller host hardware.

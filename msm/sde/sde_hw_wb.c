@@ -200,7 +200,33 @@ static void sde_hw_wb_roi(struct sde_hw_wb *ctx, struct sde_hw_wb_cfg *wb)
 	SDE_REG_WRITE(c, WB_OUT_SIZE, out_size);
 }
 
-static void sde_hw_wb_setup_qos_lut(struct sde_hw_wb *ctx,
+static void sde_hw_wb_setup_danger_safe_lut(struct sde_hw_wb *ctx,
+		struct sde_hw_wb_qos_cfg *cfg)
+{
+	struct sde_hw_blk_reg_map *c = &ctx->hw;
+
+	if (!ctx || !cfg)
+		return;
+
+	SDE_REG_WRITE(c, WB_DANGER_LUT, cfg->danger_lut);
+	SDE_REG_WRITE(c, WB_SAFE_LUT, cfg->safe_lut);
+}
+
+static void sde_hw_wb_setup_creq_lut(struct sde_hw_wb *ctx,
+		struct sde_hw_wb_qos_cfg *cfg)
+{
+	struct sde_hw_blk_reg_map *c = &ctx->hw;
+
+	if (!ctx || !cfg)
+		return;
+
+	if (ctx->caps && test_bit(SDE_WB_QOS_8LVL, &ctx->caps->features)) {
+		SDE_REG_WRITE(c, WB_CREQ_LUT_0, cfg->creq_lut);
+		SDE_REG_WRITE(c, WB_CREQ_LUT_1, cfg->creq_lut >> 32);
+	}
+}
+
+static void sde_hw_wb_setup_qos_ctrl(struct sde_hw_wb *ctx,
 		struct sde_hw_wb_qos_cfg *cfg)
 {
 	struct sde_hw_blk_reg_map *c = &ctx->hw;
@@ -208,14 +234,6 @@ static void sde_hw_wb_setup_qos_lut(struct sde_hw_wb *ctx,
 
 	if (!ctx || !cfg)
 		return;
-
-	SDE_REG_WRITE(c, WB_DANGER_LUT, cfg->danger_lut);
-	SDE_REG_WRITE(c, WB_SAFE_LUT, cfg->safe_lut);
-
-	if (ctx->caps && test_bit(SDE_WB_QOS_8LVL, &ctx->caps->features)) {
-		SDE_REG_WRITE(c, WB_CREQ_LUT_0, cfg->creq_lut);
-		SDE_REG_WRITE(c, WB_CREQ_LUT_1, cfg->creq_lut >> 32);
-	}
 
 	if (cfg->danger_safe_en)
 		qos_ctrl |= WB_QOS_CTRL_DANGER_SAFE_EN;
@@ -263,8 +281,8 @@ static void sde_hw_wb_bind_pingpong_blk(
 }
 
 static void sde_hw_wb_program_cwb_ctrl(struct sde_hw_wb *ctx,
-	const enum sde_cwb cur_idx, const enum sde_cwb data_src,
-	bool dspp_out, bool enable)
+		const enum sde_cwb cur_idx, const enum sde_cwb data_src,
+		bool dspp_out, bool enable)
 {
 	struct sde_hw_blk_reg_map *c;
 	u32 blk_base;
@@ -293,8 +311,12 @@ static void _setup_wb_ops(struct sde_hw_wb_ops *ops,
 	if (test_bit(SDE_WB_XY_ROI_OFFSET, &features))
 		ops->setup_roi = sde_hw_wb_roi;
 
-	if (test_bit(SDE_WB_QOS, &features))
-		ops->setup_qos_lut = sde_hw_wb_setup_qos_lut;
+	if (test_bit(SDE_WB_QOS, &features)) {
+		ops->setup_danger_safe_lut =
+			sde_hw_wb_setup_danger_safe_lut;
+		ops->setup_creq_lut = sde_hw_wb_setup_creq_lut;
+		ops->setup_qos_ctrl = sde_hw_wb_setup_qos_ctrl;
+	}
 
 	if (test_bit(SDE_WB_CDP, &features))
 		ops->setup_cdp = sde_hw_wb_setup_cdp;

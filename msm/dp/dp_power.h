@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DP_POWER_H_
@@ -12,24 +12,22 @@
 /**
  * sruct dp_power - DisplayPort's power related data
  *
+ * @sim_mode: simulation mode enable flag
  * @init: initializes the regulators/core clocks/GPIOs/pinctrl
  * @deinit: turns off the regulators/core clocks/GPIOs/pinctrl
  * @clk_enable: enable/disable the DP clocks
  * @set_pixel_clk_parent: set the parent of DP pixel clock
- * @clk_get_rate: get the current rate for provided clk_name
  */
 struct dp_power {
-	struct drm_device *drm_dev;
-	struct sde_power_handle *phandle;
+	bool sim_mode;
+
 	int (*init)(struct dp_power *power, bool flip);
 	int (*deinit)(struct dp_power *power);
 	int (*clk_enable)(struct dp_power *power, enum dp_pm_type pm_type,
 				bool enable);
 	int (*set_pixel_clk_parent)(struct dp_power *power, u32 stream_id);
-	u64 (*clk_get_rate)(struct dp_power *power, char *clk_name);
 	int (*power_client_init)(struct dp_power *power,
-		struct sde_power_handle *phandle,
-		struct drm_device *drm_dev);
+				struct sde_power_handle *phandle);
 	void (*power_client_deinit)(struct dp_power *power);
 };
 

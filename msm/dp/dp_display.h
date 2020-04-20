@@ -12,27 +12,16 @@
 
 #include "dp_panel.h"
 
-#define DP_MST_SIM_MAX_PORTS	8
+#define DP_MST_SIM_MAX_PORTS	2
 
 enum dp_drv_state {
 	PM_DEFAULT,
 	PM_SUSPEND,
 };
 
-struct dp_mst_hpd_info {
-	bool mst_protocol;
-	bool mst_hpd_sim;
-	u32 mst_port_cnt;
-	u8 *edid;
-	bool mst_sim_add_con;
-	bool mst_sim_remove_con;
-	int mst_sim_remove_con_id;
-};
-
 struct dp_mst_drm_cbs {
-	void (*hpd)(void *display, bool hpd_status,
-			struct dp_mst_hpd_info *info);
-	void (*hpd_irq)(void *display, struct dp_mst_hpd_info *info);
+	void (*hpd)(void *display, bool hpd_status);
+	void (*hpd_irq)(void *display);
 	void (*set_drv_state)(void *dp_display,
 			enum dp_drv_state mst_state);
 };
@@ -70,6 +59,8 @@ struct dp_display {
 	bool is_sst_connected;
 	bool is_mst_supported;
 	u32 max_pclk_khz;
+	u32 max_hdisplay;
+	u32 max_vdisplay;
 	u32 no_mst_encoder;
 	void *dp_mst_prv_info;
 
@@ -82,8 +73,7 @@ struct dp_display {
 	int (*set_mode)(struct dp_display *dp_display, void *panel,
 			struct dp_display_mode *mode);
 	enum drm_mode_status (*validate_mode)(struct dp_display *dp_display,
-			void *panel, struct drm_display_mode *mode,
-			const struct msm_resource_caps_info *avail_res);
+			void *panel, struct drm_display_mode *mode);
 	int (*get_modes)(struct dp_display *dp_display, void *panel,
 		struct dp_display_mode *dp_mode);
 	int (*prepare)(struct dp_display *dp_display, void *panel);
@@ -92,10 +82,7 @@ struct dp_display {
 	struct dp_debug *(*get_debug)(struct dp_display *dp_display);
 	void (*post_open)(struct dp_display *dp_display);
 	int (*config_hdr)(struct dp_display *dp_display, void *panel,
-				struct drm_msm_ext_hdr_metadata *hdr_meta,
-				bool dhdr_update);
-	int (*set_colorspace)(struct dp_display *dp_display, void *panel,
-				u32 colorspace);
+				struct drm_msm_ext_hdr_metadata *hdr_meta);
 	int (*post_init)(struct dp_display *dp_display);
 	int (*mst_install)(struct dp_display *dp_display,
 			struct dp_mst_drm_install_info *mst_install_info);
@@ -126,29 +113,14 @@ struct dp_display {
 			struct drm_connector *connector, char *pps_cmd);
 	void (*wakeup_phy_layer)(struct dp_display *dp_display,
 			bool wakeup);
+	int (*get_display_type)(struct dp_display *dp_display,
+			const char **display_type);
+	int (*mst_get_fixed_topology_display_type)(
+			struct dp_display *dp_display, u32 strm_id,
+			const char **display_type);
 };
 
-#ifdef CONFIG_DRM_MSM_DP
 int dp_display_get_num_of_displays(void);
 int dp_display_get_displays(void **displays, int count);
 int dp_display_get_num_of_streams(void);
-#else
-static inline int dp_display_get_num_of_displays(void)
-{
-	return 0;
-}
-static inline int dp_display_get_displays(void **displays, int count)
-{
-	return 0;
-}
-static inline int dp_display_get_num_of_streams(void)
-{
-	return 0;
-}
-static inline int dp_connector_update_pps(struct drm_connector *connector,
-		char *pps_cmd, void *display)
-{
-	return 0;
-}
-#endif
 #endif /* _DP_DISPLAY_H_ */

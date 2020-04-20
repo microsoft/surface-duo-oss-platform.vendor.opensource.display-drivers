@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_CLK_H_
@@ -10,7 +10,7 @@
 #include <linux/platform_device.h>
 #include <linux/types.h>
 #include <linux/clk.h>
-#include <drm/drmP.h>
+#include "sde_power_handle.h"
 
 #define MAX_STRING_LEN 32
 #define MAX_DSI_CTRL 2
@@ -72,7 +72,8 @@ struct clk_ctrl_cb {
  * @core_mmss_clk:       Handle to MMSS core clock.
  * @bus_clk:             Handle to bus clock.
  * @mnoc_clk:            Handle to MMSS NOC clock.
- * @drm:                 Pointer to drm device node
+ * @dsi_core_client:	 Pointer to SDE power client
+ * @phandle:             Pointer to SDE power handle
  */
 struct dsi_core_clk_info {
 	struct clk *mdp_core_clk;
@@ -80,7 +81,8 @@ struct dsi_core_clk_info {
 	struct clk *core_mmss_clk;
 	struct clk *bus_clk;
 	struct clk *mnoc_clk;
-	struct drm_device *drm;
+	struct sde_power_client *dsi_core_client;
+	struct sde_power_handle *phandle;
 };
 
 /**
@@ -252,13 +254,13 @@ void *dsi_register_clk_handle(void *clk_mngr, char *client);
 int dsi_deregister_clk_handle(void *client);
 
 /**
- * dsi_display_link_clk_force_update_ctrl() - force to set link clks
+ * dsi_display_link_clk_force_update() - force to set link clks
  * @handle:     Handle of desired DSI clock client.
  *
  * return: error code in case of failure or 0 for success.
  */
 
-int dsi_display_link_clk_force_update_ctrl(void *handle);
+int dsi_display_link_clk_force_update(void *handle);
 
 /**
  * dsi_display_clk_ctrl() - set frequencies for link clks
@@ -325,4 +327,14 @@ int dsi_clk_prepare_enable(struct dsi_clk_link_set *clk);
  * @clk:       list of src clocks.
  */
 void dsi_clk_disable_unprepare(struct dsi_clk_link_set *clk);
+
+/**
+ * dsi_clk_req_state() - request to change dsi clock state
+ * @client:       DSI clocl client pointer.
+ * @clk:          DSI clock list.
+ * @state:        Requested state of the clock.
+ */
+int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
+	enum dsi_clk_state state);
+
 #endif /* _DSI_CLK_H_ */

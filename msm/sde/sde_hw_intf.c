@@ -169,7 +169,7 @@ static void sde_hw_intf_avr_ctrl(struct sde_hw_intf *ctx,
 	if (avr_params->avr_mode) {
 		avr_ctrl = BIT(0);
 		avr_mode =
-		(avr_params->avr_mode == SDE_RM_QSYNC_ONE_SHOT_MODE) ?
+			(avr_params->avr_mode == SDE_RM_QSYNC_ONE_SHOT_MODE) ?
 			(BIT(0) | BIT(8)) : 0x0;
 	}
 
@@ -353,6 +353,25 @@ static void sde_hw_intf_setup_prg_fetch(
 	SDE_REG_WRITE(c, INTF_CONFIG, fetch_enable);
 }
 
+static void sde_hw_intf_setup_rot_start(
+		struct sde_hw_intf *intf,
+		const struct intf_prog_fetch *fetch)
+{
+	struct sde_hw_blk_reg_map *c = &intf->hw;
+	int fetch_enable;
+
+	fetch_enable = SDE_REG_READ(c, INTF_CONFIG);
+	if (fetch->enable) {
+		fetch_enable |= BIT(19);
+		SDE_REG_WRITE(c, INTF_PROG_ROT_START,
+				fetch->fetch_start);
+	} else {
+		fetch_enable &= ~BIT(19);
+	}
+
+	SDE_REG_WRITE(c, INTF_CONFIG, fetch_enable);
+}
+
 static void sde_hw_intf_bind_pingpong_blk(
 		struct sde_hw_intf *intf,
 		bool enable,
@@ -369,13 +388,16 @@ static void sde_hw_intf_bind_pingpong_blk(
 	mux_cfg = SDE_REG_READ(c, INTF_MUX);
 	mux_cfg &= ~0xf;
 
-	if (enable) {
+	if (enable)
 		mux_cfg |= (pp - PINGPONG_0) & 0x7;
-		if (intf->cfg.split_link_en)
-			mux_cfg = 0x60000;
-	} else {
+	else
 		mux_cfg = 0xf000f;
-	}
+
+	if (intf->cfg.split_link_en)
+		mux_cfg = 0x60000;
+
+	if (intf->cfg.pp_slave_intf)
+		mux_cfg = 0x6;
 
 	SDE_REG_WRITE(c, INTF_MUX, mux_cfg);
 }
@@ -423,40 +445,16 @@ static void sde_hw_intf_setup_misr(struct sde_hw_intf *intf,
 
 	if (enable)
 		config = (frame_count & MISR_FRAME_COUNT_MASK) |
-				MISR_CTRL_ENABLE |
-				INTF_MISR_CTRL_FREE_RUN_MASK |
-				INTF_MISR_CTRL_INPUT_SEL_DATA;
+			MISR_CTRL_ENABLE | INTF_MISR_CTRL_FREE_RUN_MASK;
 
 	SDE_REG_WRITE(c, INTF_MISR_CTRL, config);
 }
 
-static int sde_hw_intf_collect_misr(struct sde_hw_intf *intf, bool nonblock,
-		 u32 *misr_value)
+static u32 sde_hw_intf_collect_misr(struct sde_hw_intf *intf)
 {
 	struct sde_hw_blk_reg_map *c = &intf->hw;
-	u32 ctrl = 0;
 
-	if (!misr_value)
-		return -EINVAL;
-
-	ctrl = SDE_REG_READ(c, INTF_MISR_CTRL);
-	if (!nonblock) {
-		if (ctrl & MISR_CTRL_ENABLE) {
-			int rc;
-
-			rc = readl_poll_timeout(c->base_off + c->blk_off +
-					INTF_MISR_CTRL, ctrl,
-					(ctrl & MISR_CTRL_STATUS) > 0, 500,
-					84000);
-			if (rc)
-				return rc;
-		} else {
-			return -EINVAL;
-		}
-	}
-
-	*misr_value =  SDE_REG_READ(c, INTF_MISR_SIGNATURE);
-	return 0;
+	return SDE_REG_READ(c, INTF_MISR_SIGNATURE);
 }
 
 static u32 sde_hw_intf_get_line_count(struct sde_hw_intf *intf)
@@ -492,7 +490,6 @@ static int sde_hw_intf_setup_te_config(struct sde_hw_intf *intf,
 	SDE_REG_WRITE(c, INTF_TEAR_SYNC_CONFIG_HEIGHT, te->sync_cfg_height);
 	SDE_REG_WRITE(c, INTF_TEAR_VSYNC_INIT_VAL, te->vsync_init_val);
 	SDE_REG_WRITE(c, INTF_TEAR_RD_PTR_IRQ, te->rd_ptr_irq);
-	SDE_REG_WRITE(c, INTF_TEAR_WR_PTR_IRQ, te->wr_ptr_irq);
 	SDE_REG_WRITE(c, INTF_TEAR_START_POS, te->start_pos);
 	SDE_REG_WRITE(c, INTF_TEAR_SYNC_THRESH,
 			((te->sync_threshold_continue << 16) |
@@ -514,11 +511,10 @@ static int sde_hw_intf_setup_autorefresh_config(struct sde_hw_intf *intf,
 
 	c = &intf->hw;
 
-	refresh_cfg = SDE_REG_READ(c, INTF_TEAR_AUTOREFRESH_CONFIG);
 	if (cfg->enable)
 		refresh_cfg = BIT(31) | cfg->frame_count;
 	else
-		refresh_cfg &= ~BIT(31);
+		refresh_cfg = 0;
 
 	SDE_REG_WRITE(c, INTF_TEAR_AUTOREFRESH_CONFIG, refresh_cfg);
 
@@ -630,30 +626,6 @@ static int sde_hw_intf_get_vsync_info(struct sde_hw_intf *intf,
 	val = SDE_REG_READ(c, INTF_TEAR_LINE_COUNT);
 	info->wr_ptr_line_count = val & 0xffff;
 
-	val = SDE_REG_READ(c, INTF_FRAME_COUNT);
-	info->intf_frame_count = val;
-
-	return 0;
-}
-
-static int sde_hw_intf_v1_check_and_reset_tearcheck(struct sde_hw_intf *intf,
-		struct intf_tear_status *status)
-{
-	struct sde_hw_blk_reg_map *c = &intf->hw;
-	u32 start_pos;
-
-	if (!intf || !status)
-		return -EINVAL;
-
-	c = &intf->hw;
-
-	status->read_count = SDE_REG_READ(c, INTF_TEAR_INT_COUNT_VAL);
-	start_pos = SDE_REG_READ(c, INTF_TEAR_START_POS);
-	status->write_count = SDE_REG_READ(c, INTF_TEAR_SYNC_WRCOUNT);
-	status->write_count &= 0xffff0000;
-	status->write_count |= start_pos;
-	SDE_REG_WRITE(c, INTF_TEAR_SYNC_WRCOUNT, status->write_count);
-
 	return 0;
 }
 
@@ -683,6 +655,8 @@ static void _setup_intf_ops(struct sde_hw_intf_ops *ops,
 	ops->avr_setup = sde_hw_intf_avr_setup;
 	ops->avr_trigger = sde_hw_intf_avr_trigger;
 	ops->avr_ctrl = sde_hw_intf_avr_ctrl;
+	if (cap & BIT(SDE_INTF_ROT_START))
+		ops->setup_rot_start = sde_hw_intf_setup_rot_start;
 
 	if (cap & BIT(SDE_INTF_INPUT_CTRL))
 		ops->bind_pingpong_blk = sde_hw_intf_bind_pingpong_blk;
@@ -698,8 +672,6 @@ static void _setup_intf_ops(struct sde_hw_intf_ops *ops,
 		ops->poll_timeout_wr_ptr = sde_hw_intf_poll_timeout_wr_ptr;
 		ops->vsync_sel = sde_hw_intf_vsync_sel;
 		ops->get_status = sde_hw_intf_v1_get_status;
-		ops->check_and_reset_tearcheck =
-			sde_hw_intf_v1_check_and_reset_tearcheck;
 	}
 }
 

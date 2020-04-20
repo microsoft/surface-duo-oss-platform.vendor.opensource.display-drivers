@@ -89,11 +89,27 @@ struct sde_hw_wb_ops {
 		struct sde_hw_wb_cfg *wb);
 
 	/**
-	 * setup_qos_lut - setup danger, safe, creq, etc. LUTs
+	 * setup_danger_safe_lut - setup danger safe LUTs
 	 * @ctx: Pointer to pipe context
 	 * @cfg: Pointer to pipe QoS configuration
 	 */
-	void (*setup_qos_lut)(struct sde_hw_wb *ctx,
+	void (*setup_danger_safe_lut)(struct sde_hw_wb *ctx,
+			struct sde_hw_wb_qos_cfg *cfg);
+
+	/**
+	 * setup_creq_lut - setup CREQ LUT
+	 * @ctx: Pointer to pipe context
+	 * @cfg: Pointer to pipe QoS configuration
+	 */
+	void (*setup_creq_lut)(struct sde_hw_wb *ctx,
+			struct sde_hw_wb_qos_cfg *cfg);
+
+	/**
+	 * setup_qos_ctrl - setup QoS control
+	 * @ctx: Pointer to pipe context
+	 * @cfg: Pointer to pipe QoS configuration
+	 */
+	void (*setup_qos_ctrl)(struct sde_hw_wb *ctx,
 			struct sde_hw_wb_qos_cfg *cfg);
 
 	/**

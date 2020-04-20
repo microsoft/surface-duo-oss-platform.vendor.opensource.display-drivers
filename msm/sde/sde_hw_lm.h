@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_LM_H
@@ -79,8 +79,7 @@ struct sde_hw_lm_ops {
 			bool enable, u32 frame_count);
 
 	/* collect_misr: reads and stores MISR data from HW register */
-	int (*collect_misr)(struct sde_hw_mixer *ctx, bool nonblock,
-			u32 *misr_value);
+	u32 (*collect_misr)(struct sde_hw_mixer *ctx);
 };
 
 struct sde_hw_mixer {

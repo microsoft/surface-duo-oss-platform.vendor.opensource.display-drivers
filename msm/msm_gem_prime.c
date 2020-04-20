@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -18,12 +18,9 @@
 
 #include "msm_drv.h"
 #include "msm_gem.h"
-#include "msm_mmu.h"
-#include "msm_kms.h"
 
 #include <linux/dma-buf.h>
 #include <linux/ion.h>
-#include <linux/msm_ion.h>
 
 struct sg_table *msm_gem_prime_get_sg_table(struct drm_gem_object *obj)
 {
@@ -90,17 +87,12 @@ struct drm_gem_object *msm_gem_prime_import(struct drm_device *dev,
 	struct dma_buf_attachment *attach;
 	struct sg_table *sgt = NULL;
 	struct drm_gem_object *obj;
-	struct device *attach_dev = NULL;
+	struct device *attach_dev;
 	unsigned long flags = 0;
-	struct msm_drm_private *priv;
-	struct msm_kms *kms;
 	int ret;
 
-	if (!dma_buf || !dev->dev_private)
+	if (!dma_buf)
 		return ERR_PTR(-EINVAL);
-
-	priv = dev->dev_private;
-	kms = priv->kms;
 
 	if (dma_buf->priv && !dma_buf->ops->begin_cpu_access) {
 		obj = dma_buf->priv;
@@ -119,63 +111,25 @@ struct drm_gem_object *msm_gem_prime_import(struct drm_device *dev,
 		return ERR_PTR(-EINVAL);
 	}
 
-	get_dma_buf(dma_buf);
-
-	ret = dma_buf_get_flags(dma_buf, &flags);
-	if (ret) {
-		DRM_ERROR("dma_buf_get_flags failure, err=%d\n", ret);
-		goto fail_put;
-	}
-
-	if (!kms || !kms->funcs->get_address_space_device) {
-		DRM_ERROR("invalid kms ops\n");
-		goto fail_put;
-	}
-
-	if (flags & ION_FLAG_SECURE) {
-		if (flags & ION_FLAG_CP_PIXEL) {
-			attach_dev = kms->funcs->get_address_space_device(kms,
-						MSM_SMMU_DOMAIN_SECURE);
-			/*
-			 * While transitioning from secure use-cases, the
-			 * secure-cb might still not be attached back, while
-			 * the prime_fd_to_handle call is made for the next
-			 * frame. Attach those buffers to default drm device
-			 * and reattaching with the correct context-bank
-			 * will be handled in msm_gem_delayed_import
-			 */
-			if (!attach_dev)
-				attach_dev = dev->dev;
-
-		} else if ((flags & ION_FLAG_CP_SEC_DISPLAY)
-				|| (flags & ION_FLAG_CP_CAMERA_PREVIEW)) {
-			attach_dev = dev->dev;
-		} else {
-			DRM_ERROR("invalid ion secure flag: 0x%lx\n", flags);
-		}
-	} else {
-		attach_dev = kms->funcs->get_address_space_device(kms,
-						MSM_SMMU_DOMAIN_UNSECURE);
-	}
-
-	if (!attach_dev) {
-		DRM_ERROR("aspace device not found for domain\n");
-		ret = -EINVAL;
-		goto fail_put;
-	}
-
+	attach_dev = dev->dev;
 	attach = dma_buf_attach(dma_buf, attach_dev);
 	if (IS_ERR(attach)) {
 		DRM_ERROR("dma_buf_attach failure, err=%ld\n", PTR_ERR(attach));
 		return ERR_CAST(attach);
 	}
 
+	get_dma_buf(dma_buf);
+
 	/*
 	 * For cached buffers where CPU access is required, dma_map_attachment
 	 * must be called now to allow user-space to perform cpu sync begin/end
 	 * otherwise do delayed mapping during the commit.
 	 */
-	if (flags & ION_FLAG_CACHED) {
+	ret = dma_buf_get_flags(dma_buf, &flags);
+	if (ret) {
+		DRM_ERROR("dma_buf_get_flags failure, err=%d\n", ret);
+		goto fail_put;
+	} else if (flags & ION_FLAG_CACHED) {
 		attach->dma_map_attrs |= DMA_ATTR_DELAYED_UNMAP;
 		sgt = dma_buf_map_attachment(
 				attach, DMA_BIDIRECTIONAL);
