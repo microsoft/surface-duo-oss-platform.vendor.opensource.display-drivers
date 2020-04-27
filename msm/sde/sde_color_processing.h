@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_COLOR_PROCESSING_H
@@ -39,25 +39,6 @@ enum sde_hist_modes {
 static const struct drm_prop_enum_list sde_hist_modes[] = {
 	{HIST_DISABLED, "hist_off"},
 	{HIST_ENABLED, "hist_on"},
-};
-
-/*
- * LTM HISTOGRAM modes
- * @LTM_HIST_DISABLED          Histogram disabled
- * @LTM_HIST_ENABLED           Histogram enabled
- */
-enum ltm_hist_modes {
-	LTM_HIST_DISABLED,
-	LTM_HIST_ENABLED
-};
-
-/**
- * struct drm_prop_enum_list - drm structure for creating enum property and
- *                             enumerating values
- */
-static const struct drm_prop_enum_list sde_ltm_hist_modes[] = {
-	{LTM_HIST_DISABLED, "ltm_hist_off"},
-	{LTM_HIST_ENABLED, "ltm_hist_on"},
 };
 
 /**
@@ -163,37 +144,4 @@ void sde_cp_crtc_post_ipc(struct drm_crtc *crtc);
  */
 int sde_cp_hist_interrupt(struct drm_crtc *crtc_drm, bool en,
 	struct sde_irq_callback *hist_irq);
-
-/**
- * sde_cp_ltm_hist_interrupt: API to enable/disable LTM hist interrupt
- * @crtc: Pointer to crtc.
- * @en: Variable to enable/disable interrupt.
- * @irq: Pointer to irq callback
- */
-int sde_cp_ltm_hist_interrupt(struct drm_crtc *crtc_drm, bool en,
-	struct sde_irq_callback *hist_irq);
-
-/**
- * sde_cp_ltm_wb_pb_interrupt: API to enable/disable LTM wb_pb interrupt
- * @crtc: Pointer to crtc.
- * @en: Variable to enable/disable interrupt.
- * @irq: Pointer to irq callback
- */
-int sde_cp_ltm_wb_pb_interrupt(struct drm_crtc *crtc_drm, bool en,
-	struct sde_irq_callback *hist_irq);
-
-/**
- * sde_cp_ltm_off_event_handler: API to enable/disable LTM off notification
- * @crtc: Pointer to crtc.
- * @en: Variable to enable/disable notification.
- * @irq: Pointer to irq callback
- */
-int sde_cp_ltm_off_event_handler(struct drm_crtc *crtc_drm, bool en,
-	struct sde_irq_callback *hist_irq);
-
-/**
- * sde_cp_mode_switch_prop_dirty: API marks mode dependent features as dirty
- * @crtc_drm: Pointer to crtc.
- */
-void sde_cp_mode_switch_prop_dirty(struct drm_crtc *crtc_drm);
 #endif /*_SDE_COLOR_PROCESSING_H */

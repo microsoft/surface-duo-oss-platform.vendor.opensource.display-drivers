@@ -36,9 +36,11 @@ struct traffic_shaper_cfg {
  * @intf      : Interface id for main control path
  * @pp_split_slave: Slave interface for ping pong split, INTF_MAX to disable
  * @pp_split_idx:   Ping pong index for ping pong split
+ * @overlap_pixel_width : Number of overlap pixels in the split mode
  * @split_flush_en: Allows both the paths to be flushed when master path is
  *              flushed
  * @split_link_en:  Check if split link is enabled
+ * @pp_slave_intf: Check if this is pp slave interface
  */
 struct split_pipe_cfg {
 	bool en;
@@ -46,8 +48,10 @@ struct split_pipe_cfg {
 	enum sde_intf intf;
 	enum sde_intf pp_split_slave;
 	u32 pp_split_index;
+	u32 overlap_pixel_width;
 	bool split_flush_en;
 	bool split_link_en;
+	bool pp_slave_intf;
 };
 
 /**
@@ -115,14 +119,6 @@ struct sde_hw_mdp_ops {
 			struct split_pipe_cfg *cfg);
 
 	/**
-	 * setup_cdm_output() : Setup selection control of the cdm data path
-	 * @mdp  : mdp top context driver
-	 * @cfg  : cdm output configuration
-	 */
-	void (*setup_cdm_output)(struct sde_hw_mdp *mdp,
-			struct cdm_output_cfg *cfg);
-
-	/**
 	 * setup_traffic_shaper() : Setup traffic shaper control
 	 * @mdp  : mdp top context driver
 	 * @cfg  : traffic shaper configuration
@@ -185,6 +181,13 @@ struct sde_hw_mdp_ops {
 	void (*reset_ubwc)(struct sde_hw_mdp *mdp, struct sde_mdss_cfg *m);
 
 	/**
+	 * intf_dp_select - select phy for DP controller
+	 * @mdp: mdp top context driver
+	 * @m: pointer to mdss catalog data
+	 */
+	void (*intf_dp_select)(struct sde_hw_mdp *mdp, struct sde_mdss_cfg *m);
+
+	/**
 	 * intf_audio_select - select the external interface for audio
 	 * @mdp: mdp top context driver
 	 */
@@ -205,24 +208,6 @@ struct sde_hw_mdp_ops {
 	 */
 	void (*set_cwb_ppb_cntl)(struct sde_hw_mdp *mdp,
 			bool dual, bool dspp_out);
-
-	/**
-	 * set_hdr_plus_metadata - program the dynamic hdr metadata
-	 * @mdp:     mdp top context driver
-	 * @payload: pointer to payload data
-	 * @len:     size of the valid data within payload
-	 * @stream_id: stream ID for MST (0 or 1)
-	 */
-	void (*set_hdr_plus_metadata)(struct sde_hw_mdp *mdp,
-			u8 *payload, u32 len, u32 stream_id);
-
-	/**
-	 * get_autorefresh_status - get autorefresh status
-	 * @mdp:     mdp top context driver
-	 * @intf_idx:  intf block index for relative information
-	 */
-	u32 (*get_autorefresh_status)(struct sde_hw_mdp *mdp,
-			u32 intf_idx);
 };
 
 struct sde_hw_mdp {

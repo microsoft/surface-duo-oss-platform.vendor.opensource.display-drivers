@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012, 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, 2015-2020, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -124,7 +124,7 @@ static bool force_on_xin_clk(u32 bit_off, u32 clk_ctl_reg_off, bool enable)
 
 	clk_forced_on = !(force_on_mask & val);
 
-	if (enable)
+	if (true == enable)
 		val |= force_on_mask;
 	else
 		val &= ~force_on_mask;
@@ -240,8 +240,8 @@ u32 sde_mdp_get_ot_limit(u32 width, u32 height, u32 pixfmt, u32 fps, u32 is_rd)
 	 * If (total_source_pixels <= 124416000 && YUV) -> RD/WROT=4 //1080p60
 	 * If (total_source_pixels <= 2160p && YUV && FPS <= 30) -> RD/WROT = 32
 	 */
-	if (IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
-				 SDE_MDP_HW_REV_540)) {
+	switch (mdata->mdss_version) {
+	case SDE_MDP_HW_REV_540:
 		if (is_yuv) {
 			if (res <= (RES_1080p * 30))
 				ot_lim = 2;
@@ -254,13 +254,16 @@ u32 sde_mdp_get_ot_limit(u32 width, u32 height, u32 pixfmt, u32 fps, u32 is_rd)
 		} else if (fmt->bpp == 4 && res <= (RES_WQXGA * 60)) {
 			ot_lim = 16;
 		}
-	} else if (IS_SDE_MAJOR_SAME(mdata->mdss_version,
-				SDE_MDP_HW_REV_600) || is_yuv) {
+
+		break;
+	default:
 		if (res <= (RES_1080p * 30))
 			ot_lim = 2;
 		else if (res <= (RES_1080p * 60))
 			ot_lim = 4;
+		break;
 	}
+
 exit:
 	SDEROT_DBG("ot_lim=%d\n", ot_lim);
 	return ot_lim;
@@ -436,7 +439,7 @@ struct reg_bus_client *sde_reg_bus_vote_client_create(char *client_name)
 	strlcpy(client->name, client_name, MAX_CLIENT_NAME_LEN);
 	client->usecase_ndx = VOTE_INDEX_DISABLE;
 	client->id = id;
-	SDEROT_DBG("bus vote client %s created:%pK id :%d\n", client_name,
+	SDEROT_DBG("bus vote client %s created:%p id :%d\n", client_name,
 		client, id);
 	id++;
 	list_add(&client->list, &sde_res->reg_bus_clist);
@@ -452,7 +455,7 @@ void sde_reg_bus_vote_client_destroy(struct reg_bus_client *client)
 	if (!client) {
 		SDEROT_ERR("reg bus vote: invalid client handle\n");
 	} else {
-		SDEROT_DBG("bus vote client %s destroyed:%pK id:%u\n",
+		SDEROT_DBG("bus vote client %s destroyed:%p id:%u\n",
 			client->name, client, client->id);
 		mutex_lock(&sde_res->reg_bus_lock);
 		list_del_init(&client->list);
@@ -827,8 +830,6 @@ static void sde_mdp_destroy_dt_misc(struct platform_device *pdev,
 #define BUS_VOTE_40_MHZ 320000000
 #define BUS_VOTE_80_MHZ 640000000
 
-#ifdef CONFIG_QCOM_BUS_SCALING
-
 static struct msm_bus_vectors mdp_reg_bus_vectors[] = {
 	MDP_REG_BUS_VECTOR_ENTRY(0, 0),
 	MDP_REG_BUS_VECTOR_ENTRY(0, BUS_VOTE_19_MHZ),
@@ -869,12 +870,6 @@ static int sde_mdp_bus_scale_register(struct sde_rot_data_type *mdata)
 
 	return 0;
 }
-#else
-static inline int sde_mdp_bus_scale_register(struct sde_rot_data_type *mdata)
-{
-	return 0;
-}
-#endif
 
 static void sde_mdp_bus_scale_unregister(struct sde_rot_data_type *mdata)
 {

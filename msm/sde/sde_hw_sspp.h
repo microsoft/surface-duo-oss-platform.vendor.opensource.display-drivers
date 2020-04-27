@@ -248,7 +248,6 @@ enum {
  * @rd_scid: system cache read block id
  * @rd_noallocate: system cache read no allocate attribute
  * @rd_op_type: system cache read operation type
- * @flags: dirty flags to change the configuration
  */
 struct sde_hw_pipe_sc_cfg {
 	u32 op_mode;
@@ -256,23 +255,6 @@ struct sde_hw_pipe_sc_cfg {
 	u32 rd_scid;
 	bool rd_noallocate;
 	u32 rd_op_type;
-	u32 flags;
-};
-
-/**
- * struct sde_hw_pipe_uidle_cfg - uidle configuration
- * @enable: disables uidle
- * @fal_allowed_threshold: minimum fl to allow uidle
- * @fal10_exit_threshold: number of lines to indicate fal_10_exit is okay
- * @fal10_threshold: number of lines where fal_10_is okay
- * @fal1_threshold: number of lines where fal_1 is okay
- */
-struct sde_hw_pipe_uidle_cfg {
-	u32 enable;
-	u32 fal_allowed_threshold;
-	u32 fal10_exit_threshold;
-	u32 fal10_threshold;
-	u32 fal1_threshold;
 };
 
 /**
@@ -289,6 +271,32 @@ struct sde_hw_pipe_ts_cfg {
  * Maximum number of stream buffer plane
  */
 #define SDE_PIPE_SBUF_PLANE_NUM	2
+
+/**
+ * struct sde_hw_pipe_sbuf_status - stream buffer status
+ * @empty: indicate if stream buffer is empty of not
+ * @rd_ptr: current read pointer of stream buffer
+ */
+struct sde_hw_pipe_sbuf_status {
+	bool empty[SDE_PIPE_SBUF_PLANE_NUM];
+	u32 rd_ptr[SDE_PIPE_SBUF_PLANE_NUM];
+};
+
+/**
+ * struct sde_hw_pipe_line_insertion_cfg - line insertion config
+ * @enable: line insertion is enabled
+ * @dummy_lines: dummy lines before active lines
+ * @first_active_lines: number of active lines before first dummy lines
+ * @active_lines: active lines
+ * @dst_h: total active lines plus dummy lines
+ */
+struct sde_hw_pipe_line_insertion_cfg {
+	bool enable;
+	u32 dummy_lines;
+	u32 first_active_lines;
+	u32 active_lines;
+	u32 dst_h;
+};
 
 /**
  * struct sde_hw_sspp_ops - interface to the SSPP Hw driver functions
@@ -460,12 +468,21 @@ struct sde_hw_sspp_ops {
 				enum sde_sspp_multirect_index idx);
 
 	/**
-	 * setup_qos_lut - setup danger, safe, creq LUTs
+	 * setup_danger_safe_lut - setup danger safe LUTs
 	 * @ctx: Pointer to pipe context
 	 * @cfg: Pointer to pipe QoS configuration
 	 *
 	 */
-	void (*setup_qos_lut)(struct sde_hw_pipe *ctx,
+	void (*setup_danger_safe_lut)(struct sde_hw_pipe *ctx,
+			struct sde_hw_pipe_qos_cfg *cfg);
+
+	/**
+	 * setup_creq_lut - setup CREQ LUT
+	 * @ctx: Pointer to pipe context
+	 * @cfg: Pointer to pipe QoS configuration
+	 *
+	 */
+	void (*setup_creq_lut)(struct sde_hw_pipe *ctx,
 			struct sde_hw_pipe_qos_cfg *cfg);
 
 	/**
@@ -508,14 +525,6 @@ struct sde_hw_sspp_ops {
 			u32 offset);
 
 	/**
-	 * setup_pre_downscale - setup pre-downscaler for inline rotation
-	 * @ctx: Pointer to pipe context
-	 * @pre_down: Pointer to pre-downscaler configuration
-	 */
-	void (*setup_pre_downscale)(struct sde_hw_pipe *ctx,
-		struct sde_hw_inline_pre_downscale_cfg *pre_down);
-
-	/**
 	 * get_scaler_ver - get scaler h/w version
 	 * @ctx: Pointer to pipe context
 	 */
@@ -529,15 +538,13 @@ struct sde_hw_sspp_ops {
 	void (*setup_sys_cache)(struct sde_hw_pipe *ctx,
 			struct sde_hw_pipe_sc_cfg *cfg);
 
-	 /**
-	  * setup_uidle - set uidle configuration
-	  * @ctx: Pointer to pipe context
-	  * @cfg: Pointer to uidle configuration
-	  * @index: rectangle index in multirect
-	  */
-	 void (*setup_uidle)(struct sde_hw_pipe *ctx,
-			 struct sde_hw_pipe_uidle_cfg *cfg,
-			 enum sde_sspp_multirect_index index);
+	/**
+	 * get_sbuf_status - get stream buffer status
+	 * @ctx: Pointer to pipe context
+	 * @status: Pointer to stream buffer status
+	 */
+	void (*get_sbuf_status)(struct sde_hw_pipe *ctx,
+			struct sde_hw_pipe_sbuf_status *status);
 
 	/**
 	 * setup_ts_prefill - setup prefill traffic shaper
@@ -607,6 +614,15 @@ struct sde_hw_sspp_ops {
 	 * @ctx: Pointer to pipe context
 	 */
 	u32 (*get_ubwc_error)(struct sde_hw_pipe *ctx);
+
+	/**
+	 * setup_line_insertion - setup line insertion
+	 * @ctx: Pointer to pipe context
+	 * @cfg: Pointer to line insertion configuration
+	 */
+	void (*setup_line_insertion)(struct sde_hw_pipe *ctx,
+		enum sde_sspp_multirect_index index,
+		struct sde_hw_pipe_line_insertion_cfg *cfg);
 };
 
 /**

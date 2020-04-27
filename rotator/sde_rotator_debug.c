@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -353,7 +353,7 @@ void sde_rot_dump_reg(const char *dump_name, u32 reg_dump_flag,
 
 		if (*dump_mem) {
 			dump_addr = *dump_mem;
-			pr_info("%s: start_addr:0x%pK end_addr:0x%pK reg_addr=0x%X\n",
+			pr_info("%s: start_addr:0x%p end_addr:0x%p reg_addr=0x%X\n",
 				dump_name, dump_addr, dump_addr + (u32)len * 16,
 				addr);
 		} else {
@@ -528,7 +528,7 @@ static void sde_rot_evtlog_dump_all(void)
 
 	while (__sde_rot_evtlog_dump_calc_range()) {
 		sde_rot_evtlog_dump_entry(evtlog_buf, SDE_ROT_EVTLOG_BUF_MAX);
-		pr_info("%s\n", evtlog_buf);
+		pr_info("%s", evtlog_buf);
 	}
 }
 
@@ -815,6 +815,30 @@ static int sde_rotator_stat_show(struct seq_file *s, void *data)
 }
 
 /*
+ * sde_rotator_stat_write - Clear statistics on write to this debugfs file.
+ * @t_file:
+ * @t_char:
+ * @t_size_t:
+ * @t_lof_t:
+ */
+static ssize_t sde_rotator_stat_write(struct file *t_file,
+	const char *t_char, size_t t_size_t, loff_t *t_loff_t)
+{
+	struct seq_file *s = t_file->private_data;
+	struct sde_rotator_device *rot_dev = s->private;
+	struct sde_rotator_statistics *stats = &rot_dev->stats;
+	char buf[128];
+
+	mutex_lock(&rot_dev->lock);
+	sde_rot_mgr_lock(rot_dev->mgr);
+	memset(stats, 0, sizeof(struct sde_rotator_statistics));
+	sde_rot_mgr_unlock(rot_dev->mgr);
+	mutex_unlock(&rot_dev->lock);
+	return simple_write_to_buffer(buf, sizeof(buf),
+			t_loff_t, t_char, t_size_t);
+}
+
+/*
  * sde_rotator_raw_show - Show raw statistics on read from this debugfs file
  * @s: Pointer to sequence file structure
  * @data: Pointer to private data structure
@@ -904,7 +928,7 @@ static int sde_rotator_core_create_debugfs(
 {
 	int ret;
 
-	if (!debugfs_create_u32("hwacquire_timeout", 0400,
+	if (!debugfs_create_u32("hwacquire_timeout", 0644,
 			debugfs_root, &mgr->hwacquire_timeout)) {
 		SDEROT_WARN("failed to create debugfs hw acquire timeout\n");
 		return -EINVAL;
@@ -916,7 +940,7 @@ static int sde_rotator_core_create_debugfs(
 		return -EINVAL;
 	}
 
-	if (!debugfs_create_u32("ppc_denom", 0600,
+	if (!debugfs_create_u32("ppc_denom", 0644,
 			debugfs_root, &mgr->pixel_per_clk.denom)) {
 		SDEROT_WARN("failed to create debugfs ppc denominator\n");
 		return -EINVAL;
@@ -991,12 +1015,41 @@ static int sde_rotator_evtlog_create_debugfs(
 	return 0;
 }
 
+
+static int sde_rotator_perf_create_debugfs(
+		struct sde_rotator_device *rot_dev,
+		struct dentry *debugfs_root)
+{
+	rot_dev->perf_root = debugfs_create_dir("perf", debugfs_root);
+	if (IS_ERR_OR_NULL(rot_dev->perf_root)) {
+		pr_err("debugfs_create_dir for perf failed, error %ld\n",
+		       PTR_ERR(rot_dev->perf_root));
+		rot_dev->perf_root = NULL;
+		return -ENODEV;
+	}
+
+	rot_dev->min_rot_clk = 0;
+	debugfs_create_u32("min_rot_clk", 0644,
+			rot_dev->perf_root, &rot_dev->min_rot_clk);
+
+	rot_dev->min_bw = 0;
+	debugfs_create_u32("min_bw", 0644,
+			rot_dev->perf_root, &rot_dev->min_bw);
+
+	rot_dev->min_overhead_us = 0;
+	debugfs_create_u32("min_overhead_us", 0644,
+			rot_dev->perf_root, &rot_dev->min_overhead_us);
+
+	return 0;
+}
+
 /*
  * struct sde_rotator_stat_ops - processed statistics file operations
  */
 static const struct file_operations sde_rotator_stat_ops = {
 	.open		= sde_rotator_stat_open,
 	.read		= seq_read,
+	.write		= sde_rotator_stat_write,
 	.llseek		= seq_lseek,
 	.release	= single_release
 };
@@ -1265,6 +1318,77 @@ static const struct file_operations sde_rotator_reg_fops = {
 	.write = sde_rotator_debug_base_reg_write,
 };
 
+int sde_rotator_debug_register_base(struct sde_rotator_device *rot_dev,
+		struct dentry *debugfs_root,
+		const char *name,
+		struct sde_io_data *io_data)
+{
+	struct sde_rotator_debug_base *dbg;
+	struct dentry *ent_off, *ent_reg;
+	char dbgname[80] = "";
+	int prefix_len = 0;
+
+	if (!io_data)
+		return -EINVAL;
+
+	dbg = kzalloc(sizeof(*dbg), GFP_KERNEL);
+	if (!dbg)
+		return -ENOMEM;
+
+	mutex_init(&dbg->buflock);
+	mutex_lock(&dbg->buflock);
+
+	if (name)
+		strlcpy(dbg->name, name, sizeof(dbg->name));
+	dbg->base = io_data->base;
+	dbg->max_offset = io_data->len;
+	dbg->off = 0;
+	dbg->cnt = SDE_ROT_DEFAULT_BASE_REG_CNT;
+
+	if (name) {
+		if (strcmp(name, "sde"))
+			prefix_len = snprintf(dbgname, sizeof(dbgname), "%s_",
+					name);
+		else
+			/*
+			 * For SDE Rotator registers block, the IO base address
+			 * is based on MDP IO address base. It is necessary to
+			 * apply the initial offset to it from the first
+			 * regdump setting.
+			 */
+			dbg->base += rot_dev->mdata->regdump ?
+				rot_dev->mdata->regdump[0].offset : 0;
+	}
+	mutex_unlock(&dbg->buflock);
+
+	strlcpy(dbgname + prefix_len, "off", sizeof(dbgname) - prefix_len);
+	ent_off = debugfs_create_file(dbgname, 0644, debugfs_root, dbg,
+			&sde_rotator_off_fops);
+	if (IS_ERR_OR_NULL(ent_off)) {
+		SDEROT_ERR("debugfs_create_file: offset fail\n");
+		goto off_fail;
+	}
+
+	strlcpy(dbgname + prefix_len, "reg", sizeof(dbgname) - prefix_len);
+	ent_reg = debugfs_create_file(dbgname, 0644, debugfs_root, dbg,
+			&sde_rotator_reg_fops);
+	if (IS_ERR_OR_NULL(ent_reg)) {
+		SDEROT_ERR("debugfs_create_file: reg fail\n");
+		goto reg_fail;
+	}
+
+	mutex_lock(&dbg->buflock);
+	dbg->mgr = rot_dev->mgr;
+	mutex_unlock(&dbg->buflock);
+
+	return 0;
+reg_fail:
+	debugfs_remove(ent_off);
+off_fail:
+	kfree(dbg);
+	return -ENODEV;
+}
+
 /*
  * sde_rotator_create_debugfs - Setup rotator debugfs directory structure.
  * @rot_dev: Pointer to rotator device
@@ -1283,49 +1407,49 @@ struct dentry *sde_rotator_create_debugfs(
 		return NULL;
 	}
 
-	if (!debugfs_create_file("stats", 0400,
+	if (!debugfs_create_file("stats", 0644,
 		debugfs_root, rot_dev, &sde_rotator_stat_ops)) {
 		SDEROT_ERR("fail create debugfs stats\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_file("raw", 0400,
+	if (!debugfs_create_file("raw", 0644,
 		debugfs_root, rot_dev, &sde_rotator_raw_ops)) {
 		SDEROT_ERR("fail create debugfs raw\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("fence_timeout", 0400,
+	if (!debugfs_create_u32("fence_timeout", 0644,
 			debugfs_root, &rot_dev->fence_timeout)) {
 		SDEROT_ERR("fail create fence_timeout\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("open_timeout", 0400,
+	if (!debugfs_create_u32("open_timeout", 0644,
 			debugfs_root, &rot_dev->open_timeout)) {
 		SDEROT_ERR("fail create open_timeout\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("disable_syscache", 0400,
+	if (!debugfs_create_u32("disable_syscache", 0644,
 			debugfs_root, &rot_dev->disable_syscache)) {
 		SDEROT_ERR("fail create disable_syscache\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("streamoff_timeout", 0400,
+	if (!debugfs_create_u32("streamoff_timeout", 0644,
 			debugfs_root, &rot_dev->streamoff_timeout)) {
 		SDEROT_ERR("fail create streamoff_timeout\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}
 
-	if (!debugfs_create_u32("early_submit", 0400,
+	if (!debugfs_create_u32("early_submit", 0644,
 			debugfs_root, &rot_dev->early_submit)) {
 		SDEROT_ERR("fail create early_submit\n");
 		debugfs_remove_recursive(debugfs_root);
@@ -1346,6 +1470,26 @@ struct dentry *sde_rotator_create_debugfs(
 
 	if (sde_rotator_evtlog_create_debugfs(rot_dev->mgr, debugfs_root)) {
 		SDEROT_ERR("fail create evtlog debugfs\n");
+		debugfs_remove_recursive(debugfs_root);
+		return NULL;
+	}
+
+	if (sde_rotator_perf_create_debugfs(rot_dev, debugfs_root)) {
+		SDEROT_ERR("fail create perf debugfs\n");
+		debugfs_remove_recursive(debugfs_root);
+		return NULL;
+	}
+
+	if (sde_rotator_debug_register_base(rot_dev, debugfs_root,
+				"sde", &rot_dev->mdata->sde_io)) {
+		SDEROT_ERR("fail create debug register for sde rotator\n");
+		debugfs_remove_recursive(debugfs_root);
+		return NULL;
+	}
+
+	if (sde_rotator_debug_register_base(rot_dev, debugfs_root,
+				"vbif_nrt", &rot_dev->mdata->vbif_nrt_io)) {
+		SDEROT_ERR("fail create debug register for sderot vbif_nrt\n");
 		debugfs_remove_recursive(debugfs_root);
 		return NULL;
 	}

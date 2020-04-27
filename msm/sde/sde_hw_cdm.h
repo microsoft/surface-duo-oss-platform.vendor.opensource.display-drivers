@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_CDM_H
@@ -96,6 +96,13 @@ struct sde_hw_cdm_ops {
 	void (*bind_pingpong_blk)(struct sde_hw_cdm *cdm,
 			bool enable,
 			const enum sde_pingpong pp);
+
+	/**
+	 * Configure CDM output
+	 * @cdm         Pointer to chroma down context
+	 */
+	void (*setup_output)(struct sde_hw_cdm *cdm,
+	struct sde_hw_cdm_cfg *cfg);
 };
 
 struct sde_hw_cdm {

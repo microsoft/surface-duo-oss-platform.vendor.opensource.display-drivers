@@ -16,16 +16,41 @@
 #define TRACE_INCLUDE_FILE sde_trace
 
 TRACE_EVENT(sde_perf_set_qos_luts,
+	TP_PROTO(u32 pnum, u32 fmt, bool rt, u32 fl,
+		u32 lut, u32 lut_usage),
+	TP_ARGS(pnum, fmt, rt, fl, lut, lut_usage),
+	TP_STRUCT__entry(
+			__field(u32, pnum)
+			__field(u32, fmt)
+			__field(bool, rt)
+			__field(u32, fl)
+			__field(u64, lut)
+			__field(u32, lut_usage)
+	),
+	TP_fast_assign(
+			__entry->pnum = pnum;
+			__entry->fmt = fmt;
+			__entry->rt = rt;
+			__entry->fl = fl;
+			__entry->lut = lut;
+			__entry->lut_usage = lut_usage;
+	),
+	TP_printk("pnum=%d fmt=%x rt=%d fl=%d lut=0x%llx lut_usage=%d",
+			__entry->pnum, __entry->fmt,
+			__entry->rt, __entry->fl,
+			__entry->lut, __entry->lut_usage)
+);
+
+TRACE_EVENT(sde_perf_set_danger_luts,
 	TP_PROTO(u32 pnum, u32 fmt, u32 mode, u32 danger_lut,
-		u32 safe_lut, u64 creq_lut),
-	TP_ARGS(pnum, fmt, mode, danger_lut, safe_lut, creq_lut),
+		u32 safe_lut),
+	TP_ARGS(pnum, fmt, mode, danger_lut, safe_lut),
 	TP_STRUCT__entry(
 			__field(u32, pnum)
 			__field(u32, fmt)
 			__field(u32, mode)
 			__field(u32, danger_lut)
 			__field(u32, safe_lut)
-			__field(u64, creq_lut)
 	),
 	TP_fast_assign(
 			__entry->pnum = pnum;
@@ -33,12 +58,11 @@ TRACE_EVENT(sde_perf_set_qos_luts,
 			__entry->mode = mode;
 			__entry->danger_lut = danger_lut;
 			__entry->safe_lut = safe_lut;
-			__entry->creq_lut = creq_lut;
 	),
-	TP_printk("pnum=%d fmt=0x%x mode=%d luts[0x%x, 0x%x 0x%llx]",
+	TP_printk("pnum=%d fmt=%x mode=%d luts[0x%x, 0x%x]",
 			__entry->pnum, __entry->fmt,
 			__entry->mode, __entry->danger_lut,
-			__entry->safe_lut, __entry->creq_lut)
+			__entry->safe_lut)
 );
 
 TRACE_EVENT(sde_perf_set_ot,
@@ -62,20 +86,23 @@ TRACE_EVENT(sde_perf_set_ot,
 )
 
 TRACE_EVENT(sde_perf_update_bus,
-	TP_PROTO(u32 bus_id, unsigned long long ab_quota,
+	TP_PROTO(int client, u32 bus_id, unsigned long long ab_quota,
 	unsigned long long ib_quota),
-	TP_ARGS(bus_id, ab_quota, ib_quota),
+	TP_ARGS(client, bus_id, ab_quota, ib_quota),
 	TP_STRUCT__entry(
+			__field(int, client)
 			__field(u32, bus_id);
 			__field(u64, ab_quota)
 			__field(u64, ib_quota)
 	),
 	TP_fast_assign(
+			__entry->client = client;
 			__entry->bus_id = bus_id;
 			__entry->ab_quota = ab_quota;
 			__entry->ib_quota = ib_quota;
 	),
-	TP_printk("Request bus_id:%d ab=%llu ib=%llu",
+	TP_printk("Request client:%d bus_id:%d ab=%llu ib=%llu",
+			__entry->client,
 			__entry->bus_id,
 			__entry->ab_quota,
 			__entry->ib_quota)
@@ -112,7 +139,7 @@ TRACE_EVENT(sde_encoder_underrun,
 
 TRACE_EVENT(tracing_mark_write,
 	TP_PROTO(char trace_type, const struct task_struct *task,
-		const char *name, int value),
+		 const char *name, int value),
 	TP_ARGS(trace_type, task, name, value),
 	TP_STRUCT__entry(
 			__field(char, trace_type)
@@ -127,12 +154,12 @@ TRACE_EVENT(tracing_mark_write,
 			__entry->value = value;
 	),
 	TP_printk("%c|%d|%s|%d", __entry->trace_type,
-			__entry->pid, __get_str(trace_name), __entry->value)
-)
+		__entry->pid, __get_str(trace_name), __entry->value)
+);
 
 #define SDE_TRACE_EVTLOG_SIZE	15
 TRACE_EVENT(sde_evtlog,
-	TP_PROTO(const char *tag, u32 tag_id, u32 cnt, u32 *data),
+	TP_PROTO(const char *tag, u32 tag_id, u32 cnt, u32 data[]),
 	TP_ARGS(tag, tag_id, cnt, data),
 	TP_STRUCT__entry(
 			__field(int, pid)
@@ -150,7 +177,7 @@ TRACE_EVENT(sde_evtlog,
 			memset(&__entry->data[cnt], 0,
 				(SDE_TRACE_EVTLOG_SIZE - cnt) * sizeof(u32));
 	),
-	TP_printk("%d|%s:%d|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x|0x%x",
+	TP_printk("%d|%s:%d|%x|%x|%x|%x|%x|%x|%x|%x|%x|%x|%x|%x|%x|%x|%x",
 			__entry->pid, __get_str(evtlog_tag),
 			__entry->tag_id,
 			__entry->data[0], __entry->data[1],
@@ -269,122 +296,6 @@ TRACE_EVENT(sde_perf_calc_crtc,
 			__entry->bw_ctl_ebi,
 			__entry->ib_ebi,
 			__entry->core_clk_rate)
-);
-
-TRACE_EVENT(sde_perf_uidle_cntr,
-	TP_PROTO(u32 crtc,
-			u32 fal1_gate_cntr,
-			u32 fal10_gate_cntr,
-			u32 fal_wait_gate_cntr,
-			u32 fal1_num_transitions_cntr,
-			u32 fal10_num_transitions_cntr,
-			u32 min_gate_cntr,
-			u32 max_gate_cntr
-			),
-	TP_ARGS(crtc,
-			fal1_gate_cntr,
-			fal10_gate_cntr,
-			fal_wait_gate_cntr,
-			fal1_num_transitions_cntr,
-			fal10_num_transitions_cntr,
-			min_gate_cntr,
-			max_gate_cntr),
-	TP_STRUCT__entry(
-			__field(u32, crtc)
-			__field(u32, fal1_gate_cntr)
-			__field(u32, fal10_gate_cntr)
-			__field(u32, fal_wait_gate_cntr)
-			__field(u32, fal1_num_transitions_cntr)
-			__field(u32, fal10_num_transitions_cntr)
-			__field(u32, min_gate_cntr)
-			__field(u32, max_gate_cntr)
-	),
-	TP_fast_assign(
-			__entry->crtc = crtc;
-			__entry->fal1_gate_cntr = fal1_gate_cntr;
-			__entry->fal10_gate_cntr = fal10_gate_cntr;
-			__entry->fal_wait_gate_cntr = fal_wait_gate_cntr;
-			__entry->fal1_num_transitions_cntr =
-				fal1_num_transitions_cntr;
-			__entry->fal10_num_transitions_cntr =
-				fal10_num_transitions_cntr;
-			__entry->min_gate_cntr = min_gate_cntr;
-			__entry->max_gate_cntr = max_gate_cntr;
-	),
-	 TP_printk(
-		"crtc:%d gate:fal1=0x%x fal10=0x%x wait=0x%x min=0x%x max=0x%x trns:fal1=0x%x fal10=0x%x",
-			__entry->crtc,
-			__entry->fal1_gate_cntr,
-			__entry->fal10_gate_cntr,
-			__entry->fal_wait_gate_cntr,
-			__entry->min_gate_cntr,
-			__entry->max_gate_cntr,
-			__entry->fal1_num_transitions_cntr,
-			__entry->fal10_num_transitions_cntr
-			)
-);
-
-TRACE_EVENT(sde_perf_uidle_status,
-	TP_PROTO(u32 crtc,
-			u32 uidle_danger_status_0,
-			u32 uidle_danger_status_1,
-			u32 uidle_safe_status_0,
-			u32 uidle_safe_status_1,
-			u32 uidle_idle_status_0,
-			u32 uidle_idle_status_1,
-			u32 uidle_fal_status_0,
-			u32 uidle_fal_status_1,
-			u32 uidle_status,
-			u32 uidle_en_fal10),
-	TP_ARGS(crtc,
-			uidle_danger_status_0,
-			uidle_danger_status_1,
-			uidle_safe_status_0,
-			uidle_safe_status_1,
-			uidle_idle_status_0,
-			uidle_idle_status_1,
-			uidle_fal_status_0,
-			uidle_fal_status_1,
-			uidle_status,
-			uidle_en_fal10),
-	TP_STRUCT__entry(
-			__field(u32, crtc)
-			__field(u32, uidle_danger_status_0)
-			__field(u32, uidle_danger_status_1)
-			__field(u32, uidle_safe_status_0)
-			__field(u32, uidle_safe_status_1)
-			__field(u32, uidle_idle_status_0)
-			__field(u32, uidle_idle_status_1)
-			__field(u32, uidle_fal_status_0)
-			__field(u32, uidle_fal_status_1)
-			__field(u32, uidle_status)
-			__field(u32, uidle_en_fal10)),
-	TP_fast_assign(
-			__entry->crtc = crtc;
-			__entry->uidle_danger_status_0 = uidle_danger_status_0;
-			__entry->uidle_danger_status_1 = uidle_danger_status_1;
-			__entry->uidle_safe_status_0 = uidle_safe_status_0;
-			__entry->uidle_safe_status_1 = uidle_safe_status_1;
-			__entry->uidle_idle_status_0 = uidle_idle_status_0;
-			__entry->uidle_idle_status_1 = uidle_idle_status_1;
-			__entry->uidle_fal_status_0 = uidle_fal_status_0;
-			__entry->uidle_fal_status_1 = uidle_fal_status_1;
-			__entry->uidle_status = uidle_status;
-			__entry->uidle_en_fal10 = uidle_en_fal10;),
-	 TP_printk(
-		"crtc:%d danger[0x%x, 0x%x] safe[0x%x, 0x%x] idle[0x%x, 0x%x] fal[0x%x, 0x%x] status:0x%x en_fal10:0x%x",
-			__entry->crtc,
-			__entry->uidle_danger_status_0,
-			__entry->uidle_danger_status_1,
-			__entry->uidle_safe_status_0,
-			__entry->uidle_safe_status_1,
-			__entry->uidle_idle_status_0,
-			__entry->uidle_idle_status_1,
-			__entry->uidle_fal_status_0,
-			__entry->uidle_fal_status_1,
-			__entry->uidle_status,
-			__entry->uidle_en_fal10
-			)
 );
 
 #define sde_atrace trace_tracing_mark_write

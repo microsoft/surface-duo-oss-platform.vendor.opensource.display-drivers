@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
+
+#define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
 #include <linux/soc/qcom/fsa4480-i2c.h>
 #include <linux/usb/usbpd.h>
 #include <linux/delay.h>
 
 #include "dp_aux.h"
-#include "dp_debug.h"
 
 #define DP_AUX_ENUM_STR(x)		#x
 
@@ -25,6 +26,10 @@ struct dp_aux_private {
 	struct mutex mutex;
 	struct completion comp;
 	struct drm_dp_aux drm_aux;
+
+	struct msm_dp_aux_bridge *aux_bridge;
+	struct msm_dp_aux_bridge *sim_bridge;
+	bool bridge_in_transfer;
 
 	bool cmd_busy;
 	bool native;
@@ -67,7 +72,7 @@ static void dp_aux_hex_dump(struct drm_dp_aux *drm_aux,
 		hex_dump_to_buffer(msg->buffer + i, linelen, rowsize, 1,
 			linebuf, sizeof(linebuf), false);
 
-		DP_DEBUG("%s%s\n", prefix, linebuf);
+		pr_debug("%s%s\n", prefix, linebuf);
 	}
 }
 #else
@@ -115,7 +120,7 @@ static u32 dp_aux_write(struct dp_aux_private *aux,
 	 * limit buf length to 128 bytes here
 	 */
 	if (len > aux_cmd_fifo_len) {
-		DP_ERR("buf len error\n");
+		pr_err("buf len error\n");
 		return 0;
 	}
 
@@ -168,13 +173,13 @@ static int dp_aux_cmd_fifo_tx(struct dp_aux_private *aux,
 
 	len = dp_aux_write(aux, msg);
 	if (len == 0) {
-		DP_ERR("DP AUX write failed\n");
+		pr_err("DP AUX write failed\n");
 		return -EINVAL;
 	}
 
 	timeout = wait_for_completion_timeout(&aux->comp, aux_timeout_ms);
 	if (!timeout) {
-		DP_ERR("aux %s timeout\n", (aux->read ? "read" : "write"));
+		pr_err("aux %s timeout\n", (aux->read ? "read" : "write"));
 		return -ETIMEDOUT;
 	}
 
@@ -218,7 +223,7 @@ static void dp_aux_cmd_fifo_rx(struct dp_aux_private *aux,
 
 		actual_i = (data >> 16) & 0xFF;
 		if (i != actual_i)
-			DP_WARN("Index mismatch: expected %d, found %d\n",
+			pr_warn("Index mismatch: expected %d, found %d\n",
 				i, actual_i);
 	}
 }
@@ -277,7 +282,7 @@ static void dp_aux_isr(struct dp_aux *dp_aux)
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
@@ -299,7 +304,7 @@ static void dp_aux_reconfig(struct dp_aux *dp_aux)
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
@@ -310,18 +315,18 @@ static void dp_aux_reconfig(struct dp_aux *dp_aux)
 	aux->catalog->reset(aux->catalog);
 }
 
-static void dp_aux_abort_transaction(struct dp_aux *dp_aux, bool abort)
+static void dp_aux_abort_transaction(struct dp_aux *dp_aux, bool reset)
 {
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
 	aux = container_of(dp_aux, struct dp_aux_private, dp_aux);
 
-	atomic_set(&aux->aborted, abort);
+	atomic_set(&aux->aborted, !reset);
 }
 
 static void dp_aux_update_offset_and_segment(struct dp_aux_private *aux,
@@ -442,7 +447,7 @@ static int dp_aux_transfer_ready(struct dp_aux_private *aux,
 	/* msg sanity check */
 	if ((aux->native && (msg->size > aux_cmd_native_max)) ||
 		(msg->size > aux_cmd_i2c_max)) {
-		DP_ERR("%s: invalid msg: size(%zu), request(%x)\n",
+		pr_err("%s: invalid msg: size(%zu), request(%x)\n",
 			__func__, msg->size, msg->request);
 		ret = -EINVAL;
 		goto error;
@@ -467,6 +472,12 @@ error:
 	return ret;
 }
 
+static inline bool dp_aux_is_sideband_msg(u32 address, size_t size)
+{
+	return (address >= 0x1000 && address + size < 0x1800) ||
+			(address >= 0x2000 && address + size < 0x2200);
+}
+
 static ssize_t dp_aux_transfer_debug(struct drm_dp_aux *drm_aux,
 		struct drm_dp_aux_msg *msg)
 {
@@ -484,44 +495,57 @@ static ssize_t dp_aux_transfer_debug(struct drm_dp_aux *drm_aux,
 	aux->aux_error_num = DP_AUX_ERR_NONE;
 
 	if (!aux->dpcd || !aux->edid) {
-		DP_ERR("invalid aux/dpcd structure\n");
+		pr_err("invalid aux/dpcd structure\n");
 		goto end;
 	}
 
-	if ((msg->address + msg->size) > SZ_4K) {
-		DP_DEBUG("invalid dpcd access: addr=0x%x, size=0x%lx\n",
+	if ((msg->address + msg->size) > SZ_4K &&
+		!dp_aux_is_sideband_msg(msg->address, msg->size)) {
+		pr_debug("invalid dpcd access: addr=0x%x, size=0x%lx\n",
 				msg->address, msg->size);
 		goto address_error;
 	}
 
 	if (aux->native) {
-		mutex_lock(aux->dp_aux.access_lock);
 		aux->dp_aux.reg = msg->address;
 		aux->dp_aux.read = aux->read;
 		aux->dp_aux.size = msg->size;
 
-		if (!aux->read)
-			memcpy(aux->dpcd + msg->address,
-				msg->buffer, msg->size);
-
 		reinit_completion(&aux->comp);
-		mutex_unlock(aux->dp_aux.access_lock);
 
-		timeout = wait_for_completion_timeout(&aux->comp, HZ * 2);
-		if (!timeout) {
-			DP_ERR("%s timeout: 0x%x\n",
-				aux->read ? "read" : "write",
-				msg->address);
-			atomic_set(&aux->aborted, 1);
-			ret = -ETIMEDOUT;
-			goto end;
-		}
+		if (dp_aux_is_sideband_msg(msg->address, msg->size)) {
+			if (!aux->sim_bridge || !aux->sim_bridge->transfer) {
+				pr_err("no mst bridge available\n");
+				atomic_set(&aux->aborted, 1);
+				ret = -ETIMEDOUT;
+				goto end;
+			}
 
-		mutex_lock(aux->dp_aux.access_lock);
-		if (aux->read)
+			ret = aux->sim_bridge->transfer(aux->sim_bridge,
+				drm_aux, msg);
+		} else if (aux->read) {
+			timeout = wait_for_completion_timeout(&aux->comp, HZ);
+			if (!timeout) {
+				pr_err("read timeout 0x%x\n", msg->address);
+				atomic_set(&aux->aborted, 1);
+				ret = -ETIMEDOUT;
+				goto end;
+			}
+
 			memcpy(msg->buffer, aux->dpcd + msg->address,
 				msg->size);
-		mutex_unlock(aux->dp_aux.access_lock);
+		} else {
+			memcpy(aux->dpcd + msg->address, msg->buffer,
+				msg->size);
+
+			timeout = wait_for_completion_timeout(&aux->comp, HZ);
+			if (!timeout) {
+				pr_err("write timeout 0x%x\n", msg->address);
+				atomic_set(&aux->aborted, 1);
+				ret = -ETIMEDOUT;
+				goto end;
+			}
+		}
 
 		aux->aux_error_num = DP_AUX_ERR_NONE;
 	} else {
@@ -623,6 +647,25 @@ unlock_exit:
 	return ret;
 }
 
+static ssize_t dp_aux_bridge_transfer(struct drm_dp_aux *drm_aux,
+		struct drm_dp_aux_msg *msg)
+{
+	struct dp_aux_private *aux = container_of(drm_aux,
+			struct dp_aux_private, drm_aux);
+	ssize_t size;
+
+	if (aux->bridge_in_transfer) {
+		size = dp_aux_transfer(drm_aux, msg);
+	} else {
+		aux->bridge_in_transfer = true;
+		size = aux->aux_bridge->transfer(aux->aux_bridge,
+				drm_aux, msg);
+		aux->bridge_in_transfer = false;
+	}
+
+	return size;
+}
+
 static void dp_aux_reset_phy_config_indices(struct dp_aux_cfg *aux_cfg)
 {
 	int i = 0;
@@ -636,7 +679,7 @@ static void dp_aux_init(struct dp_aux *dp_aux, struct dp_aux_cfg *aux_cfg)
 	struct dp_aux_private *aux;
 
 	if (!dp_aux || !aux_cfg) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
@@ -659,7 +702,7 @@ static void dp_aux_deinit(struct dp_aux *dp_aux)
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
@@ -679,7 +722,7 @@ static int dp_aux_register(struct dp_aux *dp_aux)
 	int ret = 0;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		ret = -EINVAL;
 		goto exit;
 	}
@@ -691,10 +734,14 @@ static int dp_aux_register(struct dp_aux *dp_aux)
 	aux->drm_aux.transfer = dp_aux_transfer;
 	ret = drm_dp_aux_register(&aux->drm_aux);
 	if (ret) {
-		DP_ERR("%s: failed to register drm aux: %d\n", __func__, ret);
+		pr_err("%s: failed to register drm aux: %d\n", __func__, ret);
 		goto exit;
 	}
 	dp_aux->drm_aux = &aux->drm_aux;
+
+	/* if bridge is defined, override transfer function */
+	if (aux->aux_bridge && aux->aux_bridge->transfer)
+		aux->drm_aux.transfer = dp_aux_bridge_transfer;
 exit:
 	return ret;
 }
@@ -704,7 +751,7 @@ static void dp_aux_deregister(struct dp_aux *dp_aux)
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
@@ -717,24 +764,22 @@ static void dp_aux_dpcd_updated(struct dp_aux *dp_aux)
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
 	aux = container_of(dp_aux, struct dp_aux_private, dp_aux);
 
-	/* make sure wait has started */
-	usleep_range(20, 30);
 	complete(&aux->comp);
 }
 
 static void dp_aux_set_sim_mode(struct dp_aux *dp_aux, bool en,
-		u8 *edid, u8 *dpcd)
+		u8 *edid, u8 *dpcd, struct msm_dp_aux_bridge *sim_bridge)
 {
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		return;
 	}
 
@@ -744,10 +789,13 @@ static void dp_aux_set_sim_mode(struct dp_aux *dp_aux, bool en,
 
 	aux->edid = edid;
 	aux->dpcd = dpcd;
+	aux->sim_bridge = sim_bridge;
 
 	if (en) {
 		atomic_set(&aux->aborted, 0);
 		aux->drm_aux.transfer = dp_aux_transfer_debug;
+	} else if (aux->aux_bridge && aux->aux_bridge->transfer) {
+		aux->drm_aux.transfer = dp_aux_bridge_transfer;
 	} else {
 		aux->drm_aux.transfer = dp_aux_transfer;
 	}
@@ -763,7 +811,7 @@ static int dp_aux_configure_aux_switch(struct dp_aux *dp_aux,
 	enum fsa_function event = FSA_USBC_DISPLAYPORT_DISCONNECTED;
 
 	if (!dp_aux) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		rc = -EINVAL;
 		goto end;
 	}
@@ -771,7 +819,7 @@ static int dp_aux_configure_aux_switch(struct dp_aux *dp_aux,
 	aux = container_of(dp_aux, struct dp_aux_private, dp_aux);
 
 	if (!aux->aux_switch_node) {
-		DP_DEBUG("undefined fsa4480 handle\n");
+		pr_debug("undefined fsa4480 handle\n");
 		rc = -EINVAL;
 		goto end;
 	}
@@ -785,24 +833,25 @@ static int dp_aux_configure_aux_switch(struct dp_aux *dp_aux,
 			event = FSA_USBC_ORIENTATION_CC2;
 			break;
 		default:
-			DP_ERR("invalid orientation\n");
+			pr_err("invalid orientation\n");
 			rc = -EINVAL;
 			goto end;
 		}
 	}
 
-	DP_DEBUG("enable=%d, orientation=%d, event=%d\n",
+	pr_debug("enable=%d, orientation=%d, event=%d\n",
 			enable, orientation, event);
 
 	rc = fsa4480_switch_event(aux->aux_switch_node, event);
 	if (rc)
-		DP_ERR("failed to configure fsa4480 i2c device (%d)\n", rc);
+		pr_err("failed to configure fsa4480 i2c device (%d)\n", rc);
 end:
 	return rc;
 }
 
 struct dp_aux *dp_aux_get(struct device *dev, struct dp_catalog_aux *catalog,
-		struct dp_parser *parser, struct device_node *aux_switch)
+		struct dp_parser *parser, struct device_node *aux_switch,
+		struct msm_dp_aux_bridge *aux_bridge)
 {
 	int rc = 0;
 	struct dp_aux_private *aux;
@@ -812,7 +861,7 @@ struct dp_aux *dp_aux_get(struct device *dev, struct dp_catalog_aux *catalog,
 			(!parser->no_aux_switch &&
 				!aux_switch &&
 				!parser->gpio_aux_switch)) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		rc = -ENODEV;
 		goto error;
 	}
@@ -831,6 +880,7 @@ struct dp_aux *dp_aux_get(struct device *dev, struct dp_catalog_aux *catalog,
 	aux->catalog = catalog;
 	aux->cfg = parser->aux_cfg;
 	aux->aux_switch_node = aux_switch;
+	aux->aux_bridge = aux_bridge;
 	dp_aux = &aux->dp_aux;
 	aux->retry_cnt = 0;
 	aux->dp_aux.reg = 0xFFFF;

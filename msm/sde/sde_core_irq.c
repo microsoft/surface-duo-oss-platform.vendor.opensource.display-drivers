@@ -83,8 +83,7 @@ int sde_core_irq_idx_lookup(struct sde_kms *sde_kms,
 			!sde_kms->hw_intr->ops.irq_idx_lookup)
 		return -EINVAL;
 
-	return sde_kms->hw_intr->ops.irq_idx_lookup(
-			sde_kms->hw_intr, intr_type,
+	return sde_kms->hw_intr->ops.irq_idx_lookup(intr_type,
 			instance_idx);
 }
 
@@ -105,7 +104,7 @@ static int _sde_core_irq_enable(struct sde_kms *sde_kms, int irq_idx)
 		return -EINVAL;
 	}
 
-	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->sde_irq_map_size) {
+	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->irq_idx_tbl_size) {
 		SDE_ERROR("invalid IRQ index: [%d]\n", irq_idx);
 		return -EINVAL;
 	}
@@ -115,36 +114,41 @@ static int _sde_core_irq_enable(struct sde_kms *sde_kms, int irq_idx)
 
 	SDE_EVT32(irq_idx,
 			atomic_read(&sde_kms->irq_obj.enable_counts[irq_idx]));
-
 	if (atomic_inc_return(&sde_kms->irq_obj.enable_counts[irq_idx]) == 1) {
+		ret = sde_kms->hw_intr->ops.enable_irq(
+				sde_kms->hw_intr,
+				irq_idx);
+		if (ret)
+			SDE_ERROR("Fail to enable IRQ for irq_idx:%d\n",
+					irq_idx);
+
+		SDE_DEBUG("irq_idx=%d ret=%d\n", irq_idx, ret);
+
 		spin_lock_irqsave(&sde_kms->irq_obj.cb_lock, irq_flags);
-		/* empty callback list but interrupt is being enabled */
+		/* empty callback list but interrupt is enabled */
 		if (list_empty(&sde_kms->irq_obj.irq_cb_tbl[irq_idx]))
-			SDE_ERROR("enabling irq_idx=%d with no callback\n",
+			SDE_ERROR("irq_idx=%d enabled with no callback\n",
 					irq_idx);
 		spin_unlock_irqrestore(&sde_kms->irq_obj.cb_lock, irq_flags);
-
-		spin_lock_irqsave(&sde_kms->hw_intr->irq_lock, irq_flags);
-		ret = sde_kms->hw_intr->ops.enable_irq_nolock(
-				sde_kms->hw_intr, irq_idx);
-		spin_unlock_irqrestore(&sde_kms->hw_intr->irq_lock, irq_flags);
 	}
-
-	if (ret)
-		SDE_ERROR("Fail to enable IRQ for irq_idx:%d\n", irq_idx);
-
-	SDE_DEBUG("irq_idx=%d ret=%d\n", irq_idx, ret);
 
 	return ret;
 }
 
 int sde_core_irq_enable(struct sde_kms *sde_kms, int *irq_idxs, u32 irq_count)
 {
-	int i, ret = 0;
+	int i, ret = 0, counts;
 
 	if (!sde_kms || !irq_idxs || !irq_count) {
 		SDE_ERROR("invalid params\n");
 		return -EINVAL;
+	}
+
+	counts = atomic_read(&sde_kms->irq_obj.enable_counts[irq_idxs[0]]);
+	if (counts) {
+		SDE_DEBUG("%pS: irq_idx=%d enable_count=%d\n",
+			__builtin_return_address(0), irq_idxs[0], counts);
+		SDE_EVT32(irq_idxs[0], counts, SDE_EVTLOG_ERROR);
 	}
 
 	for (i = 0; (i < irq_count) && !ret; i++)
@@ -161,14 +165,13 @@ int sde_core_irq_enable(struct sde_kms *sde_kms, int *irq_idxs, u32 irq_count)
 static int _sde_core_irq_disable(struct sde_kms *sde_kms, int irq_idx)
 {
 	int ret = 0;
-	unsigned long irq_flags;
 
 	if (!sde_kms || !sde_kms->hw_intr || !sde_kms->irq_obj.enable_counts) {
 		SDE_ERROR("invalid params\n");
 		return -EINVAL;
 	}
 
-	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->sde_irq_map_size) {
+	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->irq_idx_tbl_size) {
 		SDE_ERROR("invalid IRQ index: [%d]\n", irq_idx);
 		return -EINVAL;
 	}
@@ -178,28 +181,33 @@ static int _sde_core_irq_disable(struct sde_kms *sde_kms, int irq_idx)
 
 	SDE_EVT32(irq_idx,
 			atomic_read(&sde_kms->irq_obj.enable_counts[irq_idx]));
-
-	spin_lock_irqsave(&sde_kms->hw_intr->irq_lock, irq_flags);
-	if (atomic_add_unless(&sde_kms->irq_obj.enable_counts[irq_idx], -1, 0)
-		&& atomic_read(&sde_kms->irq_obj.enable_counts[irq_idx]) == 0)
-		ret = sde_kms->hw_intr->ops.disable_irq_nolock(
-				sde_kms->hw_intr, irq_idx);
-	spin_unlock_irqrestore(&sde_kms->hw_intr->irq_lock, irq_flags);
-
-	if (ret)
-		SDE_ERROR("Fail to disable IRQ for irq_idx:%d\n", irq_idx);
-	SDE_DEBUG("irq_idx=%d ret=%d\n", irq_idx, ret);
+	if (atomic_dec_return(&sde_kms->irq_obj.enable_counts[irq_idx]) == 0) {
+		ret = sde_kms->hw_intr->ops.disable_irq(
+				sde_kms->hw_intr,
+				irq_idx);
+		if (ret)
+			SDE_ERROR("Fail to disable IRQ for irq_idx:%d\n",
+					irq_idx);
+		SDE_DEBUG("irq_idx=%d ret=%d\n", irq_idx, ret);
+	}
 
 	return ret;
 }
 
 int sde_core_irq_disable(struct sde_kms *sde_kms, int *irq_idxs, u32 irq_count)
 {
-	int i, ret = 0;
+	int i, ret = 0, counts;
 
 	if (!sde_kms || !irq_idxs || !irq_count) {
 		SDE_ERROR("invalid params\n");
 		return -EINVAL;
+	}
+
+	counts = atomic_read(&sde_kms->irq_obj.enable_counts[irq_idxs[0]]);
+	if (counts == 2) {
+		SDE_DEBUG("%pS: irq_idx=%d enable_count=%d\n",
+			__builtin_return_address(0), irq_idxs[0], counts);
+		SDE_EVT32(irq_idxs[0], counts, SDE_EVTLOG_ERROR);
 	}
 
 	for (i = 0; (i < irq_count) && !ret; i++)
@@ -223,7 +231,7 @@ int sde_core_irq_disable_nolock(struct sde_kms *sde_kms, int irq_idx)
 		return -EINVAL;
 	}
 
-	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->sde_irq_map_size) {
+	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->irq_idx_tbl_size) {
 		SDE_ERROR("invalid IRQ index: [%d]\n", irq_idx);
 		return -EINVAL;
 	}
@@ -296,7 +304,7 @@ int sde_core_irq_register_callback(struct sde_kms *sde_kms, int irq_idx,
 		return -EINVAL;
 	}
 
-	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->sde_irq_map_size) {
+	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->irq_idx_tbl_size) {
 		SDE_ERROR("invalid IRQ index: [%d]\n", irq_idx);
 		return -EINVAL;
 	}
@@ -331,7 +339,7 @@ int sde_core_irq_unregister_callback(struct sde_kms *sde_kms, int irq_idx,
 		return -EINVAL;
 	}
 
-	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->sde_irq_map_size) {
+	if (irq_idx < 0 || irq_idx >= sde_kms->hw_intr->irq_idx_tbl_size) {
 		SDE_ERROR("invalid IRQ index: [%d]\n", irq_idx);
 		return -EINVAL;
 	}
@@ -416,7 +424,7 @@ DEFINE_SDE_DEBUGFS_SEQ_FOPS(sde_debugfs_core_irq);
 int sde_debugfs_core_irq_init(struct sde_kms *sde_kms,
 		struct dentry *parent)
 {
-	sde_kms->irq_obj.debugfs_file = debugfs_create_file("core_irq", 0400,
+	sde_kms->irq_obj.debugfs_file = debugfs_create_file("core_irq", 0600,
 			parent, &sde_kms->irq_obj,
 			&sde_debugfs_core_irq_fops);
 
@@ -443,16 +451,25 @@ void sde_debugfs_core_irq_destroy(struct sde_kms *sde_kms)
 
 void sde_core_irq_preinstall(struct sde_kms *sde_kms)
 {
+	struct msm_drm_private *priv;
 	int i;
 	int rc;
 
-	if (!sde_kms || !sde_kms->dev) {
-		SDE_ERROR("invalid sde_kms or dev\n");
+	if (!sde_kms) {
+		SDE_ERROR("invalid sde_kms\n");
+		return;
+	} else if (!sde_kms->dev) {
+		SDE_ERROR("invalid drm device\n");
+		return;
+	} else if (!sde_kms->dev->dev_private) {
+		SDE_ERROR("invalid device private\n");
 		return;
 	}
+	priv = sde_kms->dev->dev_private;
 
-	rc = pm_runtime_get_sync(sde_kms->dev->dev);
-	if (rc < 0) {
+	rc = sde_power_resource_enable(&priv->phandle, sde_kms->core_client,
+			true);
+	if (rc) {
 		SDE_ERROR("failed to enable power resource %d\n", rc);
 		SDE_EVT32(rc, SDE_EVTLOG_ERROR);
 		return;
@@ -460,12 +477,12 @@ void sde_core_irq_preinstall(struct sde_kms *sde_kms)
 
 	sde_clear_all_irqs(sde_kms);
 	sde_disable_all_irqs(sde_kms);
-	pm_runtime_put_sync(sde_kms->dev->dev);
+	sde_power_resource_enable(&priv->phandle, sde_kms->core_client, false);
 
 	spin_lock_init(&sde_kms->irq_obj.cb_lock);
 
 	/* Create irq callbacks for all possible irq_idx */
-	sde_kms->irq_obj.total_irqs = sde_kms->hw_intr->sde_irq_map_size;
+	sde_kms->irq_obj.total_irqs = sde_kms->hw_intr->irq_idx_tbl_size;
 	sde_kms->irq_obj.irq_cb_tbl = kcalloc(sde_kms->irq_obj.total_irqs,
 			sizeof(struct list_head), GFP_KERNEL);
 	sde_kms->irq_obj.enable_counts = kcalloc(sde_kms->irq_obj.total_irqs,
@@ -493,17 +510,26 @@ int sde_core_irq_postinstall(struct sde_kms *sde_kms)
 
 void sde_core_irq_uninstall(struct sde_kms *sde_kms)
 {
+	struct msm_drm_private *priv;
 	int i;
 	int rc;
 	unsigned long irq_flags;
 
-	if (!sde_kms || !sde_kms->dev) {
-		SDE_ERROR("invalid sde_kms or dev\n");
+	if (!sde_kms) {
+		SDE_ERROR("invalid sde_kms\n");
+		return;
+	} else if (!sde_kms->dev) {
+		SDE_ERROR("invalid drm device\n");
+		return;
+	} else if (!sde_kms->dev->dev_private) {
+		SDE_ERROR("invalid device private\n");
 		return;
 	}
+	priv = sde_kms->dev->dev_private;
 
-	rc = pm_runtime_get_sync(sde_kms->dev->dev);
-	if (rc < 0) {
+	rc = sde_power_resource_enable(&priv->phandle, sde_kms->core_client,
+			true);
+	if (rc) {
 		SDE_ERROR("failed to enable power resource %d\n", rc);
 		SDE_EVT32(rc, SDE_EVTLOG_ERROR);
 		return;
@@ -516,7 +542,7 @@ void sde_core_irq_uninstall(struct sde_kms *sde_kms)
 
 	sde_clear_all_irqs(sde_kms);
 	sde_disable_all_irqs(sde_kms);
-	pm_runtime_put_sync(sde_kms->dev->dev);
+	sde_power_resource_enable(&priv->phandle, sde_kms->core_client, false);
 
 	spin_lock_irqsave(&sde_kms->irq_obj.cb_lock, irq_flags);
 	kfree(sde_kms->irq_obj.irq_cb_tbl);

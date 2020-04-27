@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012, 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012, 2015-2020, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
@@ -785,7 +785,7 @@ static int sde_mdp_put_img(struct sde_mdp_img_data *data, bool rotator,
 	}
 
 	if (!IS_ERR_OR_NULL(data->srcp_dma_buf)) {
-		SDEROT_DBG("ion hdl=%pK buf=0x%pa\n", data->srcp_dma_buf,
+		SDEROT_DBG("ion hdl=%p buf=0x%pa\n", data->srcp_dma_buf,
 							&data->addr);
 		if (sde_mdp_is_map_needed(data) && data->mapped) {
 			domain = sde_smmu_get_domain_type(data->flags,
@@ -798,7 +798,8 @@ static int sde_mdp_put_img(struct sde_mdp_img_data *data, bool rotator,
 			data->srcp_attachment->dma_map_attrs |=
 				DMA_ATTR_DELAYED_UNMAP;
 			dma_buf_unmap_attachment(data->srcp_attachment,
-				data->srcp_table, dir);
+				data->srcp_table,
+				sde_smmu_set_dma_direction(dir));
 			dma_buf_detach(data->srcp_dma_buf,
 					data->srcp_attachment);
 			if (!(data->flags & SDE_ROT_EXT_DMA_BUF)) {
@@ -840,7 +841,7 @@ static int sde_mdp_get_img(struct sde_fb_data *img,
 	if (sde_mdp_is_map_needed(data)) {
 		domain = sde_smmu_get_domain_type(data->flags, rotator);
 
-		SDEROT_DBG("%d domain=%d ihndl=%pK\n",
+		SDEROT_DBG("%d domain=%d ihndl=%p\n",
 				__LINE__, domain, data->srcp_dma_buf);
 		data->srcp_attachment =
 			sde_smmu_dma_buf_attach(data->srcp_dma_buf, dev,
@@ -919,7 +920,8 @@ static int sde_mdp_map_buffer(struct sde_mdp_img_data *data, bool rotator,
 		}
 
 		sgt = dma_buf_map_attachment(
-				data->srcp_attachment, dir);
+				data->srcp_attachment,
+				sde_smmu_set_dma_direction(dir));
 		if (IS_ERR_OR_NULL(sgt) ||
 				IS_ERR_OR_NULL(sgt->sgl)) {
 			SDEROT_ERR("Failed to map attachment\n");
@@ -973,7 +975,7 @@ static int sde_mdp_map_buffer(struct sde_mdp_img_data *data, bool rotator,
 		data->addr += data->offset;
 		data->len -= data->offset;
 
-		SDEROT_DBG("ihdl=%pK buf=0x%pa len=0x%lx\n",
+		SDEROT_DBG("ihdl=%p buf=0x%pa len=0x%lx\n",
 			 data->srcp_dma_buf, &data->addr, data->len);
 	} else {
 		sde_mdp_put_img(data, rotator, dir);
@@ -983,7 +985,8 @@ static int sde_mdp_map_buffer(struct sde_mdp_img_data *data, bool rotator,
 	return ret;
 
 err_unmap:
-	dma_buf_unmap_attachment(data->srcp_attachment, data->srcp_table, dir);
+	dma_buf_unmap_attachment(data->srcp_attachment, data->srcp_table,
+			sde_smmu_set_dma_direction(dir));
 err_detach:
 	dma_buf_detach(data->srcp_dma_buf, data->srcp_attachment);
 	if (!(data->flags & SDE_ROT_EXT_DMA_BUF)) {
@@ -1211,6 +1214,8 @@ static const struct dma_buf_ops sde_rot_dmabuf_ops = {
 	.map_dma_buf	= sde_rot_dmabuf_map_tiny,
 	.unmap_dma_buf	= sde_rot_dmabuf_unmap,
 	.release	= sde_rot_dmabuf_release,
+	.map_atomic	= sde_rot_dmabuf_no_map,
+	.unmap_atomic	= sde_rot_dmabuf_no_unmap,
 	.map		= sde_rot_dmabuf_no_map,
 	.unmap		= sde_rot_dmabuf_no_unmap,
 	.mmap		= sde_rot_dmabuf_no_mmap,

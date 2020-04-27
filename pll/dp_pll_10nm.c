@@ -220,11 +220,11 @@ static struct clk_regmap_mux dp_phy_pll_vco_div_clk = {
 
 static struct clk_hw *mdss_dp_pllcc_10nm[] = {
 	[DP_VCO_CLK] = &dp_vco_clk.hw,
-	[DP_PHY_PLL_LINK_CLK] = &dp_phy_pll_link_clk.hw,
+	[DP_LINK_CLK_DIVSEL_TEN] = &dp_phy_pll_link_clk.hw,
 	[DP_VCO_DIVIDED_TWO_CLK_SRC] = &dp_vco_divsel_two_clk_src.hw,
 	[DP_VCO_DIVIDED_FOUR_CLK_SRC] = &dp_vco_divsel_four_clk_src.hw,
 	[DP_VCO_DIVIDED_SIX_CLK_SRC] = &dp_vco_divsel_six_clk_src.hw,
-	[DP_PHY_PLL_VCO_DIV_CLK] = &dp_phy_pll_vco_div_clk.clkr.hw,
+	[DP_VCO_DIVIDED_CLK_SRC_MUX] = &dp_phy_pll_vco_div_clk.clkr.hw,
 };
 
 int dp_pll_clock_register_10nm(struct platform_device *pdev,
@@ -236,15 +236,28 @@ int dp_pll_clock_register_10nm(struct platform_device *pdev,
 	struct regmap *regmap;
 	int num_clks = ARRAY_SIZE(mdss_dp_pllcc_10nm);
 
-	clk_data = devm_kzalloc(&pdev->dev, sizeof(*clk_data), GFP_KERNEL);
+	if (!pdev || !pdev->dev.of_node) {
+		pr_err("Invalid input parameters\n");
+		return -EINVAL;
+	}
+
+	if (!pll_res || !pll_res->pll_base || !pll_res->phy_base ||
+		!pll_res->ln_tx0_base || !pll_res->ln_tx1_base) {
+		pr_err("%s: Invalid input parameters\n", __func__);
+		return -EINVAL;
+	}
+
+	clk_data = devm_kzalloc(&pdev->dev, sizeof(struct clk_onecell_data),
+					GFP_KERNEL);
 	if (!clk_data)
 		return -ENOMEM;
 
-	clk_data->clks = devm_kcalloc(&pdev->dev, num_clks,
-				sizeof(struct clk *), GFP_KERNEL);
-	if (!clk_data->clks)
+	clk_data->clks = devm_kzalloc(&pdev->dev, (num_clks *
+				sizeof(struct clk *)), GFP_KERNEL);
+	if (!clk_data->clks) {
+		devm_kfree(&pdev->dev, clk_data);
 		return -ENOMEM;
-
+	}
 	clk_data->clk_num = num_clks;
 
 	pll_res->priv = &dp_pdb;
@@ -260,7 +273,7 @@ int dp_pll_clock_register_10nm(struct platform_device *pdev,
 
 	dp_vco_clk.priv = pll_res;
 
-	for (i = DP_VCO_CLK; i <= DP_PHY_PLL_VCO_DIV_CLK; i++) {
+	for (i = DP_VCO_CLK; i <= DP_VCO_DIVIDED_CLK_SRC_MUX; i++) {
 		pr_debug("reg clk: %d index: %d\n", i, pll_res->index);
 		clk = devm_clk_register(&pdev->dev,
 				mdss_dp_pllcc_10nm[i]);
@@ -283,5 +296,7 @@ int dp_pll_clock_register_10nm(struct platform_device *pdev,
 	}
 	return 0;
 clk_reg_fail:
+	devm_kfree(&pdev->dev, clk_data->clks);
+	devm_kfree(&pdev->dev, clk_data);
 	return rc;
 }

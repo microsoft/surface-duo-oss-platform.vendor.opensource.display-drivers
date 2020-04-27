@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_PHY_HW_H_
@@ -12,15 +12,6 @@
 #define DSI_PHY_TIMING_V3_SIZE 12
 #define DSI_PHY_TIMING_V4_SIZE 14
 
-#define DSI_PHY_DBG(p, fmt, ...)	DRM_DEV_DEBUG(NULL, "[msm-dsi-debug]: DSI_%d: "\
-		fmt, p ? p->index : -1, ##__VA_ARGS__)
-#define DSI_PHY_ERR(p, fmt, ...)	DRM_DEV_ERROR(NULL, "[msm-dsi-error]: DSI_%d: "\
-		fmt, p ? p->index : -1, ##__VA_ARGS__)
-#define DSI_PHY_INFO(p, fmt, ...)	DRM_DEV_INFO(NULL, "[msm-dsi-info]: DSI_%d: "\
-		fmt, p ? p->index : -1, ##__VA_ARGS__)
-#define DSI_PHY_WARN(p, fmt, ...)	DRM_WARN("[msm-dsi-warn]: DSI_%d: " fmt,\
-		p ? p->index : -1, ##__VA_ARGS__)
-
 /**
  * enum dsi_phy_version - DSI PHY version enumeration
  * @DSI_PHY_VERSION_UNKNOWN:    Unknown version.
@@ -30,7 +21,6 @@
  * @DSI_PHY_VERSION_2_0:        14nm
  * @DSI_PHY_VERSION_3_0:        10nm
  * @DSI_PHY_VERSION_4_0:        7nm
- * @DSI_PHY_VERSION_4_1:	7nm
  * @DSI_PHY_VERSION_MAX:
  */
 enum dsi_phy_version {
@@ -41,7 +31,6 @@ enum dsi_phy_version {
 	DSI_PHY_VERSION_2_0, /* 14nm */
 	DSI_PHY_VERSION_3_0, /* 10nm */
 	DSI_PHY_VERSION_4_0, /* 7nm  */
-	DSI_PHY_VERSION_4_1, /* 7nm */
 	DSI_PHY_VERSION_MAX
 };
 
@@ -97,6 +86,7 @@ struct dsi_phy_per_lane_cfgs {
  * @regulators:       Regulator settings for lanes.
  * @pll_source:       PLL source.
  * @lane_map:         DSI logical to PHY lane mapping.
+ * @lane_pnswap:      P/N swap status on each lane.
  * @force_clk_lane_hs:Boolean whether to force clock lane in HS mode.
  * @phy_type:         Phy-type (Dphy/Cphy).
  * @bit_clk_rate_hz: DSI bit clk rate in HZ.
@@ -109,6 +99,7 @@ struct dsi_phy_cfg {
 	struct dsi_phy_per_lane_cfgs regulators;
 	enum dsi_phy_pll_source pll_source;
 	struct dsi_lane_map lane_map;
+	u8 lane_pnswap;
 	bool force_clk_lane_hs;
 	enum dsi_phy_type phy_type;
 	unsigned long bit_clk_rate_hz;
@@ -187,9 +178,11 @@ struct phy_dyn_refresh_ops {
 	 * @phy:           Pointer to DSI PHY hardware instance.
 	 * @cfg:	   Pointer to DSI PHY timings.
 	 * @is_master:	   Boolean to indicate whether for master or slave.
+	 * @is_cphy:	   Boolean to indicate cphy mode.
 	 */
 	void (*dyn_refresh_config)(struct dsi_phy_hw *phy,
-				   struct dsi_phy_cfg *cfg, bool is_master);
+				struct dsi_phy_cfg *cfg, bool is_master,
+				bool is_cphy);
 
 	/**
 	 * dyn_refresh_pipe_delay - configure pipe delay registers for dynamic
@@ -277,6 +270,21 @@ struct dsi_phy_hw_ops {
 				       struct dsi_mode_info *mode,
 				       struct dsi_host_common_cfg *config,
 				       struct dsi_phy_per_lane_cfgs *timing,
+				       bool use_mode_bit_clk, bool is_cphy);
+
+	/**
+	 * calculate_cphy_timing_params() - calculates cphy timing parameters.
+	 * @phy:      Pointer to DSI PHY hardware object.
+	 * @mode:     Mode information for which timing has to be calculated.
+	 * @config:   DSI host configuration for this mode.
+	 * @timing:   Timing parameters for each lane which will be returned.
+	 * @use_mode_bit_clk: Boolean to indicate whether reacalculate dsi
+	 *		bitclk or use the existing bitclk(for dynamic clk case).
+	 */
+	int (*calculate_cphy_timing_params)(struct dsi_phy_hw *phy,
+				       struct dsi_mode_info *mode,
+				       struct dsi_host_common_cfg *config,
+				       struct dsi_phy_per_lane_cfgs *timing,
 				       bool use_mode_bit_clk);
 
 	/**
@@ -322,14 +330,6 @@ struct dsi_phy_hw_ops {
 	 * @enable:	Bool to control continuous clock request.
 	 */
 	void (*set_continuous_clk)(struct dsi_phy_hw *phy, bool enable);
-
-	/**
-	 * commit_phy_timing() - Commit PHY timing
-	 * @phy:	Pointer to DSI PHY hardware object.
-	 * @timing: Pointer to PHY timing array
-	 */
-	void (*commit_phy_timing)(struct dsi_phy_hw *phy,
-			struct dsi_phy_per_lane_cfgs *timing);
 
 	void *timing_ops;
 	struct phy_ulps_config_ops ulps_ops;

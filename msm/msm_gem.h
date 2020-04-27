@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -31,28 +32,27 @@
 struct msm_gem_object;
 
 struct msm_gem_aspace_ops {
-	int (*map)(struct msm_gem_address_space *space, struct msm_gem_vma *vma,
+	int (*map)(struct msm_gem_address_space *, struct msm_gem_vma *,
 		struct sg_table *sgt, int npages, unsigned int flags);
 
-	void (*unmap)(struct msm_gem_address_space *space,
-		struct msm_gem_vma *vma, struct sg_table *sgt,
-		unsigned int flags);
+	void (*unmap)(struct msm_gem_address_space *, struct msm_gem_vma *,
+		struct sg_table *sgt, unsigned int flags);
 
-	void (*destroy)(struct msm_gem_address_space *space);
-	void (*add_to_active)(struct msm_gem_address_space *space,
-		struct msm_gem_object *obj);
-	void (*remove_from_active)(struct msm_gem_address_space *space,
-		struct msm_gem_object *obj);
-	int (*register_cb)(struct msm_gem_address_space *space,
-			void (*cb)(void *cb, bool data),
-			void *cb_data);
-	int (*unregister_cb)(struct msm_gem_address_space *space,
-			void (*cb)(void *cb, bool data),
-			void *cb_data);
+	void (*destroy)(struct msm_gem_address_space *);
+	void (*add_to_active)(struct msm_gem_address_space *,
+		struct msm_gem_object *);
+	void (*remove_from_active)(struct msm_gem_address_space *,
+		struct msm_gem_object *);
+	int (*register_cb)(struct msm_gem_address_space *,
+			void (*cb)(void *, bool),
+			void *);
+	int (*unregister_cb)(struct msm_gem_address_space *,
+			void (*cb)(void *, bool),
+			void *);
 };
 
 struct aspace_client {
-	void (*cb)(void *cb, bool data);
+	void (*cb)(void *, bool);
 	void *cb_data;
 	struct list_head list;
 };
@@ -136,11 +136,6 @@ struct msm_gem_object {
 
 	struct msm_gem_address_space *aspace;
 	bool in_active_list;
-
-	/* Indicates whether object  needs to request for
-	 * new pagetables due to cb switch
-	 */
-	bool obj_dirty;
 };
 #define to_msm_bo(x) container_of(x, struct msm_gem_object, base)
 
@@ -188,16 +183,12 @@ void msm_gem_vunmap(struct drm_gem_object *obj, enum msm_gem_lock subclass);
 struct msm_gem_submit {
 	struct drm_device *dev;
 	struct msm_gpu *gpu;
-	struct list_head node;   /* node in ring submit list */
+	struct list_head node;   /* node in gpu submit_list */
 	struct list_head bo_list;
 	struct ww_acquire_ctx ticket;
-	uint32_t seqno;		/* Sequence number of the submit on the ring */
 	struct dma_fence *fence;
-	struct msm_gpu_submitqueue *queue;
 	struct pid *pid;    /* submitting process */
 	bool valid;         /* true if no cmdstream patching needed */
-	bool in_rb;         /* "sudo" mode, copy cmds into RB */
-	struct msm_ringbuffer *ring;
 	unsigned int nr_cmds;
 	unsigned int nr_bos;
 	struct {

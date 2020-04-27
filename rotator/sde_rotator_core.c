@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s:%d: " fmt, __func__, __LINE__
@@ -21,7 +21,6 @@
 #include <soc/qcom/secure_buffer.h>
 #include <asm/cacheflush.h>
 #include <uapi/linux/sched/types.h>
-#include <soc/qcom/qtee_shmbridge.h>
 
 #include "sde_rotator_base.h"
 #include "sde_rotator_core.h"
@@ -79,10 +78,6 @@
 
 #define BUS_VOTE_19_MHZ 153600000
 
-/* forward prototype */
-static int sde_rotator_update_perf(struct sde_rot_mgr *mgr);
-
-#ifdef CONFIG_QCOM_BUS_SCALING
 static struct msm_bus_vectors rot_reg_bus_vectors[] = {
 	SDE_REG_BUS_VECTOR_ENTRY(0, 0),
 	SDE_REG_BUS_VECTOR_ENTRY(0, BUS_VOTE_19_MHZ),
@@ -95,6 +90,9 @@ static struct msm_bus_scale_pdata rot_reg_bus_scale_table = {
 	.name = "mdss_rot_reg",
 	.active_only = 1,
 };
+
+/* forward prototype */
+static int sde_rotator_update_perf(struct sde_rot_mgr *mgr);
 
 static int sde_rotator_bus_scale_set_quota(struct sde_rot_bus_data_type *bus,
 		u64 quota)
@@ -192,18 +190,6 @@ static int sde_rotator_enable_reg_bus(struct sde_rot_mgr *mgr, u64 quota)
 
 	return ret;
 }
-#else
-static inline int sde_rotator_enable_reg_bus(struct sde_rot_mgr *mgr, u64 quota)
-{
-	return 0;
-}
-
-static inline int sde_rotator_bus_scale_set_quota(
-		struct sde_rot_bus_data_type *bus, u64 quota)
-{
-	return 0;
-}
-#endif
 
 /*
  * Clock rate of all open sessions working a particular hw block
@@ -510,7 +496,7 @@ static void sde_rotator_clear_fence(struct sde_rot_entry *entry)
 {
 	if (entry->input_fence) {
 		SDEROT_EVTLOG(entry->input_fence, 1111);
-		SDEROT_DBG("sys_fence_put i:%pK\n", entry->input_fence);
+		SDEROT_DBG("sys_fence_put i:%p\n", entry->input_fence);
 		sde_rotator_put_sync_fence(entry->input_fence);
 		entry->input_fence = NULL;
 	}
@@ -521,7 +507,7 @@ static void sde_rotator_clear_fence(struct sde_rot_entry *entry)
 			sde_rotator_resync_timeline(entry->fenceq->timeline);
 
 		SDEROT_EVTLOG(entry->output_fence, 2222);
-		SDEROT_DBG("sys_fence_put o:%pK\n", entry->output_fence);
+		SDEROT_DBG("sys_fence_put o:%p\n", entry->output_fence);
 		sde_rotator_put_sync_fence(entry->output_fence);
 		entry->output_fence = NULL;
 	}
@@ -587,40 +573,25 @@ static int sde_rotator_import_buffer(struct sde_layer_buffer *buffer,
 	return ret;
 }
 
-static int sde_rotator_secure_session_ctrl(bool enable)
+static int _sde_rotator_secure_session_ctrl(bool enable)
 {
 	struct sde_rot_data_type *mdata = sde_rot_get_mdata();
 	uint32_t *sid_info = NULL;
 	struct scm_desc desc = {0};
 	unsigned int resp = 0;
 	int ret = 0;
-	struct qtee_shm shm;
-	bool qtee_en = qtee_shmbridge_is_enabled();
 
 	if (test_bit(SDE_CAPS_SEC_ATTACH_DETACH_SMMU, mdata->sde_caps_map)) {
 
-		desc.arginfo = SCM_ARGS(4, SCM_VAL, SCM_RW, SCM_VAL, SCM_VAL);
-		desc.args[0] = SDE_ROTATOR_DEVICE;
-
-		if (qtee_en) {
-			ret = qtee_shmbridge_allocate_shm(sizeof(uint32_t),
-				&shm);
-			if (ret)
-				return -ENOMEM;
-
-			sid_info = (uint32_t *) shm.vaddr;
-			desc.args[1] = shm.paddr;
-			desc.args[2] = shm.size;
-		} else {
-			sid_info = kzalloc(sizeof(uint32_t), GFP_KERNEL);
-			if (!sid_info)
-				return -ENOMEM;
-
-			desc.args[1] = SCM_BUFFER_PHYS(sid_info);
-			desc.args[2] = sizeof(uint32_t);
-		}
+		sid_info = kzalloc(sizeof(uint32_t), GFP_KERNEL);
+		if (!sid_info)
+			return -ENOMEM;
 
 		sid_info[0] = mdata->sde_smmu[SDE_IOMMU_DOMAIN_ROT_SECURE].sid;
+		desc.arginfo = SCM_ARGS(4, SCM_VAL, SCM_RW, SCM_VAL, SCM_VAL);
+		desc.args[0] = SDE_ROTATOR_DEVICE;
+		desc.args[1] = SCM_BUFFER_PHYS(sid_info);
+		desc.args[2] = sizeof(uint32_t);
 
 		if (!mdata->sec_cam_en && enable) {
 			/*
@@ -648,11 +619,12 @@ static int sde_rotator_secure_session_ctrl(bool enable)
 			}
 
 			SDEROT_DBG(
-			  "scm(1) sid0x%x dev0x%llx vmid0x%llx qtee_en%d ret%d resp%x\n",
+			  "scm(1) sid0x%x dev0x%llx vmid0x%llx ret%d resp%x\n",
 				sid_info[0], desc.args[0], desc.args[3],
-				qtee_en, ret, resp);
-			SDEROT_EVTLOG(1, sid_info, sid_info[0], desc.args[0],
-					desc.args[3], qtee_en, ret, resp);
+				ret, resp);
+			SDEROT_EVTLOG(1, sid_info, sid_info[0],
+					desc.args[0], desc.args[3],
+					ret, resp);
 		} else if (mdata->sec_cam_en && !enable) {
 			/*
 			 * Disable secure camera operation
@@ -668,25 +640,23 @@ static int sde_rotator_secure_session_ctrl(bool enable)
 			resp = desc.ret[0];
 
 			SDEROT_DBG(
-			  "scm(0) sid0x%x dev0x%llx vmid0x%llx qtee_en%d ret%d resp%d\n",
+			  "scm(0) sid0x%x dev0x%llx vmid0x%llx ret%d resp%d\n",
 				sid_info[0], desc.args[0], desc.args[3],
-				qtee_en, ret, resp);
+				ret, resp);
 
 			/* force smmu to reattach */
 			sde_smmu_secure_ctrl(1);
 
-			SDEROT_EVTLOG(0, sid_info, sid_info[0], desc.args[0],
-					desc.args[3], qtee_en, ret, resp);
+			SDEROT_EVTLOG(0, sid_info, sid_info[0],
+					desc.args[0], desc.args[3],
+					ret, resp);
 		}
 	} else {
 		return 0;
 	}
 
 end:
-	if (qtee_en)
-		qtee_shmbridge_free_shm(&shm);
-	else
-		kfree(sid_info);
+	kfree(sid_info);
 
 	if (ret)
 		return ret;
@@ -694,6 +664,39 @@ end:
 	return resp;
 }
 
+static int sde_rotator_secure_session_ctrl(bool enable)
+{
+	struct sde_rot_data_type *mdata = sde_rot_get_mdata();
+	int ret = -EINVAL;
+
+	/*
+	 * wait_for_transition and secure_session_control are filled by client
+	 * callback.
+	 */
+	if (mdata->wait_for_transition && mdata->secure_session_ctrl &&
+		mdata->callback_request) {
+		ret = mdata->wait_for_transition(mdata->sec_cam_en, enable);
+		if (ret) {
+			SDEROT_ERR("failed Secure wait for transition %d\n",
+				   ret);
+		} else {
+			if (mdata->sec_cam_en ^ enable) {
+				mdata->sec_cam_en = enable;
+				ret = mdata->secure_session_ctrl(enable);
+				if (ret)
+					mdata->sec_cam_en = 0;
+			}
+		}
+	} else if (!mdata->callback_request) {
+		ret = _sde_rotator_secure_session_ctrl(enable);
+	}
+
+	if (ret)
+		SDEROT_ERR("failed %d sde_rotator_secure_session %d\n",
+			   ret, mdata->callback_request);
+
+	return ret;
+}
 
 static int sde_rotator_map_and_check_data(struct sde_rot_entry *entry)
 {
@@ -1544,7 +1547,6 @@ static void sde_rotator_commit_handler(struct kthread_work *work)
 	struct sde_rot_hw_resource *hw;
 	struct sde_rot_mgr *mgr;
 	struct sched_param param = { .sched_priority = 5 };
-	struct sde_rot_trace_entry rot_trace;
 	int ret;
 
 	entry = container_of(work, struct sde_rot_entry, commit_work);
@@ -1593,26 +1595,17 @@ static void sde_rotator_commit_handler(struct kthread_work *work)
 	if (entry->item.ts)
 		entry->item.ts[SDE_ROTATOR_TS_COMMIT] = ktime_get();
 
-	/* Set values to pass to trace */
-	rot_trace.wb_idx = entry->item.wb_idx;
-	rot_trace.flags = entry->item.flags;
-	rot_trace.input_format = entry->item.input.format;
-	rot_trace.input_width = entry->item.input.width;
-	rot_trace.input_height = entry->item.input.height;
-	rot_trace.src_x = entry->item.src_rect.x;
-	rot_trace.src_y = entry->item.src_rect.y;
-	rot_trace.src_w = entry->item.src_rect.w;
-	rot_trace.src_h = entry->item.src_rect.h;
-	rot_trace.output_format = entry->item.output.format;
-	rot_trace.output_width = entry->item.output.width;
-	rot_trace.output_height = entry->item.output.height;
-	rot_trace.dst_x = entry->item.dst_rect.x;
-	rot_trace.dst_y = entry->item.dst_rect.y;
-	rot_trace.dst_w = entry->item.dst_rect.w;
-	rot_trace.dst_h = entry->item.dst_rect.h;
-
 	trace_rot_entry_commit(
-		entry->item.session_id, entry->item.sequence_id, &rot_trace);
+		entry->item.session_id, entry->item.sequence_id,
+		entry->item.wb_idx, entry->item.flags,
+		entry->item.input.format,
+		entry->item.input.width, entry->item.input.height,
+		entry->item.src_rect.x, entry->item.src_rect.y,
+		entry->item.src_rect.w, entry->item.src_rect.h,
+		entry->item.output.format,
+		entry->item.output.width, entry->item.output.height,
+		entry->item.dst_rect.x, entry->item.dst_rect.y,
+		entry->item.dst_rect.w, entry->item.dst_rect.h);
 
 	ATRACE_INT("sde_smmu_ctrl", 0);
 	ret = sde_smmu_ctrl(1);
@@ -1698,7 +1691,6 @@ static void sde_rotator_done_handler(struct kthread_work *work)
 	struct sde_rot_entry_container *request;
 	struct sde_rot_hw_resource *hw;
 	struct sde_rot_mgr *mgr;
-	struct sde_rot_trace_entry rot_trace;
 	int ret;
 
 	entry = container_of(work, struct sde_rot_entry, done_work);
@@ -1733,26 +1725,17 @@ static void sde_rotator_done_handler(struct kthread_work *work)
 	if (entry->item.ts)
 		entry->item.ts[SDE_ROTATOR_TS_DONE] = ktime_get();
 
-	/* Set values to pass to trace */
-	rot_trace.wb_idx = entry->item.wb_idx;
-	rot_trace.flags = entry->item.flags;
-	rot_trace.input_format = entry->item.input.format;
-	rot_trace.input_width = entry->item.input.width;
-	rot_trace.input_height = entry->item.input.height;
-	rot_trace.src_x = entry->item.src_rect.x;
-	rot_trace.src_y = entry->item.src_rect.y;
-	rot_trace.src_w = entry->item.src_rect.w;
-	rot_trace.src_h = entry->item.src_rect.h;
-	rot_trace.output_format = entry->item.output.format;
-	rot_trace.output_width = entry->item.output.width;
-	rot_trace.output_height = entry->item.output.height;
-	rot_trace.dst_x = entry->item.dst_rect.x;
-	rot_trace.dst_y = entry->item.dst_rect.y;
-	rot_trace.dst_w = entry->item.dst_rect.w;
-	rot_trace.dst_h = entry->item.dst_rect.h;
-
-	trace_rot_entry_done(entry->item.session_id, entry->item.sequence_id,
-			&rot_trace);
+	trace_rot_entry_done(
+		entry->item.session_id, entry->item.sequence_id,
+		entry->item.wb_idx, entry->item.flags,
+		entry->item.input.format,
+		entry->item.input.width, entry->item.input.height,
+		entry->item.src_rect.x, entry->item.src_rect.y,
+		entry->item.src_rect.w, entry->item.src_rect.h,
+		entry->item.output.format,
+		entry->item.output.width, entry->item.output.height,
+		entry->item.dst_rect.x, entry->item.dst_rect.y,
+		entry->item.dst_rect.w, entry->item.dst_rect.h);
 
 	sde_rot_mgr_lock(mgr);
 	sde_rotator_put_hw_resource(entry->commitq, entry, entry->commitq->hw);
@@ -2698,7 +2681,7 @@ static int sde_rotator_close(struct sde_rot_mgr *mgr,
 	return 0;
 }
 
-static ssize_t caps_show(struct device *dev,
+static ssize_t sde_rotator_show_caps(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	size_t len = PAGE_SIZE;
@@ -2721,7 +2704,7 @@ static ssize_t caps_show(struct device *dev,
 	return cnt;
 }
 
-static ssize_t state_show(struct device *dev,
+static ssize_t sde_rotator_show_state(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	size_t len = PAGE_SIZE;
@@ -2753,8 +2736,8 @@ static ssize_t state_show(struct device *dev,
 	return cnt;
 }
 
-static DEVICE_ATTR_RO(caps);
-static DEVICE_ATTR_RO(state);
+static DEVICE_ATTR(caps, 0444, sde_rotator_show_caps, NULL);
+static DEVICE_ATTR(state, 0444, sde_rotator_show_state, NULL);
 
 static struct attribute *sde_rotator_fs_attrs[] = {
 	&dev_attr_caps.attr,
@@ -2766,7 +2749,6 @@ static struct attribute_group sde_rotator_fs_attr_group = {
 	.attrs = sde_rotator_fs_attrs
 };
 
-#ifdef CONFIG_QCOM_BUS_SCALING
 static int sde_rotator_parse_dt_bus(struct sde_rot_mgr *mgr,
 	struct platform_device *dev)
 {
@@ -2809,13 +2791,6 @@ static int sde_rotator_parse_dt_bus(struct sde_rot_mgr *mgr,
 
 	return ret;
 }
-#else
-static inline int sde_rotator_parse_dt_bus(struct sde_rot_mgr *mgr,
-	struct platform_device *dev)
-{
-	return 0;
-}
-#endif
 
 static int sde_rotator_parse_dt(struct sde_rot_mgr *mgr,
 	struct platform_device *dev)
@@ -2920,7 +2895,6 @@ error:
 	return rc;
 }
 
-#ifdef CONFIG_QCOM_BUS_SCALING
 static void sde_rotator_bus_scale_unregister(struct sde_rot_mgr *mgr)
 {
 	SDEROT_DBG("unregister bus_hdl=%x, reg_bus_hdl=%x\n",
@@ -2964,15 +2938,6 @@ static int sde_rotator_bus_scale_register(struct sde_rot_mgr *mgr)
 
 	return 0;
 }
-#else
-static inline void sde_rotator_bus_scale_unregister(struct sde_rot_mgr *mgr)
-{
-}
-static inline int sde_rotator_bus_scale_register(struct sde_rot_mgr *mgr)
-{
-	return 0;
-}
-#endif
 
 static inline int sde_rotator_search_dt_clk(struct platform_device *pdev,
 		struct sde_rot_mgr *mgr, char *clk_name, int clk_idx,
@@ -3188,13 +3153,15 @@ int sde_rotator_core_init(struct sde_rot_mgr **pmgr,
 	} else if (IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
 			SDE_MDP_HW_REV_300) ||
 		IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
+			SDE_MDP_HW_REV_320) ||
+		IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
 			SDE_MDP_HW_REV_400) ||
 		IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
 			SDE_MDP_HW_REV_410) ||
 		IS_SDE_MAJOR_SAME(mdata->mdss_version,
 			SDE_MDP_HW_REV_500) ||
-		IS_SDE_MAJOR_SAME(mdata->mdss_version,
-			SDE_MDP_HW_REV_600)) {
+		IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
+			SDE_MDP_HW_REV_620)) {
 		mgr->ops_hw_init = sde_rotator_r3_init;
 		mgr->min_rot_clk = ROT_MIN_ROT_CLK;
 
@@ -3204,11 +3171,15 @@ int sde_rotator_core_init(struct sde_rot_mgr **pmgr,
 		 * ensure we do not cross the max allowed clock for rotator
 		 */
 		if (IS_SDE_MAJOR_SAME(mdata->mdss_version,
-			SDE_MDP_HW_REV_500))
+			SDE_MDP_HW_REV_500) ||
+			IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
+			SDE_MDP_HW_REV_620))
 			mgr->max_rot_clk = ROT_R3_MAX_ROT_CLK;
 
-		if (!IS_SDE_MAJOR_SAME(mdata->mdss_version,
-					SDE_MDP_HW_REV_600) &&
+		if (!(IS_SDE_MAJOR_SAME(mdata->mdss_version,
+					SDE_MDP_HW_REV_500) ||
+			IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
+			SDE_MDP_HW_REV_620)) &&
 				!sde_rotator_get_clk(mgr,
 					SDE_ROTATOR_CLK_MDSS_AXI)) {
 			SDEROT_ERR("unable to get mdss_axi_clk\n");
@@ -3387,6 +3358,7 @@ int sde_rotator_runtime_idle(struct device *dev)
 int sde_rotator_pm_suspend(struct device *dev)
 {
 	struct sde_rot_mgr *mgr;
+	int i;
 
 	mgr = sde_rot_mgr_from_device(dev);
 
@@ -3401,8 +3373,20 @@ int sde_rotator_pm_suspend(struct device *dev)
 	sde_rotator_suspend_cancel_rot_work(mgr);
 	mgr->minimum_bw_vote = 0;
 	sde_rotator_update_perf(mgr);
+	mgr->pm_rot_enable_clk_cnt = mgr->rot_enable_clk_cnt;
+
+	if (mgr->pm_rot_enable_clk_cnt) {
+		for (i = 0; i < mgr->pm_rot_enable_clk_cnt; i++)
+			sde_rotator_clk_ctrl(mgr, false);
+
+		sde_rotator_update_clk(mgr);
+	}
+
 	ATRACE_END("pm_active");
-	SDEROT_DBG("end pm active %d\n", atomic_read(&mgr->device_suspended));
+	SDEROT_DBG("end pm active %d clk_cnt %d\n",
+	 atomic_read(&mgr->device_suspended), mgr->pm_rot_enable_clk_cnt);
+	SDEROT_EVTLOG(mgr->pm_rot_enable_clk_cnt,
+			 atomic_read(&mgr->device_suspended));
 	sde_rot_mgr_unlock(mgr);
 	return 0;
 }
@@ -3414,6 +3398,7 @@ int sde_rotator_pm_suspend(struct device *dev)
 int sde_rotator_pm_resume(struct device *dev)
 {
 	struct sde_rot_mgr *mgr;
+	int i;
 
 	mgr = sde_rot_mgr_from_device(dev);
 
@@ -3433,10 +3418,20 @@ int sde_rotator_pm_resume(struct device *dev)
 	pm_runtime_enable(dev);
 
 	sde_rot_mgr_lock(mgr);
-	SDEROT_DBG("begin pm active %d\n", atomic_read(&mgr->device_suspended));
+	SDEROT_DBG("begin pm active %d clk_cnt %d\n",
+	 atomic_read(&mgr->device_suspended), mgr->pm_rot_enable_clk_cnt);
 	ATRACE_BEGIN("pm_active");
+	SDEROT_EVTLOG(mgr->pm_rot_enable_clk_cnt,
+			 atomic_read(&mgr->device_suspended));
 	atomic_dec(&mgr->device_suspended);
 	sde_rotator_update_perf(mgr);
+
+	if (mgr->pm_rot_enable_clk_cnt) {
+		sde_rotator_update_clk(mgr);
+		for (i = 0; i < mgr->pm_rot_enable_clk_cnt; i++)
+			sde_rotator_clk_ctrl(mgr, true);
+	}
+
 	sde_rot_mgr_unlock(mgr);
 	return 0;
 }

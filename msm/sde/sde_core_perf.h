@@ -17,29 +17,15 @@
 #define	SDE_PERF_DEFAULT_MAX_CORE_CLK_RATE	320000000
 
 /**
- *  uidle performance counters mode
- * @SDE_PERF_UIDLE_DISABLE: Disable logging (default)
- * @SDE_PERF_UIDLE_CNT: Enable logging of uidle performance counters
- * @SDE_PERF_UIDLE_STATUS: Enable logging of uidle status
- * @SDE_PERF_UIDLE_MAX: Max available mode
- */
-#define SDE_PERF_UIDLE_DISABLE 0x0
-#define SDE_PERF_UIDLE_CNT BIT(0)
-#define SDE_PERF_UIDLE_STATUS BIT(1)
-#define SDE_PERF_UIDLE_MAX BIT(2)
-
-/**
  * struct sde_core_perf_params - definition of performance parameters
  * @max_per_pipe_ib: maximum instantaneous bandwidth request
  * @bw_ctl: arbitrated bandwidth request
  * @core_clk_rate: core clock rate request
- * @llcc_active: request to activate/deactivate the llcc
  */
 struct sde_core_perf_params {
 	u64 max_per_pipe_ib[SDE_POWER_HANDLE_DBUS_ID_MAX];
 	u64 bw_ctl[SDE_POWER_HANDLE_DBUS_ID_MAX];
 	u64 core_clk_rate;
-	bool llcc_active;
 };
 
 /**
@@ -47,13 +33,11 @@ struct sde_core_perf_params {
  * @mode: performance mode
  * @min_core_clk: minimum core clock
  * @min_bus_vote: minimum bus vote
- * @mode_changed: indicate if clock tuning strategy changed
  */
 struct sde_core_perf_tune {
 	u32 mode;
 	u64 min_core_clk;
 	u64 min_bus_vote;
-	bool mode_changed;
 };
 
 /**
@@ -62,6 +46,7 @@ struct sde_core_perf_tune {
  * @debugfs_root: top level debug folder
  * @catalog: Pointer to catalog configuration
  * @phandle: Pointer to power handler
+ * @pclient: Pointer to power client
  * @clk_name: core clock name
  * @core_clk: Pointer to core clock structure
  * @core_clk_rate: current core clock rate
@@ -74,14 +59,13 @@ struct sde_core_perf_tune {
  * @bw_vote_mode: apps rsc vs display rsc bandwidth vote mode
  * @sde_rsc_available: is display rsc available
  * @bw_vote_mode_updated: bandwidth vote mode update
- * @llcc_active: status of the llcc, true if active.
- * @uidle_enabled: indicates if uidle is already enabled
  */
 struct sde_core_perf {
 	struct drm_device *dev;
 	struct dentry *debugfs_root;
 	struct sde_mdss_cfg *catalog;
 	struct sde_power_handle *phandle;
+	struct sde_power_client *pclient;
 	char *clk_name;
 	struct clk *core_clk;
 	u64 core_clk_rate;
@@ -94,8 +78,6 @@ struct sde_core_perf {
 	u32 bw_vote_mode;
 	bool sde_rsc_available;
 	bool bw_vote_mode_updated;
-	bool llcc_active;
-	bool uidle_enabled;
 };
 
 /**
@@ -123,13 +105,6 @@ void sde_core_perf_crtc_update(struct drm_crtc *crtc,
 void sde_core_perf_crtc_release_bw(struct drm_crtc *crtc);
 
 /**
- * sde_core_perf_crtc_update_uidle - attempts to enable uidle of the given crtc
- * @crtc: Pointer to crtc
- * @enable: enable/disable uidle
- */
-void sde_core_perf_crtc_update_uidle(struct drm_crtc *crtc, bool enable);
-
-/**
  * sde_core_perf_destroy - destroy the given core performance context
  * @perf: Pointer to core performance context
  */
@@ -141,12 +116,14 @@ void sde_core_perf_destroy(struct sde_core_perf *perf);
  * @dev: Pointer to drm device
  * @catalog: Pointer to catalog
  * @phandle: Pointer to power handle
+ * @pclient: Pointer to power client
  * @clk_name: core clock name
  */
 int sde_core_perf_init(struct sde_core_perf *perf,
 		struct drm_device *dev,
 		struct sde_mdss_cfg *catalog,
 		struct sde_power_handle *phandle,
+		struct sde_power_client *pclient,
 		char *clk_name);
 
 /**

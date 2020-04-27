@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DP_DRM_H_
@@ -24,8 +24,6 @@ struct dp_bridge {
 	void *dp_panel;
 };
 
-
-#ifdef CONFIG_DRM_MSM_DP
 /**
  * dp_connector_config_hdr - callback to configure HDR
  * @connector: Pointer to drm connector structure
@@ -36,27 +34,6 @@ struct dp_bridge {
 int dp_connector_config_hdr(struct drm_connector *connector,
 		void *display,
 		struct sde_connector_state *c_state);
-
-/**
- * dp_connector_atomic_check - callback to perform atomic
- * check for DP
- * @connector: Pointer to drm connector structure
- * @display: Pointer to private display handle
- * @c_state: connect state data
- * Returns: Zero on success
- */
-int dp_connector_atomic_check(struct drm_connector *connector,
-	void *display,
-	struct drm_connector_state *c_state);
-
-/**
- * dp_connector_set_colorspace - callback to set new colorspace
- * @connector: Pointer to drm connector structure
- * @display: Pointer to private display handle
- * Returns: Zero on success
- */
-int dp_connector_set_colorspace(struct drm_connector *connector,
-	void *display);
 
 /**
  * dp_connector_post_init - callback to perform additional initialization steps
@@ -81,37 +58,35 @@ enum drm_connector_status dp_connector_detect(struct drm_connector *conn,
  * dp_connector_get_modes - callback to add drm modes via drm_mode_probed_add()
  * @connector: Pointer to drm connector structure
  * @display: Pointer to private display handle
- * @avail_res: Pointer with curr available resources
  * Returns: Number of modes added
  */
 int dp_connector_get_modes(struct drm_connector *connector,
-		void *display, const struct msm_resource_caps_info *avail_res);
+		void *display);
 
 /**
  * dp_connector_mode_valid - callback to determine if specified mode is valid
  * @connector: Pointer to drm connector structure
  * @mode: Pointer to drm mode structure
  * @display: Pointer to private display handle
- * @avail_res: Pointer with curr available resources
  * Returns: Validity status for specified mode
  */
 enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
 		struct drm_display_mode *mode,
-		void *display, const struct msm_resource_caps_info *avail_res);
+		void *display);
 
 /**
  * dp_connector_get_mode_info - retrieve information of the mode selected
  * @connector: Pointer to drm connector structure
  * @drm_mode: Display mode set for the display
  * @mode_info: Out parameter. Information of the mode
+ * @max_mixer_width: max width supported by HW layer mixer
  * @display: Pointer to private display structure
- * @avail_res: Pointer with curr available resources
  * Returns: zero on success
  */
 int dp_connector_get_mode_info(struct drm_connector *connector,
 		const struct drm_display_mode *drm_mode,
 		struct msm_mode_info *mode_info,
-		void *display, const struct msm_resource_caps_info *avail_res);
+		u32 max_mixer_width, void *display);
 
 /**
  * dp_connector_get_info - retrieve connector display info
@@ -129,6 +104,17 @@ int dp_connector_get_info(struct drm_connector *connector,
  * @display: Pointer to private display structure
  */
 void dp_connector_post_open(struct drm_connector *connector, void *display);
+
+/**
+ * dp_conn_set_info_blob - callback to perform info blob initialization
+ * @connector: Pointer to drm connector structure
+ * @info: Pointer to sde connector info structure
+ * @display: Pointer to private display handle
+ * @mode_info: Pointer to mode info structure
+ * Returns: Zero on success
+ */
+int dp_connnector_set_info_blob(struct drm_connector *connector,
+		void *info, void *display, struct msm_mode_info *mode_info);
 
 int dp_drm_bridge_init(void *display,
 	struct drm_encoder *encoder);
@@ -177,107 +163,6 @@ int dp_mst_init(struct dp_display *dp_display);
  * @display: Pointer to private display structure
  */
 void dp_mst_deinit(struct dp_display *dp_display);
-#else
-static inline int dp_connector_config_hdr(struct drm_connector *connector,
-		void *display, struct sde_connector_state *c_state)
-{
-	return 0;
-}
-
-int dp_connector_atomic_check(struct drm_connector *connector,
-	void *display,
-	struct drm_connector_state *c_state)
-{
-	return 0;
-}
-
-int dp_connector_set_colorspace(struct drm_connector *connector,
-	void *display)
-{
-	return 0;
-}
-
-static inline int dp_connector_post_init(struct drm_connector *connector,
-		void *display)
-{
-	return 0;
-}
-
-static inline enum drm_connector_status dp_connector_detect(
-		struct drm_connector *conn,
-		bool force,
-		void *display)
-{
-	return 0;
-}
-
-
-static inline int dp_connector_get_modes(struct drm_connector *connector,
-		void *display, const struct msm_resource_caps_info *avail_res)
-{
-	return 0;
-}
-
-static inline enum drm_mode_status dp_connector_mode_valid(
-		struct drm_connector *connector,
-		struct drm_display_mode *mode,
-		void *display, const struct msm_resource_caps_info *avail_res)
-{
-	return MODE_OK;
-}
-
-static inline int dp_connector_get_mode_info(struct drm_connector *connector,
-		const struct drm_display_mode *drm_mode,
-		struct msm_mode_info *mode_info,
-		void *display, const struct msm_resource_caps_info *avail_res)
-{
-	return 0;
-}
-
-static inline int dp_connector_get_info(struct drm_connector *connector,
-		struct msm_display_info *info, void *display)
-{
-	return 0;
-}
-
-static inline void dp_connector_post_open(struct drm_connector *connector,
-		void *display)
-{
-}
-
-static inline int dp_drm_bridge_init(void *display, struct drm_encoder *encoder)
-{
-	return 0;
-}
-
-static inline void dp_drm_bridge_deinit(void *display)
-{
-}
-
-static inline void convert_to_drm_mode(const struct dp_display_mode *dp_mode,
-				struct drm_display_mode *drm_mode)
-{
-}
-
-static inline int dp_mst_drm_bridge_init(void *display,
-	struct drm_encoder *encoder)
-{
-	return 0;
-}
-
-static inline void dp_mst_drm_bridge_deinit(void *display)
-{
-}
-
-static inline int dp_mst_init(struct dp_display *dp_display)
-{
-	return 0;
-}
-
-static inline int dp_mst_deinit(struct dp_display *dp_display)
-{
-	return 0;
-}
-#endif
 
 #endif /* _DP_DRM_H_ */
+

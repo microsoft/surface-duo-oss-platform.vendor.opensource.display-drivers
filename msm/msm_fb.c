@@ -20,7 +20,6 @@
 #include <linux/dma-buf.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
-#include <drm/drm_gem_framebuffer_helper.h>
 
 #include "msm_drv.h"
 #include "msm_kms.h"
@@ -31,80 +30,59 @@
 struct msm_framebuffer {
 	struct drm_framebuffer base;
 	const struct msm_format *format;
+	struct drm_gem_object *planes[MAX_PLANE];
 	void *vaddr[MAX_PLANE];
 	atomic_t kmap_count;
 	u32 flags;
 };
 #define to_msm_framebuffer(x) container_of(x, struct msm_framebuffer, base)
 
-int msm_framebuffer_dirty(struct drm_framebuffer *fb,
-		struct drm_file *file_priv, unsigned int flags,
-		unsigned int color, struct drm_clip_rect *clips,
-		unsigned int num_clips)
+static int msm_framebuffer_create_handle(struct drm_framebuffer *fb,
+		struct drm_file *file_priv,
+		unsigned int *handle)
 {
-	struct drm_modeset_acquire_ctx ctx;
-	struct drm_atomic_state *state;
-	struct drm_plane *plane;
-	int ret = 0;
+	struct msm_framebuffer *msm_fb;
 
-	if (!num_clips || !clips)
-		return 0;
-
-	drm_modeset_acquire_init(&ctx,
-			file_priv ? DRM_MODESET_ACQUIRE_INTERRUPTIBLE : 0);
-
-	state = drm_atomic_state_alloc(fb->dev);
-	if (!state) {
-		ret = -ENOMEM;
-		goto out_drop_locks;
-	}
-	state->acquire_ctx = &ctx;
-
-retry:
-	drm_for_each_plane(plane, fb->dev) {
-		struct drm_plane_state *plane_state;
-
-		ret = drm_modeset_lock(&plane->mutex, state->acquire_ctx);
-		if (ret)
-			goto out;
-
-		if (plane->state->fb != fb) {
-			drm_modeset_unlock(&plane->mutex);
-			continue;
-		}
-
-		plane_state = drm_atomic_get_plane_state(state, plane);
-		if (IS_ERR(plane_state)) {
-			ret = PTR_ERR(plane_state);
-			goto out;
-		}
-
-		plane_state->visible = true;
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return -EINVAL;
 	}
 
-	ret = drm_atomic_commit(state);
+	msm_fb = to_msm_framebuffer(fb);
 
-out:
-	if (ret == -EDEADLK) {
-		drm_atomic_state_clear(state);
-		ret = drm_modeset_backoff(&ctx);
-		if (!ret)
-			goto retry;
+	return drm_gem_handle_create(file_priv,
+			msm_fb->planes[0], handle);
+}
+
+static void msm_framebuffer_destroy(struct drm_framebuffer *fb)
+{
+	struct msm_framebuffer *msm_fb;
+	int i, n;
+
+	if (!fb) {
+		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
+		return;
 	}
 
-	drm_atomic_state_put(state);
+	msm_fb = to_msm_framebuffer(fb);
+	n = fb->format->num_planes;
 
-out_drop_locks:
-	drm_modeset_drop_locks(&ctx);
-	drm_modeset_acquire_fini(&ctx);
+	DBG("destroy: FB ID: %d (%pK)", fb->base.id, fb);
 
-	return ret;
+	drm_framebuffer_cleanup(fb);
+
+	for (i = 0; i < n; i++) {
+		struct drm_gem_object *bo = msm_fb->planes[i];
+
+		drm_gem_object_unreference_unlocked(bo);
+	}
+
+	kfree(msm_fb);
 }
 
 static const struct drm_framebuffer_funcs msm_framebuffer_funcs = {
-	.create_handle = drm_gem_fb_create_handle,
-	.destroy = drm_gem_fb_destroy,
-	.dirty = msm_framebuffer_dirty,
+	.create_handle = msm_framebuffer_create_handle,
+	.destroy = msm_framebuffer_destroy,
 };
 
 #ifdef CONFIG_DEBUG_FS
@@ -127,7 +105,7 @@ void msm_framebuffer_describe(struct drm_framebuffer *fb, struct seq_file *m)
 	for (i = 0; i < n; i++) {
 		seq_printf(m, "   %d: offset=%d pitch=%d, obj: ",
 				i, fb->offsets[i], fb->pitches[i]);
-		msm_gem_describe(fb->obj[i], m);
+		msm_gem_describe(msm_fb->planes[i], m);
 	}
 }
 #endif
@@ -204,8 +182,8 @@ static int msm_framebuffer_kmap(struct drm_framebuffer *fb)
 		}
 		dma_buf_begin_cpu_access(bo->dma_buf, DMA_BIDIRECTIONAL);
 		msm_fb->vaddr[i] = dma_buf_kmap(bo->dma_buf, 0);
-		DRM_INFO("FB[%u]: vaddr[%d]:%ux%u:0x%llx\n", fb->base.id, i,
-				fb->width, fb->height, (u64) msm_fb->vaddr[i]);
+		DRM_INFO("FB[%u]: vaddr[%d]:%ux%u\n", fb->base.id, i,
+			fb->width, fb->height);
 	}
 
 	return 0;
@@ -259,7 +237,7 @@ int msm_framebuffer_prepare(struct drm_framebuffer *fb,
 	msm_fb = to_msm_framebuffer(fb);
 	n = fb->format->num_planes;
 	for (i = 0; i < n; i++) {
-		ret = msm_gem_get_iova(fb->obj[i], aspace, &iova);
+		ret = msm_gem_get_iova(msm_fb->planes[i], aspace, &iova);
 		DBG("FB[%u]: iova[%d]: %08llx (%d)", fb->base.id, i, iova, ret);
 		if (ret)
 			return ret;
@@ -289,22 +267,23 @@ void msm_framebuffer_cleanup(struct drm_framebuffer *fb,
 		msm_framebuffer_kunmap(fb);
 
 	for (i = 0; i < n; i++)
-		msm_gem_put_iova(fb->obj[i], aspace);
+		msm_gem_put_iova(msm_fb->planes[i], aspace);
 }
 
 uint32_t msm_framebuffer_iova(struct drm_framebuffer *fb,
 		struct msm_gem_address_space *aspace, int plane)
 {
+	struct msm_framebuffer *msm_fb;
 
 	if (!fb) {
 		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
 		return -EINVAL;
 	}
 
-	if (!fb->obj[plane])
+	msm_fb = to_msm_framebuffer(fb);
+	if (!msm_fb->planes[plane])
 		return 0;
-
-	return msm_gem_iova(fb->obj[plane], aspace) + fb->offsets[plane];
+	return msm_gem_iova(msm_fb->planes[plane], aspace) + fb->offsets[plane];
 }
 
 uint32_t msm_framebuffer_phys(struct drm_framebuffer *fb,
@@ -319,11 +298,10 @@ uint32_t msm_framebuffer_phys(struct drm_framebuffer *fb,
 	}
 
 	msm_fb = to_msm_framebuffer(fb);
-
-	if (!msm_fb->base.obj[plane])
+	if (!msm_fb->planes[plane])
 		return 0;
 
-	phys_addr = msm_gem_get_dma_addr(msm_fb->base.obj[plane]);
+	phys_addr = msm_gem_get_dma_addr(msm_fb->planes[plane]);
 	if (!phys_addr)
 		return 0;
 
@@ -332,12 +310,15 @@ uint32_t msm_framebuffer_phys(struct drm_framebuffer *fb,
 
 struct drm_gem_object *msm_framebuffer_bo(struct drm_framebuffer *fb, int plane)
 {
+	struct msm_framebuffer *msm_fb;
+
 	if (!fb) {
 		DRM_ERROR("from:%pS null fb\n", __builtin_return_address(0));
 		return ERR_PTR(-EINVAL);
 	}
 
-	return drm_gem_fb_get_obj(fb, plane);
+	msm_fb = to_msm_framebuffer(fb);
+	return msm_fb->planes[plane];
 }
 
 const struct msm_format *msm_framebuffer_format(struct drm_framebuffer *fb)
@@ -370,7 +351,7 @@ struct drm_framebuffer *msm_framebuffer_create(struct drm_device *dev,
 
 out_unref:
 	for (i = 0; i < n; i++)
-		drm_gem_object_put_unlocked(bos[i]);
+		drm_gem_object_unreference_unlocked(bos[i]);
 	return ERR_PTR(ret);
 }
 
@@ -423,7 +404,7 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 		}
 	}
 
-	if (num_planes > ARRAY_SIZE(fb->obj)) {
+	if (num_planes > ARRAY_SIZE(msm_fb->planes) - 1) {
 		ret = -EINVAL;
 		goto fail;
 	}
@@ -440,19 +421,11 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 				goto fail;
 		}
 	} else {
-		const struct drm_format_info *info;
-
-		info = drm_format_info(mode_cmd->pixel_format);
-		if (!info || num_planes > ARRAY_SIZE(info->cpp)) {
-			ret = -EINVAL;
-			goto fail;
-		}
-
 		for (i = 0; i < num_planes; i++) {
 			unsigned int width = mode_cmd->width / (i ? hsub : 1);
 			unsigned int height = mode_cmd->height / (i ? vsub : 1);
 			unsigned int min_size;
-			unsigned int cpp = 0;
+			unsigned int cpp;
 
 			cpp = drm_format_plane_cpp(mode_cmd->pixel_format, i);
 
@@ -460,7 +433,7 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 				 + width * cpp
 				 + mode_cmd->offsets[i];
 
-			if (!bos[i] || bos[i]->size < min_size) {
+			if (bos[i]->size < min_size) {
 				ret = -EINVAL;
 				goto fail;
 			}
@@ -468,7 +441,7 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 	}
 
 	for (i = 0; i < num_planes; i++)
-		msm_fb->base.obj[i] = bos[i];
+		msm_fb->planes[i] = bos[i];
 
 	drm_helper_mode_fill_fb_struct(dev, fb, mode_cmd);
 
@@ -521,7 +494,7 @@ msm_alloc_stolen_fb(struct drm_device *dev, int w, int h, int p, uint32_t format
 		/* note: if fb creation failed, we can't rely on fb destroy
 		 * to unref the bo:
 		 */
-		drm_gem_object_put_unlocked(bo);
+		drm_gem_object_unreference_unlocked(bo);
 		return ERR_CAST(fb);
 	}
 

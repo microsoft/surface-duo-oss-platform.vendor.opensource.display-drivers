@@ -18,7 +18,6 @@
 #include "sde_rm.h"
 
 #define BL_NODE_NAME_SIZE 32
-#define HDR10_PLUS_VSIF_TYPE_CODE      0x81
 
 /* Autorefresh will occur after FRAME_CNT frames. Large values are unlikely */
 #define AUTOREFRESH_MAX_FRAME_CNT 6
@@ -28,9 +27,6 @@
 
 #define SDE_ERROR_CONN(c, fmt, ...) SDE_ERROR("conn%d " fmt,\
 		(c) ? (c)->base.base.id : -1, ##__VA_ARGS__)
-static u32 dither_matrix[DITHER_MATRIX_SZ] = {
-	15, 7, 13, 5, 3, 11, 1, 9, 12, 4, 14, 6, 0, 8, 2, 10
-};
 
 static const struct drm_prop_enum_list e_topology_name[] = {
 	{SDE_RM_TOPOLOGY_NONE,	"sde_none"},
@@ -59,11 +55,6 @@ static const struct drm_prop_enum_list e_qsync_mode[] = {
 	{SDE_RM_QSYNC_DISABLED,	"none"},
 	{SDE_RM_QSYNC_CONTINUOUS_MODE,	"continuous"},
 	{SDE_RM_QSYNC_ONE_SHOT_MODE,	"one_shot"},
-};
-static const struct drm_prop_enum_list e_frame_trigger_mode[] = {
-	{FRAME_DONE_WAIT_DEFAULT, "default"},
-	{FRAME_DONE_WAIT_SERIALIZE, "serialize_frame_trigger"},
-	{FRAME_DONE_WAIT_POSTED_START, "posted_start"},
 };
 
 static int sde_backlight_device_update_status(struct backlight_device *bd)
@@ -94,19 +85,17 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	if (!bl_lvl && brightness)
 		bl_lvl = 1;
 
-	if (!c_conn->allow_bl_update) {
+	if (display->panel->bl_config.bl_update ==
+		BL_UPDATE_DELAY_UNTIL_FIRST_FRAME && !c_conn->allow_bl_update) {
 		c_conn->unset_bl_level = bl_lvl;
 		return 0;
 	}
 
 	if (c_conn->ops.set_backlight) {
-		/* skip notifying user space if bl is 0 */
-		if (brightness != 0) {
-			event.type = DRM_EVENT_SYS_BACKLIGHT;
-			event.length = sizeof(u32);
-			msm_mode_object_event_notify(&c_conn->base.base,
+		event.type = DRM_EVENT_SYS_BACKLIGHT;
+		event.length = sizeof(u32);
+		msm_mode_object_event_notify(&c_conn->base.base,
 				c_conn->base.dev, &event, (u8 *)&brightness);
-		}
 		rc = c_conn->ops.set_backlight(&c_conn->base,
 				c_conn->display, bl_lvl);
 		c_conn->unset_bl_level = 0;
@@ -137,7 +126,7 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	if (!c_conn || !dev || !dev->dev) {
 		SDE_ERROR("invalid param\n");
 		return -EINVAL;
-	} else if (c_conn->connector_type != DRM_MODE_CONNECTOR_DSI) {
+	} else if (!c_conn->ops.set_backlight) {
 		return 0;
 	}
 
@@ -148,7 +137,7 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	display = (struct dsi_display *) c_conn->display;
 	bl_config = &display->panel->bl_config;
 	props.max_brightness = bl_config->brightness_max_level;
-	props.brightness = bl_config->brightness_max_level;
+	props.brightness = bl_config->brightness_default_level;
 	snprintf(bl_node_name, BL_NODE_NAME_SIZE, "panel%u-backlight",
 							display_count);
 	c_conn->bl_device = backlight_device_register(bl_node_name, dev->dev,
@@ -241,60 +230,12 @@ void sde_connector_unregister_event(struct drm_connector *connector,
 	(void)sde_connector_register_event(connector, event_idx, 0, 0);
 }
 
-static int _sde_connector_get_default_dither_cfg_v1(
-		struct sde_connector *c_conn, void *cfg)
-{
-	struct drm_msm_dither *dither_cfg = (struct drm_msm_dither *)cfg;
-	enum dsi_pixel_format dst_format = DSI_PIXEL_FORMAT_MAX;
-
-	if (!c_conn || !cfg) {
-		SDE_ERROR("invalid argument(s), c_conn %pK, cfg %pK\n",
-				c_conn, cfg);
-		return -EINVAL;
-	}
-
-	if (!c_conn->ops.get_dst_format) {
-		SDE_DEBUG("get_dst_format is unavailable\n");
-		return 0;
-	}
-
-	dst_format = c_conn->ops.get_dst_format(&c_conn->base, c_conn->display);
-	switch (dst_format) {
-	case DSI_PIXEL_FORMAT_RGB888:
-		dither_cfg->c0_bitdepth = 8;
-		dither_cfg->c1_bitdepth = 8;
-		dither_cfg->c2_bitdepth = 8;
-		dither_cfg->c3_bitdepth = 8;
-		break;
-	case DSI_PIXEL_FORMAT_RGB666:
-	case DSI_PIXEL_FORMAT_RGB666_LOOSE:
-		dither_cfg->c0_bitdepth = 6;
-		dither_cfg->c1_bitdepth = 6;
-		dither_cfg->c2_bitdepth = 6;
-		dither_cfg->c3_bitdepth = 6;
-		break;
-	default:
-		SDE_DEBUG("no default dither config for dst_format %d\n",
-			dst_format);
-		return -ENODATA;
-	}
-
-	memcpy(&dither_cfg->matrix, dither_matrix,
-			sizeof(u32) * DITHER_MATRIX_SZ);
-	dither_cfg->temporal_en = 0;
-	return 0;
-}
-
 static void _sde_connector_install_dither_property(struct drm_device *dev,
 		struct sde_kms *sde_kms, struct sde_connector *c_conn)
 {
 	char prop_name[DRM_PROP_NAME_LEN];
 	struct sde_mdss_cfg *catalog = NULL;
-	struct drm_property_blob *blob_ptr;
-	void *cfg;
-	int ret = 0;
-	u32 version = 0, len = 0;
-	bool defalut_dither_needed = false;
+	u32 version = 0;
 
 	if (!dev || !sde_kms || !c_conn) {
 		SDE_ERROR("invld args (s), dev %pK, sde_kms %pK, c_conn %pK\n",
@@ -312,112 +253,57 @@ static void _sde_connector_install_dither_property(struct drm_device *dev,
 		msm_property_install_blob(&c_conn->property_info, prop_name,
 			DRM_MODE_PROP_BLOB,
 			CONNECTOR_PROP_PP_DITHER);
-		len = sizeof(struct drm_msm_dither);
-		cfg = kzalloc(len, GFP_KERNEL);
-		if (!cfg)
-			return;
-
-		ret = _sde_connector_get_default_dither_cfg_v1(c_conn, cfg);
-		if (!ret)
-			defalut_dither_needed = true;
 		break;
 	default:
 		SDE_ERROR("unsupported dither version %d\n", version);
 		return;
 	}
-
-	if (defalut_dither_needed) {
-		blob_ptr = drm_property_create_blob(dev, len, cfg);
-		if (IS_ERR_OR_NULL(blob_ptr))
-			goto exit;
-		c_conn->blob_dither = blob_ptr;
-	}
-exit:
-	kfree(cfg);
 }
 
 int sde_connector_get_dither_cfg(struct drm_connector *conn,
 			struct drm_connector_state *state, void **cfg,
-			size_t *len)
+			size_t *len, bool idle_pc)
 {
 	struct sde_connector *c_conn = NULL;
 	struct sde_connector_state *c_state = NULL;
 	size_t dither_sz = 0;
+	bool is_dirty;
 	u32 *p = (u32 *)cfg;
 
-	if (!conn || !state || !p)
+	if (!conn || !state || !p) {
+		SDE_ERROR("invalid arguments\n");
 		return -EINVAL;
+	}
 
 	c_conn = to_sde_connector(conn);
 	c_state = to_sde_connector_state(state);
 
-	/* try to get user config data first */
-	*cfg = msm_property_get_blob(&c_conn->property_info,
-					&c_state->property_state,
-					&dither_sz,
-					CONNECTOR_PROP_PP_DITHER);
-	/* if user config data doesn't exist, use default dither blob */
-	if (*cfg == NULL && c_conn->blob_dither) {
-		*cfg = c_conn->blob_dither->data;
-		dither_sz = c_conn->blob_dither->length;
+	is_dirty = msm_property_is_dirty(&c_conn->property_info,
+			&c_state->property_state,
+			CONNECTOR_PROP_PP_DITHER);
+
+	if (!is_dirty && !idle_pc) {
+		return -ENODATA;
+	} else if (is_dirty || idle_pc) {
+		*cfg = msm_property_get_blob(&c_conn->property_info,
+				&c_state->property_state,
+				&dither_sz,
+				CONNECTOR_PROP_PP_DITHER);
+		/*
+		 * In idle_pc use case return early, when dither is
+		 * already disabled.
+		 */
+		if (idle_pc && *cfg == NULL)
+			return -ENODATA;
+		/* disable dither based on user config data */
+		else if (*cfg == NULL)
+			return 0;
 	}
 	*len = dither_sz;
 	return 0;
 }
 
-static void sde_connector_get_avail_res_info(struct drm_connector *conn,
-		struct msm_resource_caps_info *avail_res)
-{
-	struct msm_drm_private *priv;
-	struct sde_kms *sde_kms;
-	struct drm_encoder *drm_enc = NULL;
-	struct msm_display_info display_info;
-
-	if (!conn || !conn->dev || !conn->dev->dev_private)
-		return;
-
-	priv = conn->dev->dev_private;
-	sde_kms = to_sde_kms(priv->kms);
-
-	if (!sde_kms)
-		return;
-
-	memset(&display_info, 0, sizeof(display_info));
-
-	if (conn->state && conn->state->best_encoder)
-		drm_enc = conn->state->best_encoder;
-	else
-		drm_enc = conn->encoder;
-
-	sde_connector_get_info(conn, &display_info);
-
-	sde_rm_get_resource_info(&sde_kms->rm, drm_enc, avail_res,
-					 display_info.display_type);
-
-	avail_res->max_mixer_width = sde_kms->catalog->max_mixer_width;
-}
-
-int sde_connector_get_mode_info(struct drm_connector *conn,
-		const struct drm_display_mode *drm_mode,
-		struct msm_mode_info *mode_info)
-{
-	struct sde_connector *sde_conn;
-	struct msm_resource_caps_info avail_res;
-
-	memset(&avail_res, 0, sizeof(avail_res));
-
-	sde_conn = to_sde_connector(conn);
-
-	if (!sde_conn)
-		return -EINVAL;
-
-	sde_connector_get_avail_res_info(conn, &avail_res);
-
-	return sde_conn->ops.get_mode_info(conn, drm_mode,
-			mode_info, sde_conn->display, &avail_res);
-}
-
-int sde_connector_state_get_mode_info(struct drm_connector_state *conn_state,
+int sde_connector_get_mode_info(struct drm_connector_state *conn_state,
 	struct msm_mode_info *mode_info)
 {
 	struct sde_connector_state *sde_conn_state = NULL;
@@ -515,7 +401,7 @@ static int _sde_connector_update_power_locked(struct sde_connector *c_conn)
 {
 	struct drm_connector *connector;
 	void *display;
-	int (*set_power)(struct drm_connector *conn, int status, void *disp);
+	int (*set_power)(struct drm_connector *, int, void *);
 	int mode, rc = 0;
 
 	if (!c_conn)
@@ -587,7 +473,8 @@ static int _sde_connector_update_bl_scale(struct sde_connector *c_conn)
 
 	bl_config = &dsi_display->panel->bl_config;
 
-	if (!c_conn->allow_bl_update) {
+	if (dsi_display->panel->bl_config.bl_update ==
+		BL_UPDATE_DELAY_UNTIL_FIRST_FRAME && !c_conn->allow_bl_update) {
 		c_conn->unset_bl_level = bl_config->bl_level;
 		return 0;
 	}
@@ -595,32 +482,24 @@ static int _sde_connector_update_bl_scale(struct sde_connector *c_conn)
 	if (c_conn->unset_bl_level)
 		bl_config->bl_level = c_conn->unset_bl_level;
 
-	bl_config->bl_scale = c_conn->bl_scale > MAX_BL_SCALE_LEVEL ?
-			MAX_BL_SCALE_LEVEL : c_conn->bl_scale;
-	bl_config->bl_scale_sv = c_conn->bl_scale_sv > MAX_SV_BL_SCALE_LEVEL ?
-			MAX_SV_BL_SCALE_LEVEL : c_conn->bl_scale_sv;
+	if (c_conn->bl_scale > MAX_BL_SCALE_LEVEL)
+		bl_config->bl_scale = MAX_BL_SCALE_LEVEL;
+	else
+		bl_config->bl_scale = c_conn->bl_scale;
 
-	SDE_DEBUG("bl_scale = %u, bl_scale_sv = %u, bl_level = %u\n",
-		bl_config->bl_scale, bl_config->bl_scale_sv,
+	if (c_conn->bl_scale_ad > MAX_AD_BL_SCALE_LEVEL)
+		bl_config->bl_scale_ad = MAX_AD_BL_SCALE_LEVEL;
+	else
+		bl_config->bl_scale_ad = c_conn->bl_scale_ad;
+
+	SDE_DEBUG("bl_scale = %u, bl_scale_ad = %u, bl_level = %u\n",
+		bl_config->bl_scale, bl_config->bl_scale_ad,
 		bl_config->bl_level);
 	rc = c_conn->ops.set_backlight(&c_conn->base,
 			dsi_display, bl_config->bl_level);
 	c_conn->unset_bl_level = 0;
 
 	return rc;
-}
-
-void sde_connector_set_colorspace(struct sde_connector *c_conn)
-{
-	int rc = 0;
-
-	if (c_conn->ops.set_colorspace)
-		rc = c_conn->ops.set_colorspace(&c_conn->base,
-			c_conn->display);
-
-	if (rc)
-		SDE_ERROR_CONN(c_conn, "cannot apply new colorspace %d\n", rc);
-
 }
 
 void sde_connector_set_qsync_params(struct drm_connector *connector)
@@ -645,48 +524,11 @@ void sde_connector_set_qsync_params(struct drm_connector *connector)
 						CONNECTOR_PROP_QSYNC_MODE);
 		if (qsync_propval != c_conn->qsync_mode) {
 			SDE_DEBUG("updated qsync mode %d -> %d\n",
-					c_conn->qsync_mode, qsync_propval);
+				  c_conn->qsync_mode, qsync_propval);
 			c_conn->qsync_updated = true;
 			c_conn->qsync_mode = qsync_propval;
 		}
 	}
-}
-
-void sde_connector_complete_qsync_commit(struct drm_connector *conn,
-				struct msm_display_conn_params *params)
-{
-	struct sde_connector *c_conn;
-
-	if (!conn || !params) {
-		SDE_ERROR("invalid params\n");
-		return;
-	}
-
-	c_conn = to_sde_connector(conn);
-
-	if (c_conn && c_conn->qsync_updated &&
-		(c_conn->qsync_mode == SDE_RM_QSYNC_ONE_SHOT_MODE)) {
-		/* Reset qsync states if mode is one shot */
-		params->qsync_mode = c_conn->qsync_mode = 0;
-		params->qsync_update = true;
-		SDE_EVT32(conn->base.id, c_conn->qsync_mode);
-	}
-}
-
-static int _sde_connector_update_hdr_metadata(struct sde_connector *c_conn,
-		struct sde_connector_state *c_state)
-{
-	int rc = 0;
-
-	if (c_conn->ops.config_hdr)
-		rc = c_conn->ops.config_hdr(&c_conn->base, c_conn->display,
-				c_state);
-
-	if (rc)
-		SDE_ERROR_CONN(c_conn, "cannot apply hdr metadata %d\n", rc);
-
-	SDE_DEBUG_CONN(c_conn, "updated hdr metadata: %d\n", rc);
-	return rc;
 }
 
 static int _sde_connector_update_dirty_properties(
@@ -704,7 +546,6 @@ static int _sde_connector_update_dirty_properties(
 	c_conn = to_sde_connector(connector);
 	c_state = to_sde_connector_state(connector->state);
 
-	mutex_lock(&c_conn->property_info.property_lock);
 	while ((idx = msm_property_pop_dirty(&c_conn->property_info,
 					&c_state->property_state)) >= 0) {
 		switch (idx) {
@@ -716,23 +557,13 @@ static int _sde_connector_update_dirty_properties(
 			mutex_unlock(&c_conn->lock);
 			break;
 		case CONNECTOR_PROP_BL_SCALE:
-		case CONNECTOR_PROP_SV_BL_SCALE:
+		case CONNECTOR_PROP_AD_BL_SCALE:
 			_sde_connector_update_bl_scale(c_conn);
-			break;
-		case CONNECTOR_PROP_HDR_METADATA:
-			_sde_connector_update_hdr_metadata(c_conn, c_state);
 			break;
 		default:
 			/* nothing to do for most properties */
 			break;
 		}
-	}
-	mutex_unlock(&c_conn->property_info.property_lock);
-
-	/* if colorspace needs to be updated do it first */
-	if (c_conn->colorspace_updated) {
-		c_conn->colorspace_updated = false;
-		sde_connector_set_colorspace(c_conn);
 	}
 
 	/*
@@ -747,24 +578,11 @@ static int _sde_connector_update_dirty_properties(
 	return 0;
 }
 
-struct sde_connector_dyn_hdr_metadata *sde_connector_get_dyn_hdr_meta(
-		struct drm_connector *connector)
-{
-	struct sde_connector_state *c_state;
-
-	if (!connector)
-		return NULL;
-
-	c_state = to_sde_connector_state(connector->state);
-	return &c_state->dyn_hdr_meta;
-}
-
 int sde_connector_pre_kickoff(struct drm_connector *connector)
 {
 	struct sde_connector *c_conn;
 	struct sde_connector_state *c_state;
 	struct msm_display_kickoff_params params;
-	struct dsi_display *display;
 	int rc;
 
 	if (!connector) {
@@ -777,17 +595,6 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 	if (!c_conn->display) {
 		SDE_ERROR("invalid connector display\n");
 		return -EINVAL;
-	}
-
-	/*
-	 * During pre kickoff DCS commands have to have an
-	 * asynchronous wait to avoid an unnecessary stall
-	 * in pre-kickoff. This flag must be reset at the
-	 * end of display pre-kickoff.
-	 */
-	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI) {
-		display = (struct dsi_display *)c_conn->display;
-		display->queue_cmd_waits = true;
 	}
 
 	rc = _sde_connector_update_dirty_properties(connector);
@@ -806,8 +613,6 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 
 	rc = c_conn->ops.pre_kickoff(connector, c_conn->display, &params);
 
-	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI)
-		display->queue_cmd_waits = false;
 end:
 	return rc;
 }
@@ -849,33 +654,26 @@ int sde_connector_prepare_commit(struct drm_connector *connector)
 	return rc;
 }
 
+
 void sde_connector_helper_bridge_disable(struct drm_connector *connector)
 {
 	int rc;
 	struct sde_connector *c_conn = NULL;
-	struct dsi_display *display;
-	bool poms_pending = false;
 
 	if (!connector)
 		return;
 
-	c_conn = to_sde_connector(connector);
-	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI) {
-		display = (struct dsi_display *) c_conn->display;
-		poms_pending = display->poms_pending;
+	rc = _sde_connector_update_dirty_properties(connector);
+	if (rc) {
+		SDE_ERROR("conn %d final pre kickoff failed %d\n",
+				connector->base.id, rc);
+		SDE_EVT32(connector->base.id, SDE_EVTLOG_ERROR);
 	}
 
-	if (!poms_pending) {
-		rc = _sde_connector_update_dirty_properties(connector);
-		if (rc) {
-			SDE_ERROR("conn %d final pre kickoff failed %d\n",
-					connector->base.id, rc);
-			SDE_EVT32(connector->base.id, SDE_EVTLOG_ERROR);
-		}
-	}
 	/* Disable ESD thread */
 	sde_connector_schedule_status_work(connector, false);
 
+	c_conn = to_sde_connector(connector);
 	if (c_conn->bl_device) {
 		c_conn->bl_device->props.power = FB_BLANK_POWERDOWN;
 		c_conn->bl_device->props.state |= BL_CORE_FBBLANK;
@@ -1102,12 +900,6 @@ sde_connector_atomic_duplicate_state(struct drm_connector *connector)
 	if (c_state->out_fb)
 		drm_framebuffer_get(c_state->out_fb);
 
-	/* clear dynamic HDR metadata from prev state */
-	if (c_state->dyn_hdr_meta.dynamic_hdr_update) {
-		c_state->dyn_hdr_meta.dynamic_hdr_update = false;
-		c_state->dyn_hdr_meta.dynamic_hdr_payload_size = 0;
-	}
-
 	return &c_state->base;
 }
 
@@ -1137,7 +929,7 @@ int sde_connector_roi_v1_check_roi(struct drm_connector_state *conn_state)
 				c_state->rois.num_rects,
 				mode_info.roi_caps.num_roi);
 		return -E2BIG;
-	}
+	};
 
 	align = &mode_info.roi_caps.align;
 	for (i = 0; i < c_state->rois.num_rects; ++i) {
@@ -1250,8 +1042,6 @@ static int _sde_connector_set_ext_hdr_info(
 	int rc = 0;
 	struct drm_connector *connector;
 	struct drm_msm_ext_hdr_metadata *hdr_meta;
-	size_t payload_size = 0;
-	u8 *payload = NULL;
 	int i;
 
 	if (!c_conn || !c_state) {
@@ -1285,45 +1075,6 @@ static int _sde_connector_set_ext_hdr_info(
 
 	hdr_meta = &c_state->hdr_meta;
 
-	/* dynamic metadata support */
-	if (!hdr_meta->hdr_plus_payload_size || !hdr_meta->hdr_plus_payload)
-		goto skip_dhdr;
-
-	if (!connector->hdr_plus_app_ver) {
-		SDE_ERROR_CONN(c_conn, "sink doesn't support dynamic HDR\n");
-		rc = -ENOTSUPP;
-		goto end;
-	}
-
-	payload_size = hdr_meta->hdr_plus_payload_size;
-	if (payload_size > sizeof(c_state->dyn_hdr_meta.dynamic_hdr_payload)) {
-		SDE_ERROR_CONN(c_conn, "payload size exceeds limit\n");
-		rc = -EINVAL;
-		goto end;
-	}
-
-	payload = c_state->dyn_hdr_meta.dynamic_hdr_payload;
-	if (copy_from_user(payload,
-			(void __user *)c_state->hdr_meta.hdr_plus_payload,
-			payload_size)) {
-		SDE_ERROR_CONN(c_conn, "failed to copy dhdr metadata\n");
-		rc = -EFAULT;
-		goto end;
-	}
-
-	/* verify 1st header byte, programmed in DP Infoframe SDP header */
-	if (payload_size < 1 || (payload[0] != HDR10_PLUS_VSIF_TYPE_CODE)) {
-		SDE_ERROR_CONN(c_conn, "invalid payload detected, size: %zd\n",
-				payload_size);
-		rc = -EINVAL;
-		goto end;
-	}
-
-	c_state->dyn_hdr_meta.dynamic_hdr_update = true;
-
-skip_dhdr:
-	c_state->dyn_hdr_meta.dynamic_hdr_payload_size = payload_size;
-
 	SDE_DEBUG_CONN(c_conn, "hdr_state %d\n", hdr_meta->hdr_state);
 	SDE_DEBUG_CONN(c_conn, "hdr_supported %d\n", hdr_meta->hdr_supported);
 	SDE_DEBUG_CONN(c_conn, "eotf %d\n", hdr_meta->eotf);
@@ -1341,10 +1092,10 @@ skip_dhdr:
 		SDE_DEBUG_CONN(c_conn, "display_primaries_y [%d]\n",
 				   hdr_meta->display_primaries_y[i]);
 	}
-	SDE_DEBUG_CONN(c_conn, "hdr_plus payload%s updated, size %d\n",
-			c_state->dyn_hdr_meta.dynamic_hdr_update ? "" : " NOT",
-			c_state->dyn_hdr_meta.dynamic_hdr_payload_size);
 
+	if (c_conn->ops.config_hdr)
+		rc = c_conn->ops.config_hdr(&c_conn->base,
+				c_conn->display, c_state);
 end:
 	return rc;
 }
@@ -1357,8 +1108,7 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 	struct sde_connector *c_conn;
 	struct sde_connector_state *c_state;
 	int idx, rc;
-	uint64_t fence_user_fd;
-	uint64_t __user prev_user_fd;
+	uint64_t fence_fd;
 
 	if (!connector || !state || !property) {
 		SDE_ERROR("invalid argument(s), conn %pK, state %pK, prp %pK\n",
@@ -1401,42 +1151,23 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 		if (!val)
 			goto end;
 
-		rc = copy_from_user(&prev_user_fd, (void __user *)val,
-				sizeof(uint64_t));
+		/*
+		 * update the the offset to a timeline for commit completion
+		 */
+		rc = sde_fence_create(c_conn->retire_fence, &fence_fd, 1);
 		if (rc) {
-			SDE_ERROR("copy from user failed rc:%d\n", rc);
-			rc = -EFAULT;
+			SDE_ERROR("fence create failed rc:%d\n", rc);
 			goto end;
 		}
 
-		/*
-		 * client is expected to reset the property to -1 before
-		 * requesting for the retire fence
-		 */
-		if (prev_user_fd == -1) {
-			/*
-			 * update the offset to a timeline for
-			 * commit completion
-			 */
-			rc = sde_fence_create(c_conn->retire_fence,
-						&fence_user_fd, 1);
-			if (rc) {
-				SDE_ERROR("fence create failed rc:%d\n", rc);
-				goto end;
-			}
-
-			rc = copy_to_user((uint64_t __user *)(uintptr_t)val,
-					&fence_user_fd, sizeof(uint64_t));
-			if (rc) {
-				SDE_ERROR("copy to user failed rc:%d\n", rc);
-				/*
-				 * fence will be released with timeline
-				 * update
-				 */
-				put_unused_fd(fence_user_fd);
-				rc = -EFAULT;
-				goto end;
-			}
+		rc = copy_to_user((uint64_t __user *)(uintptr_t)val, &fence_fd,
+			sizeof(uint64_t));
+		if (rc) {
+			SDE_ERROR("copy to user failed rc:%d\n", rc);
+			/* fence will be released with timeline update */
+			put_unused_fd(fence_fd);
+			rc = -EFAULT;
+			goto end;
 		}
 		break;
 	case CONNECTOR_PROP_ROI_V1:
@@ -1445,7 +1176,7 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 		if (rc)
 			SDE_ERROR_CONN(c_conn, "invalid roi_v1, rc: %d\n", rc);
 		break;
-	/* CONNECTOR_PROP_BL_SCALE and CONNECTOR_PROP_SV_BL_SCALE are
+	/* CONNECTOR_PROP_BL_SCALE and CONNECTOR_PROP_AD_BL_SCALE are
 	 * color-processing properties. These two properties require
 	 * special handling since they don't quite fit the current standard
 	 * atomic set property framework.
@@ -1454,15 +1185,9 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 		c_conn->bl_scale = val;
 		c_conn->bl_scale_dirty = true;
 		break;
-	case CONNECTOR_PROP_SV_BL_SCALE:
-		c_conn->bl_scale_sv = val;
+	case CONNECTOR_PROP_AD_BL_SCALE:
+		c_conn->bl_scale_ad = val;
 		c_conn->bl_scale_dirty = true;
-		break;
-	case CONNECTOR_PROP_HDR_METADATA:
-		rc = _sde_connector_set_ext_hdr_info(c_conn,
-			c_state, (void *)(uintptr_t)val);
-		if (rc)
-			SDE_ERROR_CONN(c_conn, "cannot set hdr info %d\n", rc);
 		break;
 	case CONNECTOR_PROP_QSYNC_MODE:
 		msm_property_set_dirty(&c_conn->property_info,
@@ -1470,6 +1195,13 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 		break;
 	default:
 		break;
+	}
+
+	if (idx == CONNECTOR_PROP_HDR_METADATA) {
+		rc = _sde_connector_set_ext_hdr_info(c_conn,
+			c_state, (void *)(uintptr_t)val);
+		if (rc)
+			SDE_ERROR_CONN(c_conn, "cannot set hdr info %d\n", rc);
 	}
 
 	/* check for custom property handling */
@@ -1585,24 +1317,9 @@ static void sde_connector_update_hdr_props(struct drm_connector *connector)
 	hdr.hdr_max_luminance = connector->hdr_max_luminance;
 	hdr.hdr_avg_luminance = connector->hdr_avg_luminance;
 	hdr.hdr_min_luminance = connector->hdr_min_luminance;
-	hdr.hdr_plus_supported = connector->hdr_plus_app_ver;
 
 	msm_property_set_blob(&c_conn->property_info, &c_conn->blob_ext_hdr,
 			&hdr, sizeof(hdr), CONNECTOR_PROP_EXT_HDR_INFO);
-}
-
-static void sde_connector_update_colorspace(struct drm_connector *connector)
-{
-	int ret;
-
-	ret = msm_property_set_property(
-			sde_connector_get_propinfo(connector),
-			sde_connector_get_property_state(connector->state),
-			CONNECTOR_PROP_SUPPORTED_COLORSPACES,
-				connector->color_enc_fmt);
-
-	if (ret)
-		SDE_ERROR("failed to set colorspace property for connector\n");
 }
 
 static enum drm_connector_status
@@ -1730,40 +1447,6 @@ int sde_connector_helper_reset_custom_properties(
 	return 0;
 }
 
-static int _sde_connector_lm_preference(struct sde_connector *sde_conn,
-		 struct sde_kms *sde_kms, uint32_t disp_type)
-{
-	int ret = 0;
-	u32 num_lm = 0;
-
-	if (!sde_conn || !sde_kms || !sde_conn->ops.get_default_lms) {
-		SDE_DEBUG("invalid input params");
-		return -EINVAL;
-	}
-
-	if (!disp_type || disp_type >= SDE_CONNECTOR_MAX) {
-		SDE_DEBUG("invalid display_type");
-		return -EINVAL;
-	}
-
-	ret = sde_conn->ops.get_default_lms(sde_conn->display, &num_lm);
-	if (ret || !num_lm) {
-		SDE_DEBUG("failed to get default lm count");
-		return ret;
-	}
-
-	if (num_lm > sde_kms->catalog->mixer_count) {
-		SDE_DEBUG(
-				"topology requesting more lms [%d] than hw exists [%d]",
-				num_lm, sde_kms->catalog->mixer_count);
-		return -EINVAL;
-	}
-
-	sde_hw_mixer_set_preference(sde_kms->catalog, num_lm, disp_type);
-
-	return ret;
-}
-
 int sde_connector_get_panel_vfp(struct drm_connector *connector,
 	struct drm_display_mode *mode)
 {
@@ -1823,10 +1506,7 @@ static ssize_t _sde_debugfs_conn_cmd_tx_sts_read(struct file *file,
 		return 0;
 	}
 
-	if (blen > count)
-		blen = count;
-
-	blen = min_t(size_t, blen, MAX_CMD_PAYLOAD_SIZE);
+	blen = min_t(size_t, MAX_CMD_PAYLOAD_SIZE, count);
 	if (copy_to_user(buf, buffer, blen)) {
 		SDE_ERROR("copy to user buffer failed\n");
 		return -EFAULT;
@@ -2021,7 +1701,6 @@ static const struct drm_connector_funcs sde_connector_ops = {
 static int sde_connector_get_modes(struct drm_connector *connector)
 {
 	struct sde_connector *c_conn;
-	struct msm_resource_caps_info avail_res;
 	int mode_count = 0;
 
 	if (!connector) {
@@ -2035,11 +1714,7 @@ static int sde_connector_get_modes(struct drm_connector *connector)
 		return 0;
 	}
 
-	memset(&avail_res, 0, sizeof(avail_res));
-	sde_connector_get_avail_res_info(connector, &avail_res);
-
-	mode_count = c_conn->ops.get_modes(connector, c_conn->display,
-			&avail_res);
+	mode_count = c_conn->ops.get_modes(connector, c_conn->display);
 	if (!mode_count) {
 		SDE_ERROR_CONN(c_conn, "failed to get modes\n");
 		return 0;
@@ -2047,9 +1722,6 @@ static int sde_connector_get_modes(struct drm_connector *connector)
 
 	if (c_conn->hdr_capable)
 		sde_connector_update_hdr_props(connector);
-
-	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DisplayPort)
-		sde_connector_update_colorspace(connector);
 
 	return mode_count;
 }
@@ -2059,7 +1731,6 @@ sde_connector_mode_valid(struct drm_connector *connector,
 		struct drm_display_mode *mode)
 {
 	struct sde_connector *c_conn;
-	struct msm_resource_caps_info avail_res;
 
 	if (!connector || !mode) {
 		SDE_ERROR("invalid argument(s), conn %pK, mode %pK\n",
@@ -2069,12 +1740,8 @@ sde_connector_mode_valid(struct drm_connector *connector,
 
 	c_conn = to_sde_connector(connector);
 
-	memset(&avail_res, 0, sizeof(avail_res));
-	sde_connector_get_avail_res_info(connector, &avail_res);
-
 	if (c_conn->ops.mode_valid)
-		return c_conn->ops.mode_valid(connector, mode, c_conn->display,
-				&avail_res);
+		return c_conn->ops.mode_valid(connector, mode, c_conn->display);
 
 	/* assume all modes okay by default */
 	return MODE_OK;
@@ -2115,8 +1782,6 @@ sde_connector_atomic_best_encoder(struct drm_connector *connector,
 		encoder = c_conn->ops.atomic_best_encoder(connector,
 				c_conn->display, connector_state);
 
-	c_conn->encoder = encoder;
-
 	return encoder;
 }
 
@@ -2124,8 +1789,9 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 		struct drm_connector_state *new_conn_state)
 {
 	struct sde_connector *c_conn;
+	struct drm_crtc_state *crtc_state;
 	struct sde_connector_state *c_state;
-	bool qsync_dirty = false, has_modeset = false;
+	bool qsync_dirty;
 
 	if (!connector) {
 		SDE_ERROR("invalid connector\n");
@@ -2140,16 +1806,18 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 	c_conn = to_sde_connector(connector);
 	c_state = to_sde_connector_state(new_conn_state);
 
-	has_modeset = sde_crtc_atomic_check_has_modeset(new_conn_state->state,
-						new_conn_state->crtc);
-	qsync_dirty = msm_property_is_dirty(&c_conn->property_info,
+	if (new_conn_state->crtc) {
+		crtc_state = drm_atomic_get_new_crtc_state(
+			new_conn_state->state, new_conn_state->crtc);
+
+		qsync_dirty = msm_property_is_dirty(&c_conn->property_info,
 					&c_state->property_state,
 					CONNECTOR_PROP_QSYNC_MODE);
 
-	SDE_DEBUG("has_modeset %d qsync_dirty %d\n", has_modeset, qsync_dirty);
-	if (has_modeset && qsync_dirty) {
-		SDE_ERROR("invalid qsync update during modeset\n");
-		return -EINVAL;
+		if (drm_atomic_crtc_needs_modeset(crtc_state) && qsync_dirty) {
+			SDE_ERROR("invalid qsync update during modeset\n");
+			return -EINVAL;
+		}
 	}
 
 	if (c_conn->ops.atomic_check)
@@ -2231,7 +1899,6 @@ static void sde_connector_check_status_work(struct work_struct *work)
 {
 	struct sde_connector *conn;
 	int rc = 0;
-	struct device *dev;
 
 	conn = container_of(to_delayed_work(work),
 			struct sde_connector, status_work);
@@ -2241,9 +1908,7 @@ static void sde_connector_check_status_work(struct work_struct *work)
 	}
 
 	mutex_lock(&conn->lock);
-	dev = conn->base.dev->dev;
-
-	if (!conn->ops.check_status || dev->power.is_suspended ||
+	if (!conn->ops.check_status ||
 			(conn->dpms_mode != DRM_MODE_DPMS_ON)) {
 		SDE_DEBUG("dpms mode: %d\n", conn->dpms_mode);
 		mutex_unlock(&conn->lock);
@@ -2274,7 +1939,6 @@ static const struct drm_connector_helper_funcs sde_connector_helper_ops = {
 	.get_modes =    sde_connector_get_modes,
 	.mode_valid =   sde_connector_mode_valid,
 	.best_encoder = sde_connector_best_encoder,
-	.atomic_check = sde_connector_atomic_check,
 };
 
 static const struct drm_connector_helper_funcs sde_connector_helper_ops_v2 = {
@@ -2314,8 +1978,9 @@ static int sde_connector_populate_mode_info(struct drm_connector *conn,
 
 		memset(&mode_info, 0, sizeof(mode_info));
 
-		rc = sde_connector_get_mode_info(&c_conn->base, mode,
-				&mode_info);
+		rc = c_conn->ops.get_mode_info(&c_conn->base, mode, &mode_info,
+			sde_kms->catalog->max_mixer_width,
+			c_conn->display);
 		if (rc) {
 			SDE_ERROR_CONN(c_conn,
 				"failed to get mode info for mode %s\n",
@@ -2432,7 +2097,7 @@ int sde_connector_set_blob_data(struct drm_connector *conn,
 	default:
 		SDE_ERROR_CONN(c_conn, "invalid prop_id: %d\n", prop_id);
 		goto exit;
-	}
+	};
 
 	msm_property_set_blob(&c_conn->property_info,
 			blob,
@@ -2443,138 +2108,6 @@ exit:
 	kfree(info);
 
 	return rc;
-}
-
-static int _sde_connector_install_properties(struct drm_device *dev,
-	struct sde_kms *sde_kms, struct sde_connector *c_conn,
-	int connector_type, void *display,
-	struct msm_display_info *display_info)
-{
-	struct dsi_display *dsi_display;
-	int rc;
-	struct drm_connector *connector;
-
-	msm_property_install_blob(&c_conn->property_info, "capabilities",
-			DRM_MODE_PROP_IMMUTABLE, CONNECTOR_PROP_SDE_INFO);
-
-	rc = sde_connector_set_blob_data(&c_conn->base,
-			NULL, CONNECTOR_PROP_SDE_INFO);
-	if (rc) {
-		SDE_ERROR_CONN(c_conn,
-			"failed to setup connector info, rc = %d\n", rc);
-		return rc;
-	}
-
-	connector = &c_conn->base;
-
-	msm_property_install_blob(&c_conn->property_info, "mode_properties",
-			DRM_MODE_PROP_IMMUTABLE, CONNECTOR_PROP_MODE_INFO);
-
-	if (connector_type == DRM_MODE_CONNECTOR_DSI) {
-		dsi_display = (struct dsi_display *)(display);
-		if (dsi_display && dsi_display->panel &&
-			dsi_display->panel->hdr_props.hdr_enabled == true) {
-			msm_property_install_blob(&c_conn->property_info,
-				"hdr_properties",
-				DRM_MODE_PROP_IMMUTABLE,
-				CONNECTOR_PROP_HDR_INFO);
-
-			msm_property_set_blob(&c_conn->property_info,
-				&c_conn->blob_hdr,
-				&dsi_display->panel->hdr_props,
-				sizeof(dsi_display->panel->hdr_props),
-				CONNECTOR_PROP_HDR_INFO);
-		}
-	}
-
-	msm_property_install_volatile_range(
-			&c_conn->property_info, "sde_drm_roi_v1", 0x0,
-			0, ~0, 0, CONNECTOR_PROP_ROI_V1);
-
-	/* install PP_DITHER properties */
-	_sde_connector_install_dither_property(dev, sde_kms, c_conn);
-
-	if (connector_type == DRM_MODE_CONNECTOR_DisplayPort) {
-		struct drm_msm_ext_hdr_properties hdr = {0};
-
-		c_conn->hdr_capable = true;
-
-		msm_property_install_blob(&c_conn->property_info,
-				"ext_hdr_properties",
-				DRM_MODE_PROP_IMMUTABLE,
-				CONNECTOR_PROP_EXT_HDR_INFO);
-
-		/* set default values to avoid reading uninitialized data */
-		msm_property_set_blob(&c_conn->property_info,
-			      &c_conn->blob_ext_hdr,
-			      &hdr,
-			      sizeof(hdr),
-			      CONNECTOR_PROP_EXT_HDR_INFO);
-
-		/* create and attach colorspace property for DP */
-		if (!drm_mode_create_colorspace_property(connector))
-			drm_object_attach_property(&connector->base,
-				connector->colorspace_property, 0);
-	}
-
-	msm_property_install_volatile_range(&c_conn->property_info,
-		"hdr_metadata", 0x0, 0, ~0, 0, CONNECTOR_PROP_HDR_METADATA);
-
-	msm_property_install_volatile_range(&c_conn->property_info,
-		"RETIRE_FENCE", 0x0, 0, ~0, 0, CONNECTOR_PROP_RETIRE_FENCE);
-
-	msm_property_install_range(&c_conn->property_info, "autorefresh",
-			0x0, 0, AUTOREFRESH_MAX_FRAME_CNT, 0,
-			CONNECTOR_PROP_AUTOREFRESH);
-
-	if (connector_type == DRM_MODE_CONNECTOR_DSI) {
-		if (sde_kms->catalog->has_qsync && display_info->qsync_min_fps)
-			msm_property_install_enum(&c_conn->property_info,
-					"qsync_mode", 0, 0, e_qsync_mode,
-					ARRAY_SIZE(e_qsync_mode),
-					CONNECTOR_PROP_QSYNC_MODE);
-
-		if (display_info->capabilities & MSM_DISPLAY_CAP_CMD_MODE)
-			msm_property_install_enum(&c_conn->property_info,
-				"frame_trigger_mode", 0, 0,
-				e_frame_trigger_mode,
-				ARRAY_SIZE(e_frame_trigger_mode),
-				CONNECTOR_PROP_CMD_FRAME_TRIGGER_MODE);
-	}
-
-	msm_property_install_range(&c_conn->property_info, "bl_scale",
-		0x0, 0, MAX_BL_SCALE_LEVEL, MAX_BL_SCALE_LEVEL,
-		CONNECTOR_PROP_BL_SCALE);
-
-	msm_property_install_range(&c_conn->property_info, "sv_bl_scale",
-		0x0, 0, MAX_SV_BL_SCALE_LEVEL, MAX_SV_BL_SCALE_LEVEL,
-		CONNECTOR_PROP_SV_BL_SCALE);
-
-	c_conn->bl_scale_dirty = false;
-	c_conn->bl_scale = MAX_BL_SCALE_LEVEL;
-	c_conn->bl_scale_sv = MAX_SV_BL_SCALE_LEVEL;
-
-	if (connector_type == DRM_MODE_CONNECTOR_DisplayPort)
-		msm_property_install_range(&c_conn->property_info,
-			"supported_colorspaces",
-			DRM_MODE_PROP_IMMUTABLE, 0, 0xffff, 0,
-			CONNECTOR_PROP_SUPPORTED_COLORSPACES);
-
-	/* enum/bitmask properties */
-	msm_property_install_enum(&c_conn->property_info, "topology_name",
-			DRM_MODE_PROP_IMMUTABLE, 0, e_topology_name,
-			ARRAY_SIZE(e_topology_name),
-			CONNECTOR_PROP_TOPOLOGY_NAME);
-	msm_property_install_enum(&c_conn->property_info, "topology_control",
-			0, 1, e_topology_control,
-			ARRAY_SIZE(e_topology_control),
-			CONNECTOR_PROP_TOPOLOGY_CONTROL);
-	msm_property_install_enum(&c_conn->property_info, "LP",
-			0, 0, e_power_mode,
-			ARRAY_SIZE(e_power_mode),
-			CONNECTOR_PROP_LP);
-
-	return 0;
 }
 
 struct drm_connector *sde_connector_init(struct drm_device *dev,
@@ -2588,6 +2121,7 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 	struct msm_drm_private *priv;
 	struct sde_kms *sde_kms;
 	struct sde_connector *c_conn = NULL;
+	struct dsi_display *dsi_display;
 	struct msm_display_info display_info;
 	int rc;
 
@@ -2620,9 +2154,9 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 
 	spin_lock_init(&c_conn->event_lock);
 
-	c_conn->base.panel = panel;
 	c_conn->connector_type = connector_type;
 	c_conn->encoder = encoder;
+	c_conn->panel = panel;
 	c_conn->display = display;
 
 	c_conn->dpms_mode = DRM_MODE_DPMS_ON;
@@ -2669,7 +2203,7 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 
 	mutex_init(&c_conn->lock);
 
-	rc = drm_connector_attach_encoder(&c_conn->base, encoder);
+	rc = drm_mode_connector_attach_encoder(&c_conn->base, encoder);
 	if (rc) {
 		SDE_ERROR("failed to attach encoder to connector, %d\n", rc);
 		goto error_cleanup_fence;
@@ -2695,6 +2229,42 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 		}
 	}
 
+	msm_property_install_blob(&c_conn->property_info,
+			"capabilities",
+			DRM_MODE_PROP_IMMUTABLE,
+			CONNECTOR_PROP_SDE_INFO);
+
+	rc = sde_connector_set_blob_data(&c_conn->base,
+			NULL,
+			CONNECTOR_PROP_SDE_INFO);
+	if (rc) {
+		SDE_ERROR_CONN(c_conn,
+			"failed to setup connector info, rc = %d\n", rc);
+		goto error_cleanup_fence;
+	}
+
+	msm_property_install_blob(&c_conn->property_info,
+			"mode_properties",
+			DRM_MODE_PROP_IMMUTABLE,
+			CONNECTOR_PROP_MODE_INFO);
+
+	if (connector_type == DRM_MODE_CONNECTOR_DSI) {
+		dsi_display = (struct dsi_display *)(display);
+		if (dsi_display && dsi_display->panel &&
+			dsi_display->panel->hdr_props.hdr_enabled == true) {
+			msm_property_install_blob(&c_conn->property_info,
+				"hdr_properties",
+				DRM_MODE_PROP_IMMUTABLE,
+				CONNECTOR_PROP_HDR_INFO);
+
+			msm_property_set_blob(&c_conn->property_info,
+				&c_conn->blob_hdr,
+				&dsi_display->panel->hdr_props,
+				sizeof(dsi_display->panel->hdr_props),
+				CONNECTOR_PROP_HDR_INFO);
+		}
+	}
+
 	rc = sde_connector_get_info(&c_conn->base, &display_info);
 	if (!rc && (connector_type == DRM_MODE_CONNECTOR_DSI) &&
 			(display_info.capabilities & MSM_DISPLAY_CAP_VID_MODE))
@@ -2703,19 +2273,79 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 			sde_connector_handle_disp_recovery,
 			c_conn);
 
-	rc = _sde_connector_install_properties(dev, sde_kms, c_conn,
-		connector_type, display, &display_info);
-	if (rc)
-		goto error_cleanup_fence;
+	msm_property_install_volatile_range(
+			&c_conn->property_info, "sde_drm_roi_v1", 0x0,
+			0, ~0, 0, CONNECTOR_PROP_ROI_V1);
+
+	/* install PP_DITHER properties */
+	_sde_connector_install_dither_property(dev, sde_kms, c_conn);
+
+	if (connector_type == DRM_MODE_CONNECTOR_DisplayPort) {
+		struct drm_msm_ext_hdr_properties hdr = {0};
+
+		c_conn->hdr_capable = true;
+
+		msm_property_install_blob(&c_conn->property_info,
+				"ext_hdr_properties",
+				DRM_MODE_PROP_IMMUTABLE,
+				CONNECTOR_PROP_EXT_HDR_INFO);
+
+		/* set default values to avoid reading uninitialized data */
+		msm_property_set_blob(&c_conn->property_info,
+			      &c_conn->blob_ext_hdr,
+			      &hdr,
+			      sizeof(hdr),
+			      CONNECTOR_PROP_EXT_HDR_INFO);
+	}
+
+	msm_property_install_volatile_range(&c_conn->property_info,
+		"hdr_metadata", 0x0, 0, ~0, 0, CONNECTOR_PROP_HDR_METADATA);
+
+	msm_property_install_volatile_range(&c_conn->property_info,
+		"RETIRE_FENCE", 0x0, 0, ~0, 0, CONNECTOR_PROP_RETIRE_FENCE);
+
+	msm_property_install_range(&c_conn->property_info, "autorefresh",
+			0x0, 0, AUTOREFRESH_MAX_FRAME_CNT, 0,
+			CONNECTOR_PROP_AUTOREFRESH);
+
+	if (connector_type == DRM_MODE_CONNECTOR_DSI &&
+			sde_kms->catalog->has_qsync &&
+			display_info.qsync_min_fps)
+		msm_property_install_enum(&c_conn->property_info, "qsync_mode",
+				0, 0, e_qsync_mode, ARRAY_SIZE(e_qsync_mode),
+				CONNECTOR_PROP_QSYNC_MODE);
+
+	msm_property_install_range(&c_conn->property_info, "bl_scale",
+		0x0, 0, MAX_BL_SCALE_LEVEL, MAX_BL_SCALE_LEVEL,
+		CONNECTOR_PROP_BL_SCALE);
+
+	msm_property_install_range(&c_conn->property_info, "ad_bl_scale",
+		0x0, 0, MAX_AD_BL_SCALE_LEVEL, MAX_AD_BL_SCALE_LEVEL,
+		CONNECTOR_PROP_AD_BL_SCALE);
+
+	c_conn->bl_scale_dirty = false;
+	c_conn->bl_scale = MAX_BL_SCALE_LEVEL;
+	c_conn->bl_scale_ad = MAX_AD_BL_SCALE_LEVEL;
+
+	/* enum/bitmask properties */
+	msm_property_install_enum(&c_conn->property_info, "topology_name",
+			DRM_MODE_PROP_IMMUTABLE, 0, e_topology_name,
+			ARRAY_SIZE(e_topology_name),
+			CONNECTOR_PROP_TOPOLOGY_NAME);
+	msm_property_install_enum(&c_conn->property_info, "topology_control",
+			0, 1, e_topology_control,
+			ARRAY_SIZE(e_topology_control),
+			CONNECTOR_PROP_TOPOLOGY_CONTROL);
+	msm_property_install_enum(&c_conn->property_info, "LP",
+			0, 0, e_power_mode,
+			ARRAY_SIZE(e_power_mode),
+			CONNECTOR_PROP_LP);
 
 	rc = msm_property_install_get_status(&c_conn->property_info);
 	if (rc) {
 		SDE_ERROR("failed to create one or more properties\n");
 		goto error_destroy_property;
 	}
-
-	_sde_connector_lm_preference(c_conn, sde_kms,
-			display_info.display_type);
 
 	SDE_DEBUG("connector %d attach encoder %d\n",
 			c_conn->base.base.id, encoder->base.id);

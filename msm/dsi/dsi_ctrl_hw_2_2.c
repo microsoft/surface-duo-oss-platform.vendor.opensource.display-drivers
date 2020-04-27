@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
+
+#define pr_fmt(fmt) "dsi-hw:" fmt
 
 #include "dsi_ctrl_hw.h"
 #include "dsi_ctrl_reg.h"
@@ -47,6 +49,25 @@ void dsi_ctrl_hw_22_schedule_dma_cmd(struct dsi_ctrl_hw *ctrl, int line_no)
 	reg |= (line_no & 0xffff);
 
 	DSI_W32(ctrl, DSI_DMA_SCHEDULE_CTRL, reg);
+}
+
+/*
+ * dsi_ctrl_hw_22_get_cont_splash_status() - to verify whether continuous
+ *                                           splash is enabled or not
+ * @ctrl:          Pointer to the controller host hardware.
+ *
+ * Return:         Return Continuous splash status
+ */
+bool dsi_ctrl_hw_22_get_cont_splash_status(struct dsi_ctrl_hw *ctrl)
+{
+	u32 reg = 0;
+
+	/**
+	 * DSI scratch register 1 is used to notify whether continuous
+	 * splash is enabled or not by bootloader
+	 */
+	reg = DSI_R32(ctrl, DSI_SCRATCH_REGISTER_1);
+	return reg == 0x1 ? true : false;
 }
 
 /*

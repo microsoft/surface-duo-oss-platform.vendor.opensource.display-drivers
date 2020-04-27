@@ -3,6 +3,8 @@
  * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
+#define pr_fmt(fmt)	"msm-dsi-phy:[%s] " fmt, __func__
+
 #include <linux/of_device.h>
 #include <linux/err.h>
 #include <linux/regulator/consumer.h>
@@ -76,14 +78,6 @@ static const struct dsi_ver_spec_info dsi_phy_v4_0 = {
 	.timing_cfg_count = 14,
 };
 
-static const struct dsi_ver_spec_info dsi_phy_v4_1 = {
-	.version = DSI_PHY_VERSION_4_1,
-	.lane_cfg_count = 4,
-	.strength_cfg_count = 2,
-	.regulator_cfg_count = 0,
-	.timing_cfg_count = 14,
-};
-
 static const struct of_device_id msm_dsi_phy_of_match[] = {
 	{ .compatible = "qcom,dsi-phy-v0.0-hpm",
 	  .data = &dsi_phy_v0_0_hpm,},
@@ -97,15 +91,8 @@ static const struct of_device_id msm_dsi_phy_of_match[] = {
 	  .data = &dsi_phy_v3_0,},
 	{ .compatible = "qcom,dsi-phy-v4.0",
 	  .data = &dsi_phy_v4_0,},
-	{ .compatible = "qcom,dsi-phy-v4.1",
-	  .data = &dsi_phy_v4_1,},
 	{}
 };
-
-int dsi_phy_get_version(struct msm_dsi_phy *phy)
-{
-	return phy->ver_info->version;
-}
 
 static int dsi_phy_regmap_init(struct platform_device *pdev,
 			       struct msm_dsi_phy *phy)
@@ -121,10 +108,8 @@ static int dsi_phy_regmap_init(struct platform_device *pdev,
 
 	phy->hw.base = ptr;
 
-	ptr = msm_ioremap(pdev, "dyn_refresh_base", phy->name);
-	phy->hw.dyn_pll_base = ptr;
-
-	DSI_PHY_DBG(phy, "map dsi_phy registers to %pK\n", phy->hw.base);
+	pr_debug("[%s] map dsi_phy registers to %pK\n",
+		phy->name, phy->hw.base);
 
 	switch (phy->ver_info->version) {
 	case DSI_PHY_VERSION_2_0:
@@ -133,6 +118,19 @@ static int dsi_phy_regmap_init(struct platform_device *pdev,
 			phy->hw.phy_clamp_base = NULL;
 		else
 			phy->hw.phy_clamp_base = ptr;
+
+		ptr = msm_ioremap(pdev, "dyn_refresh_base", phy->name);
+		if (IS_ERR(ptr))
+			phy->hw.dyn_pll_base = NULL;
+		else
+			phy->hw.dyn_pll_base = ptr;
+		break;
+	case DSI_PHY_VERSION_3_0:
+		ptr = msm_ioremap(pdev, "dyn_refresh_base", phy->name);
+		if (IS_ERR(ptr))
+			phy->hw.dyn_pll_base = NULL;
+		else
+			phy->hw.dyn_pll_base = ptr;
 		break;
 	default:
 		break;
@@ -143,7 +141,7 @@ static int dsi_phy_regmap_init(struct platform_device *pdev,
 
 static int dsi_phy_regmap_deinit(struct msm_dsi_phy *phy)
 {
-	DSI_PHY_DBG(phy, "unmap registers\n");
+	pr_debug("[%s] unmap registers\n", phy->name);
 	return 0;
 }
 
@@ -170,8 +168,7 @@ static int dsi_phy_supplies_init(struct platform_device *pdev,
 					  &phy->pwr_info.phy_pwr,
 					  "qcom,phy-supply-entries");
 	if (rc) {
-		DSI_PHY_ERR(phy, "failed to get host power supplies, rc = %d\n",
-				rc);
+		pr_err("failed to get host power supplies, rc = %d\n", rc);
 		goto error_digital;
 	}
 
@@ -180,7 +177,7 @@ static int dsi_phy_supplies_init(struct platform_device *pdev,
 		vreg = devm_regulator_get(&pdev->dev, regs->vregs[i].vreg_name);
 		rc = PTR_RET(vreg);
 		if (rc) {
-			DSI_PHY_ERR(phy, "failed to get %s regulator\n",
+			pr_err("failed to get %s regulator\n",
 			       regs->vregs[i].vreg_name);
 			goto error_host_pwr;
 		}
@@ -192,7 +189,7 @@ static int dsi_phy_supplies_init(struct platform_device *pdev,
 		vreg = devm_regulator_get(&pdev->dev, regs->vregs[i].vreg_name);
 		rc = PTR_RET(vreg);
 		if (rc) {
-			DSI_PHY_ERR(phy, "failed to get %s regulator\n",
+			pr_err("failed to get %s regulator\n",
 			       regs->vregs[i].vreg_name);
 			for (--i; i >= 0; i--)
 				devm_regulator_put(regs->vregs[i].vreg);
@@ -228,7 +225,7 @@ static int dsi_phy_supplies_deinit(struct msm_dsi_phy *phy)
 	regs = &phy->pwr_info.digital;
 	for (i = 0; i < regs->count; i++) {
 		if (!regs->vregs[i].vreg)
-			DSI_PHY_ERR(phy, "vreg is NULL, should not reach here\n");
+			pr_err("vreg is NULL, should not reach here\n");
 		else
 			devm_regulator_put(regs->vregs[i].vreg);
 	}
@@ -236,7 +233,7 @@ static int dsi_phy_supplies_deinit(struct msm_dsi_phy *phy)
 	regs = &phy->pwr_info.phy_pwr;
 	for (i = 0; i < regs->count; i++) {
 		if (!regs->vregs[i].vreg)
-			DSI_PHY_ERR(phy, "vreg is NULL, should not reach here\n");
+			pr_err("vreg is NULL, should not reach here\n");
 		else
 			devm_regulator_put(regs->vregs[i].vreg);
 	}
@@ -265,12 +262,12 @@ static int dsi_phy_parse_dt_per_lane_cfgs(struct platform_device *pdev,
 
 	data = of_get_property(pdev->dev.of_node, property, &len);
 	if (!data) {
-		DSI_ERR("Unable to read Phy %s settings\n", property);
+		pr_err("Unable to read Phy %s settings\n", property);
 		return -EINVAL;
 	}
 
 	if (len != DSI_LANE_MAX * cfg->count_per_lane) {
-		DSI_ERR("incorrect phy %s settings, exp=%d, act=%d\n",
+		pr_err("incorrect phy %s settings, exp=%d, act=%d\n",
 		       property, (DSI_LANE_MAX * cfg->count_per_lane), len);
 		return -EINVAL;
 	}
@@ -281,6 +278,32 @@ static int dsi_phy_parse_dt_per_lane_cfgs(struct platform_device *pdev,
 			data++;
 		}
 	}
+
+	return rc;
+}
+
+static int dsi_phy_parse_dt_per_lane_bits(struct platform_device *pdev,
+					  u8 *bits,
+					  char *property)
+{
+	int rc = 0, i = 0;
+	const u8 *data;
+	u32 len = 0;
+
+	data = of_get_property(pdev->dev.of_node, property, &len);
+	if (!data)
+		return 0;
+
+	if (len != DSI_LANE_MAX) {
+		pr_err("incorrect phy %s settings, exp=%d, act=%d\n",
+		       property, DSI_LANE_MAX, len);
+		return -EINVAL;
+	}
+
+	*bits = 0;
+
+	for (i = DSI_LOGICAL_LANE_0; i < DSI_LANE_MAX; i++)
+		*bits |= (data[i] & 0x01) << i;
 
 	return rc;
 }
@@ -298,7 +321,7 @@ static int dsi_phy_settings_init(struct platform_device *pdev,
 	rc = dsi_phy_parse_dt_per_lane_cfgs(pdev, lane,
 					    "qcom,platform-lane-config");
 	if (rc) {
-		DSI_PHY_ERR(phy, "failed to parse lane cfgs, rc=%d\n", rc);
+		pr_err("failed to parse lane cfgs, rc=%d\n", rc);
 		goto err;
 	}
 
@@ -306,7 +329,7 @@ static int dsi_phy_settings_init(struct platform_device *pdev,
 	rc = dsi_phy_parse_dt_per_lane_cfgs(pdev, strength,
 					    "qcom,platform-strength-ctrl");
 	if (rc) {
-		DSI_PHY_ERR(phy, "failed to parse lane cfgs, rc=%d\n", rc);
+		pr_err("failed to parse lane cfgs, rc=%d\n", rc);
 		goto err;
 	}
 
@@ -315,10 +338,16 @@ static int dsi_phy_settings_init(struct platform_device *pdev,
 		rc = dsi_phy_parse_dt_per_lane_cfgs(pdev, regs,
 					    "qcom,platform-regulator-settings");
 		if (rc) {
-			DSI_PHY_ERR(phy, "failed to parse lane cfgs, rc=%d\n",
-					rc);
+			pr_err("failed to parse lane cfgs, rc=%d\n", rc);
 			goto err;
 		}
+	}
+
+	rc = dsi_phy_parse_dt_per_lane_bits(pdev, &phy->cfg.lane_pnswap,
+					    "qcom,platform-lane-pnswap");
+	if (rc) {
+		pr_err("failed to parse lane P/N swap map, rc=%d\n", rc);
+		goto err;
 	}
 
 	/* Actual timing values are dependent on panel */
@@ -359,7 +388,7 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 	u32 index = 0;
 
 	if (!pdev || !pdev->dev.of_node) {
-		DSI_ERR("pdev not found\n");
+		pr_err("pdev not found\n");
 		return -ENODEV;
 	}
 
@@ -382,7 +411,7 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 
 	rc = of_property_read_u32(pdev->dev.of_node, "cell-index", &index);
 	if (rc) {
-		DSI_PHY_DBG(dsi_phy, "cell index not set, default to 0\n");
+		pr_debug("cell index not set, default to 0\n");
 		index = 0;
 	}
 
@@ -392,36 +421,33 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 	if (!dsi_phy->name)
 		dsi_phy->name = DSI_PHY_DEFAULT_LABEL;
 
-	DSI_PHY_DBG(dsi_phy, "Probing device\n");
+	pr_debug("Probing %s device\n", dsi_phy->name);
 
 	dsi_phy->ver_info = ver_info;
 
 	rc = dsi_phy_regmap_init(pdev, dsi_phy);
 	if (rc) {
-		DSI_PHY_ERR(dsi_phy, "Failed to parse register information, rc=%d\n",
-				rc);
+		pr_err("Failed to parse register information, rc=%d\n", rc);
 		goto fail;
 	}
 
 	rc = dsi_phy_supplies_init(pdev, dsi_phy);
 	if (rc) {
-		DSI_PHY_ERR(dsi_phy, "failed to parse voltage supplies, rc = %d\n",
-				rc);
+		pr_err("failed to parse voltage supplies, rc = %d\n", rc);
 		goto fail_regmap;
 	}
 
 	rc = dsi_catalog_phy_setup(&dsi_phy->hw, ver_info->version,
 				   dsi_phy->index);
 	if (rc) {
-		DSI_PHY_ERR(dsi_phy, "Catalog does not support version (%d)\n",
+		pr_err("Catalog does not support version (%d)\n",
 		       ver_info->version);
 		goto fail_supplies;
 	}
 
 	rc = dsi_phy_settings_init(pdev, dsi_phy);
 	if (rc) {
-		DSI_PHY_ERR(dsi_phy, "Failed to parse phy setting, rc=%d\n",
-				rc);
+		pr_err("Failed to parse phy setting, rc=%d\n", rc);
 		goto fail_supplies;
 	}
 
@@ -435,7 +461,7 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 	/** TODO: initialize debugfs */
 	dsi_phy->pdev = pdev;
 	platform_set_drvdata(pdev, dsi_phy);
-	DSI_PHY_INFO(dsi_phy, "Probe successful\n");
+	pr_info("Probe successful for %s\n", dsi_phy->name);
 	return 0;
 
 fail_supplies:
@@ -455,7 +481,7 @@ static int dsi_phy_driver_remove(struct platform_device *pdev)
 	struct list_head *pos, *tmp;
 
 	if (!pdev || !phy) {
-		DSI_PHY_ERR(phy, "Invalid device\n");
+		pr_err("Invalid device\n");
 		return -EINVAL;
 	}
 
@@ -475,17 +501,15 @@ static int dsi_phy_driver_remove(struct platform_device *pdev)
 	mutex_lock(&phy->phy_lock);
 	rc = dsi_phy_settings_deinit(phy);
 	if (rc)
-		DSI_PHY_ERR(phy, "failed to deinitialize phy settings, rc=%d\n",
-				rc);
+		pr_err("failed to deinitialize phy settings, rc=%d\n", rc);
 
 	rc = dsi_phy_supplies_deinit(phy);
 	if (rc)
-		DSI_PHY_ERR(phy, "failed to deinitialize voltage supplies, rc=%d\n",
-				rc);
+		pr_err("failed to deinitialize voltage supplies, rc=%d\n", rc);
 
 	rc = dsi_phy_regmap_deinit(phy);
 	if (rc)
-		DSI_PHY_ERR(phy, "failed to deinitialize regmap, rc=%d\n", rc);
+		pr_err("failed to deinitialize regmap, rc=%d\n", rc);
 	mutex_unlock(&phy->phy_lock);
 
 	mutex_destroy(&phy->phy_lock);
@@ -551,14 +575,14 @@ struct msm_dsi_phy *dsi_phy_get(struct device_node *of_node)
 	mutex_unlock(&dsi_phy_list_lock);
 
 	if (!phy) {
-		DSI_PHY_ERR(phy, "Device with of node not found\n");
+		pr_err("Device with of node not found\n");
 		phy = ERR_PTR(-EPROBE_DEFER);
 		return phy;
 	}
 
 	mutex_lock(&phy->phy_lock);
 	if (phy->refcount > 0) {
-		DSI_PHY_ERR(phy, "Device under use\n");
+		pr_err("[PHY_%d] Device under use\n", phy->index);
 		phy = ERR_PTR(-EINVAL);
 	} else {
 		phy->refcount++;
@@ -579,7 +603,7 @@ void dsi_phy_put(struct msm_dsi_phy *dsi_phy)
 	mutex_lock(&dsi_phy->phy_lock);
 
 	if (dsi_phy->refcount == 0)
-		DSI_PHY_ERR(dsi_phy, "Unbalanced %s call\n", __func__);
+		pr_err("Unbalanced %s call\n", __func__);
 	else
 		dsi_phy->refcount--;
 
@@ -601,6 +625,8 @@ int dsi_phy_drv_init(struct msm_dsi_phy *dsi_phy)
 	snprintf(dbg_name, DSI_DEBUG_NAME_LEN, "dsi%d_phy", dsi_phy->index);
 	sde_dbg_reg_register_base(dbg_name, dsi_phy->hw.base,
 				msm_iomap_size(dsi_phy->pdev, "dsi_phy"));
+	sde_dbg_reg_register_dump_range(dbg_name, dbg_name, 0,
+				msm_iomap_size(dsi_phy->pdev, "dsi_phy"), 0);
 	return 0;
 }
 
@@ -621,7 +647,7 @@ int dsi_phy_clk_cb_register(struct msm_dsi_phy *dsi_phy,
 	struct clk_ctrl_cb *clk_cb)
 {
 	if (!dsi_phy || !clk_cb) {
-		DSI_PHY_ERR(dsi_phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
@@ -646,11 +672,11 @@ int dsi_phy_validate_mode(struct msm_dsi_phy *dsi_phy,
 	int rc = 0;
 
 	if (!dsi_phy || !mode) {
-		DSI_PHY_ERR(dsi_phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
-	DSI_PHY_DBG(dsi_phy, "Skipping validation\n");
+	pr_debug("[PHY_%d] Skipping validation\n", dsi_phy->index);
 
 	return rc;
 }
@@ -667,21 +693,21 @@ int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable)
 	int rc = 0;
 
 	if (!dsi_phy) {
-		DSI_PHY_ERR(dsi_phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
 	mutex_lock(&dsi_phy->phy_lock);
 
 	if (enable == dsi_phy->power_state) {
-		DSI_PHY_ERR(dsi_phy, "No state change\n");
+		pr_err("[PHY_%d] No state change\n", dsi_phy->index);
 		goto error;
 	}
 
 	if (enable) {
 		rc = dsi_pwr_enable_regulator(&dsi_phy->pwr_info.digital, true);
 		if (rc) {
-			DSI_PHY_ERR(dsi_phy, "failed to enable digital regulator\n");
+			pr_err("failed to enable digital regulator\n");
 			goto error;
 		}
 
@@ -690,7 +716,7 @@ int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable)
 			rc = dsi_pwr_enable_regulator(
 				&dsi_phy->pwr_info.phy_pwr, true);
 			if (rc) {
-				DSI_PHY_ERR(dsi_phy, "failed to enable phy power\n");
+				pr_err("failed to enable phy power\n");
 				(void)dsi_pwr_enable_regulator(
 					&dsi_phy->pwr_info.digital, false);
 				goto error;
@@ -702,7 +728,7 @@ int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable)
 			rc = dsi_pwr_enable_regulator(
 				&dsi_phy->pwr_info.phy_pwr, false);
 			if (rc) {
-				DSI_PHY_ERR(dsi_phy, "failed to enable digital regulator\n");
+				pr_err("failed to enable digital regulator\n");
 				goto error;
 			}
 		}
@@ -710,7 +736,7 @@ int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable)
 		rc = dsi_pwr_enable_regulator(&dsi_phy->pwr_info.digital,
 					      false);
 		if (rc) {
-			DSI_PHY_ERR(dsi_phy, "failed to enable phy power\n");
+			pr_err("failed to enable phy power\n");
 			goto error;
 		}
 	}
@@ -740,7 +766,7 @@ static int dsi_phy_enable_ulps(struct msm_dsi_phy *phy,
 	if (!clamp_enabled) {
 		rc = phy->hw.ops.ulps_ops.wait_for_lane_idle(&phy->hw, lanes);
 		if (rc) {
-			DSI_PHY_ERR(phy, "lanes not entering idle, skip ULPS\n");
+			pr_err("lanes not entering idle, skip ULPS\n");
 			return rc;
 		}
 	}
@@ -750,7 +776,7 @@ static int dsi_phy_enable_ulps(struct msm_dsi_phy *phy,
 	ulps_lanes = phy->hw.ops.ulps_ops.get_lanes_in_ulps(&phy->hw);
 
 	if (!phy->hw.ops.ulps_ops.is_lanes_in_ulps(lanes, ulps_lanes)) {
-		DSI_PHY_ERR(phy, "Failed to enter ULPS, request=0x%x, actual=0x%x\n",
+		pr_err("Failed to enter ULPS, request=0x%x, actual=0x%x\n",
 		       lanes, ulps_lanes);
 		rc = -EIO;
 	}
@@ -769,7 +795,7 @@ static int dsi_phy_disable_ulps(struct msm_dsi_phy *phy,
 	ulps_lanes = phy->hw.ops.ulps_ops.get_lanes_in_ulps(&phy->hw);
 
 	if (!phy->hw.ops.ulps_ops.is_lanes_in_ulps(lanes, ulps_lanes)) {
-		DSI_PHY_ERR(phy, "Mismatch in ULPS: lanes:%d, ulps_lanes:%d\n",
+		pr_err("Mismatch in ULPS: lanes:%d, ulps_lanes:%d\n",
 				lanes, ulps_lanes);
 		return -EIO;
 	}
@@ -779,7 +805,7 @@ static int dsi_phy_disable_ulps(struct msm_dsi_phy *phy,
 	ulps_lanes = phy->hw.ops.ulps_ops.get_lanes_in_ulps(&phy->hw);
 
 	if (phy->hw.ops.ulps_ops.is_lanes_in_ulps(lanes, ulps_lanes)) {
-		DSI_PHY_ERR(phy, "Lanes (0x%x) stuck in ULPS\n", ulps_lanes);
+		pr_err("Lanes (0x%x) stuck in ULPS\n", ulps_lanes);
 		return -EIO;
 	}
 
@@ -815,7 +841,7 @@ int dsi_phy_set_ulps(struct msm_dsi_phy *phy, struct dsi_host_config *config,
 	int rc = 0;
 
 	if (!phy) {
-		DSI_PHY_ERR(phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return DSI_PHY_ULPS_ERROR;
 	}
 
@@ -824,7 +850,7 @@ int dsi_phy_set_ulps(struct msm_dsi_phy *phy, struct dsi_host_config *config,
 			!phy->hw.ops.ulps_ops.get_lanes_in_ulps ||
 			!phy->hw.ops.ulps_ops.is_lanes_in_ulps ||
 			!phy->hw.ops.ulps_ops.wait_for_lane_idle) {
-		DSI_PHY_DBG(phy, "DSI PHY ULPS ops not present\n");
+		pr_debug("DSI PHY ULPS ops not present\n");
 		return DSI_PHY_ULPS_NOT_HANDLED;
 	}
 
@@ -836,12 +862,12 @@ int dsi_phy_set_ulps(struct msm_dsi_phy *phy, struct dsi_host_config *config,
 		rc = dsi_phy_disable_ulps(phy, config);
 
 	if (rc) {
-		DSI_PHY_ERR(phy, "Ulps state change(%d) failed, rc=%d\n",
-			enable, rc);
+		pr_err("[DSI_PHY%d] Ulps state change(%d) failed, rc=%d\n",
+			phy->index, enable, rc);
 		rc = DSI_PHY_ULPS_ERROR;
 		goto error;
 	}
-	DSI_PHY_DBG(phy, "ULPS state = %d\n", enable);
+	pr_debug("[DSI_PHY%d] ULPS state = %d\n", phy->index, enable);
 
 error:
 	mutex_unlock(&phy->phy_lock);
@@ -867,16 +893,17 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
 		   bool is_cont_splash_enabled)
 {
 	int rc = 0;
+	bool is_cphy = false;
 
 	if (!phy || !config) {
-		DSI_PHY_ERR(phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
 	mutex_lock(&phy->phy_lock);
 
 	if (!skip_validation)
-		DSI_PHY_DBG(phy, "TODO: perform validation\n");
+		pr_debug("[PHY_%d] TODO: perform validation\n", phy->index);
 
 	memcpy(&phy->mode, &config->video_timing, sizeof(phy->mode));
 	memcpy(&phy->cfg.lane_map, &config->lane_map, sizeof(config->lane_map));
@@ -889,19 +916,22 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
 	 * If PHY timing parameters are not present in panel dtsi file,
 	 * then calculate them in the driver
 	 */
+	is_cphy = (config->common_config.phy_type == DSI_PHY_TYPE_CPHY) ?
+			true : false;
 	if (!phy->cfg.is_phy_timing_present)
 		rc = phy->hw.ops.calculate_timing_params(&phy->hw,
 						 &phy->mode,
 						 &config->common_config,
-						 &phy->cfg.timing, false);
+						 &phy->cfg.timing, false,
+						is_cphy);
 	if (rc) {
-		DSI_PHY_ERR(phy, "failed to set timing, rc=%d\n", rc);
+		pr_err("[%s] failed to set timing, rc=%d\n", phy->name, rc);
 		goto error;
 	}
 
 	if (!is_cont_splash_enabled) {
 		dsi_phy_enable_hw(phy);
-		DSI_PHY_DBG(phy, "cont splash not enabled, phy enable required\n");
+		pr_debug("cont splash not enabled, phy enable required\n");
 	}
 	phy->dsi_phy_state = DSI_PHY_ENGINE_ON;
 
@@ -913,21 +943,22 @@ error:
 
 /* update dsi phy timings for dynamic clk switch use case */
 int dsi_phy_update_phy_timings(struct msm_dsi_phy *phy,
-			       struct dsi_host_config *config)
+		struct dsi_host_config *config, bool is_cphy)
 {
 	int rc = 0;
 
 	if (!phy || !config) {
-		DSI_PHY_ERR(phy, "invalid argument\n");
+		pr_err("invalid argument\n");
 		return -EINVAL;
 	}
 
 	memcpy(&phy->mode, &config->video_timing, sizeof(phy->mode));
 	rc = phy->hw.ops.calculate_timing_params(&phy->hw, &phy->mode,
-						 &config->common_config,
-						 &phy->cfg.timing, true);
+					&config->common_config,
+					&phy->cfg.timing, true,
+					is_cphy);
 	if (rc)
-		DSI_PHY_ERR(phy, "failed to calculate phy timings %d\n", rc);
+		pr_err("failed to calculate phy timings %d\n", rc);
 
 	return rc;
 }
@@ -958,7 +989,7 @@ int dsi_phy_disable(struct msm_dsi_phy *phy)
 	int rc = 0;
 
 	if (!phy) {
-		DSI_PHY_ERR(phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
@@ -982,7 +1013,7 @@ int dsi_phy_set_clamp_state(struct msm_dsi_phy *phy, bool enable)
 	if (!phy)
 		return -EINVAL;
 
-	DSI_PHY_DBG(phy, "enable=%d\n", enable);
+	pr_debug("[%s] enable=%d\n", phy->name, enable);
 
 	if (phy->hw.ops.clamp_ctrl)
 		phy->hw.ops.clamp_ctrl(&phy->hw, enable);
@@ -1001,11 +1032,11 @@ int dsi_phy_set_clamp_state(struct msm_dsi_phy *phy, bool enable)
 int dsi_phy_idle_ctrl(struct msm_dsi_phy *phy, bool enable)
 {
 	if (!phy) {
-		DSI_PHY_ERR(phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
-	DSI_PHY_DBG(phy, "enable=%d\n", enable);
+	pr_debug("[%s] enable=%d\n", phy->name, enable);
 
 	mutex_lock(&phy->phy_lock);
 	if (enable) {
@@ -1045,7 +1076,7 @@ int dsi_phy_set_clk_freq(struct msm_dsi_phy *phy,
 		struct link_clk_freq *clk_freq)
 {
 	if (!phy || !clk_freq) {
-		DSI_PHY_ERR(phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
@@ -1060,7 +1091,8 @@ int dsi_phy_set_clk_freq(struct msm_dsi_phy *phy,
 	 * votes go through RPM to enable regulators.
 	 */
 	phy->regulator_required = true;
-	DSI_PHY_DBG(phy, "lane_datarate=%u min_datarate=%u required=%d\n",
+	pr_debug("[%s] lane_datarate=%u min_datarate=%u required=%d\n",
+			phy->name,
 			clk_freq->byte_clk_rate * BITS_PER_BYTE,
 			phy->regulator_min_datarate_bps,
 			phy->regulator_required);
@@ -1073,8 +1105,6 @@ int dsi_phy_set_clk_freq(struct msm_dsi_phy *phy,
  * @phy:          DSI PHY handle
  * @timing:       array holding timing params.
  * @size:         size of the array.
- * @commit:		  boolean to indicate if programming PHY HW registers is
- *				  required
  *
  * When PHY timing calculator is not implemented, this array will be used to
  * pass PHY timing information.
@@ -1082,12 +1112,12 @@ int dsi_phy_set_clk_freq(struct msm_dsi_phy *phy,
  * Return: error code.
  */
 int dsi_phy_set_timing_params(struct msm_dsi_phy *phy,
-			      u32 *timing, u32 size, bool commit)
+			      u32 *timing, u32 size)
 {
 	int rc = 0;
 
 	if (!phy || !timing || !size) {
-		DSI_PHY_ERR(phy, "Invalid params\n");
+		pr_err("Invalid params\n");
 		return -EINVAL;
 	}
 
@@ -1095,12 +1125,8 @@ int dsi_phy_set_timing_params(struct msm_dsi_phy *phy,
 
 	if (phy->hw.ops.phy_timing_val)
 		rc = phy->hw.ops.phy_timing_val(&phy->cfg.timing, timing, size);
-
 	if (!rc)
 		phy->cfg.is_phy_timing_present = true;
-
-	if (phy->hw.ops.commit_phy_timing && commit)
-		phy->hw.ops.commit_phy_timing(&phy->hw, &phy->cfg.timing);
 
 	mutex_unlock(&phy->phy_lock);
 	return rc;
@@ -1150,15 +1176,17 @@ int dsi_phy_conv_logical_to_phy_lane(
 	return i;
 }
 
+
 /**
  * dsi_phy_config_dynamic_refresh() - Configure dynamic refresh registers
  * @phy:	DSI PHY handle
  * @delay:	pipe delays for dynamic refresh
  * @is_master:	Boolean to indicate if for master or slave.
+ * @is_cphy:	Boolean to indicate cphy mode.
  */
 void dsi_phy_config_dynamic_refresh(struct msm_dsi_phy *phy,
 		struct dsi_dyn_clk_delay *delay,
-		bool is_master)
+		bool is_master, bool is_cphy)
 {
 	struct dsi_phy_cfg *cfg;
 
@@ -1170,7 +1198,7 @@ void dsi_phy_config_dynamic_refresh(struct msm_dsi_phy *phy,
 	cfg = &phy->cfg;
 	if (phy->hw.ops.dyn_refresh_ops.dyn_refresh_config)
 		phy->hw.ops.dyn_refresh_ops.dyn_refresh_config(&phy->hw, cfg,
-				is_master);
+				is_master, is_cphy);
 	if (phy->hw.ops.dyn_refresh_ops.dyn_refresh_pipe_delay)
 		phy->hw.ops.dyn_refresh_ops.dyn_refresh_pipe_delay(
 				&phy->hw, delay);
@@ -1222,12 +1250,13 @@ int dsi_phy_dyn_refresh_cache_phy_timings(struct msm_dsi_phy *phy, u32 *dst,
 	if (!phy || !dst || !size)
 		return -EINVAL;
 
-	if (phy->hw.ops.dyn_refresh_ops.cache_phy_timings)
+	if (phy->hw.ops.dyn_refresh_ops.cache_phy_timings) {
 		rc = phy->hw.ops.dyn_refresh_ops.cache_phy_timings(
 				&phy->cfg.timing, dst, size);
 
-	if (rc)
-		DSI_PHY_ERR(phy, "failed to cache phy timings %d\n", rc);
+		if (rc)
+			pr_err("failed to cache phy timings %d\n", rc);
+	}
 
 	return rc;
 }
@@ -1264,10 +1293,9 @@ void dsi_phy_set_continuous_clk(struct msm_dsi_phy *phy, bool enable)
 	if (phy->hw.ops.set_continuous_clk)
 		phy->hw.ops.set_continuous_clk(&phy->hw, enable);
 	else
-		DSI_PHY_WARN(phy, "set_continuous_clk ops not present\n");
+		pr_warn("set_continuous_clk ops not present\n");
 
 	mutex_unlock(&phy->phy_lock);
-
 }
 
 void dsi_phy_drv_register(void)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
  */
 #include <linux/iopoll.h>
 #include "sde_hw_mdss.h"
@@ -38,7 +38,6 @@
 #define GRP_VIG_HW_BLK_SELECT (VIG0 | VIG1 | VIG2 | VIG3)
 #define GRP_DMA_HW_BLK_SELECT (DMA0 | DMA1 | DMA2 | DMA3)
 #define GRP_DSPP_HW_BLK_SELECT (DSPP0 | DSPP1 | DSPP2 | DSPP3)
-#define GRP_LTM_HW_BLK_SELECT (LTM0 | LTM1)
 #define BUFFER_SPACE_LEFT(cfg) ((cfg)->dma_buf->buffer_size - \
 			(cfg)->dma_buf->index)
 
@@ -205,12 +204,6 @@ static void get_decode_sel(unsigned long blk, u32 *decode_sel)
 			break;
 		case DSPP_IGC:
 			*decode_sel |= BIT(21);
-			break;
-		case LTM0:
-			*decode_sel |= BIT(22);
-			break;
-		case LTM1:
-			*decode_sel |= BIT(23);
 			break;
 		default:
 			DRM_ERROR("block not supported %zx\n", (size_t)BIT(i));
@@ -496,7 +489,7 @@ static int validate_kick_off_v1(struct sde_reg_dma_kickoff_cfg *cfg)
 				(WRITE_TRIGGER);
 
 	if (cfg->dma_buf->iova & GUARD_BYTES) {
-		DRM_ERROR("Address is not aligned to %zx iova %llx",
+		DRM_ERROR("Address is not aligned to %zx iova %llu",
 				(size_t)ADDR_ALIGN, cfg->dma_buf->iova);
 		return -EINVAL;
 	}
@@ -655,23 +648,6 @@ int init_v11(struct sde_hw_reg_dma *cfg)
 	v1_supported[MEMC_FOLIAGE] = GRP_DSPP_HW_BLK_SELECT;
 	v1_supported[MEMC_PROT] = GRP_DSPP_HW_BLK_SELECT;
 	v1_supported[QSEED] = GRP_VIG_HW_BLK_SELECT;
-
-	return 0;
-}
-
-int init_v12(struct sde_hw_reg_dma *cfg)
-{
-	int ret = 0;
-
-	ret = init_v11(cfg);
-	if (ret) {
-		DRM_ERROR("failed to initialize v11: ret %d\n", ret);
-		return ret;
-	}
-
-	v1_supported[LTM_INIT] = GRP_LTM_HW_BLK_SELECT;
-	v1_supported[LTM_ROI] = GRP_LTM_HW_BLK_SELECT;
-	v1_supported[LTM_VLUT] = GRP_LTM_HW_BLK_SELECT;
 
 	return 0;
 }

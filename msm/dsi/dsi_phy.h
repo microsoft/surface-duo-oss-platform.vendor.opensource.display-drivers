@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_PHY_H_
@@ -120,14 +120,6 @@ struct msm_dsi_phy *dsi_phy_get(struct device_node *of_node);
  * back the DSI PHY into reset state.
  */
 void dsi_phy_put(struct msm_dsi_phy *dsi_phy);
-
-/**
- * dsi_phy_get_version() - returns dsi phy version
- * @dsi_phy:              DSI PHY handle.
- *
- * Return: phy version
- */
-int dsi_phy_get_version(struct msm_dsi_phy *phy);
 
 /**
  * dsi_phy_drv_init() - initialize dsi phy driver
@@ -252,8 +244,6 @@ int dsi_phy_set_clk_freq(struct msm_dsi_phy *phy,
  * @phy:          DSI PHY handle
  * @timing:       array holding timing params.
  * @size:         size of the array.
- * @commit:		  boolean to indicate if programming PHY HW registers is
- *				  required
  *
  * When PHY timing calculator is not implemented, this array will be used to
  * pass PHY timing information.
@@ -261,7 +251,7 @@ int dsi_phy_set_clk_freq(struct msm_dsi_phy *phy,
  * Return: error code.
  */
 int dsi_phy_set_timing_params(struct msm_dsi_phy *phy,
-			      u32 *timing, u32 size, bool commit);
+			      u32 *timing, u32 size);
 
 /**
  * dsi_phy_lane_reset() - Reset DSI PHY lanes in case of error
@@ -304,21 +294,24 @@ void dsi_phy_drv_unregister(void);
  * dsi_phy_update_phy_timings() - Update dsi phy timings
  * @phy:	DSI PHY handle
  * @config:	DSI Host config parameters
+ * @is_cphy:	Boolean to indicate cphy mode
  *
  * Return: error code.
  */
 int dsi_phy_update_phy_timings(struct msm_dsi_phy *phy,
-			       struct dsi_host_config *config);
+				struct dsi_host_config *config,
+				bool is_cphy);
 
 /**
  * dsi_phy_config_dynamic_refresh() - Configure dynamic refresh registers
  * @phy:	DSI PHY handle
  * @delay:	pipe delays for dynamic refresh
  * @is_master:	Boolean to indicate if for master or slave
+ * @is_cphy:	Boolean to indicate cphy mode
  */
 void dsi_phy_config_dynamic_refresh(struct msm_dsi_phy *phy,
 				    struct dsi_dyn_clk_delay *delay,
-				    bool is_master);
+				    bool is_master, bool is_cphy);
 /**
  * dsi_phy_dynamic_refresh_trigger() - trigger dynamic refresh
  * @phy:	DSI PHY handle
@@ -340,8 +333,7 @@ void dsi_phy_dynamic_refresh_clear(struct msm_dsi_phy *phy);
  * @size:	   Number of phy lane settings.
  */
 int dsi_phy_dyn_refresh_cache_phy_timings(struct msm_dsi_phy *phy,
-
-		u32 *dst, u32 size);
+					  u32 *dst, u32 size);
 /**
  * dsi_phy_set_continuous_clk() - API to set/unset force clock lane HS request.
  * @phy:	DSI PHY Handle.
