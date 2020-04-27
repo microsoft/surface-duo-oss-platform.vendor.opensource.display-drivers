@@ -30,6 +30,8 @@ struct dp_ctrl {
 	void (*set_mst_channel_info)(struct dp_ctrl *dp_ctrl,
 			enum dp_stream_id strm,
 			u32 ch_start_slot, u32 ch_tot_slots);
+	void (*set_phy_bond_mode)(struct dp_ctrl *dp_ctrl,
+			enum dp_phy_bond_mode mode);
 };
 
 struct dp_ctrl_in {
@@ -40,6 +42,7 @@ struct dp_ctrl_in {
 	struct dp_parser *parser;
 	struct dp_power *power;
 	struct dp_catalog_ctrl *catalog;
+	enum dp_phy_bond_mode phy_bond_mode;
 };
 
 struct dp_ctrl *dp_ctrl_get(struct dp_ctrl_in *in);

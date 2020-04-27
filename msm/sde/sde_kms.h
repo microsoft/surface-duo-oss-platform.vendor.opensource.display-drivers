@@ -265,6 +265,9 @@ struct sde_kms {
 	int dp_display_count;
 	void **dp_displays;
 	int dp_stream_count;
+	int dp_bond_count;
+
+	void *dp_bond_mgr;
 
 	bool has_danger_ctrl;
 

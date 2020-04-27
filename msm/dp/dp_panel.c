@@ -2525,7 +2525,7 @@ end:
 	return rc;
 }
 
-static void dp_panel_config_ctrl(struct dp_panel *dp_panel)
+static void dp_panel_config_ctrl(struct dp_panel *dp_panel, bool sync)
 {
 	u32 config = 0, tbd;
 	u8 *dpcd = dp_panel->dpcd;
@@ -2554,7 +2554,8 @@ static void dp_panel_config_ctrl(struct dp_panel *dp_panel)
 
 	config |= 0x04; /* progressive video */
 
-	config |= 0x03;	/* sycn clock & static Mvid */
+	if (sync)
+		config |= 0x03;	/* sycn clock & static Mvid */
 
 	catalog->config_ctrl(catalog, config);
 }
@@ -2617,7 +2618,7 @@ static void dp_panel_resolution_info(struct dp_panel_private *panel)
 		panel->link->link_params.lane_count);
 }
 
-static int dp_panel_hw_cfg(struct dp_panel *dp_panel, bool enable)
+static int dp_panel_hw_cfg(struct dp_panel *dp_panel, bool enable, bool sync)
 {
 	struct dp_panel_private *panel;
 
@@ -2635,7 +2636,7 @@ static int dp_panel_hw_cfg(struct dp_panel *dp_panel, bool enable)
 	panel->catalog->stream_id = dp_panel->stream_id;
 
 	if (enable) {
-		dp_panel_config_ctrl(dp_panel);
+		dp_panel_config_ctrl(dp_panel, sync);
 		dp_panel_config_misc(dp_panel);
 		dp_panel_config_msa(dp_panel);
 		dp_panel_config_dsc(dp_panel, enable);
