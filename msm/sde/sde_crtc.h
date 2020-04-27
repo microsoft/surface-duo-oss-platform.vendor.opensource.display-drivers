@@ -232,11 +232,14 @@ struct sde_crtc {
 	struct drm_crtc base;
 	char name[SDE_CRTC_NAME_SIZE];
 
-	/* HW Resources reserved for the crtc */
+	/*
+	 * HW Resources reserved for the crtc, they can only
+	 * be accessed at commit stage.
+	 */
 	u32 num_ctls;
 	u32 num_mixers;
 	bool mixers_swapped;
-	struct sde_crtc_mixer mixers[CRTC_DUAL_MIXERS];
+	struct sde_crtc_mixer mixers[MAX_MIXERS_PER_CRTC];
 
 	struct drm_pending_vblank_event *event;
 	u32 vsync_count;
@@ -248,7 +251,7 @@ struct sde_crtc {
 	/* output fence support */
 	struct sde_fence_context *output_fence;
 
-	struct sde_hw_stage_cfg stage_cfg;
+	struct sde_hw_stage_cfg stage_cfg[MAX_LAYOUTS_PER_CRTC];
 	struct dentry *debugfs_root;
 	void *priv_handle;
 
@@ -372,6 +375,8 @@ struct sde_crtc_respool {
  * @is_ppsplit    : Whether current topology requires PPSplit special handling
  * @bw_control    : true if bw/clk controlled by core bw/clk properties
  * @bw_split_vote : true if bw controlled by llcc/dram bw properties
+ * @topology_name : Current topology name
+ * @num_mixers    : Number of mixers in current topology
  * @crtc_roi      : Current CRTC ROI. Possibly sub-rectangle of mode.
  *                  Origin top left of CRTC.
  * @lm_bounds     : LM boundaries based on current mode full resolution, no ROI.
@@ -409,10 +414,12 @@ struct sde_crtc_state {
 	bool bw_control;
 	bool bw_split_vote;
 
+	enum sde_rm_topology_name topology_name;
+	u32 num_mixers;
 	bool is_ppsplit;
 	struct sde_rect crtc_roi;
-	struct sde_rect lm_bounds[CRTC_DUAL_MIXERS];
-	struct sde_rect lm_roi[CRTC_DUAL_MIXERS];
+	struct sde_rect lm_bounds[MAX_MIXERS_PER_CRTC];
+	struct sde_rect lm_roi[MAX_MIXERS_PER_CRTC];
 	struct msm_roi_list user_roi_list;
 
 	struct msm_property_state property_state;
@@ -482,19 +489,18 @@ struct sde_crtc_irq_info {
  * Mixer width will be same as panel width(/2 for split)
  * unless destination scaler feature is enabled
  */
-static inline int sde_crtc_get_mixer_width(struct sde_crtc *sde_crtc,
-	struct sde_crtc_state *cstate, struct drm_display_mode *mode)
+static inline int sde_crtc_get_mixer_width(struct sde_crtc_state *cstate,
+		struct drm_display_mode *mode)
 {
 	u32 mixer_width;
 
-	if (!sde_crtc || !cstate || !mode)
+	if (!cstate || !mode)
 		return 0;
 
 	if (cstate->num_ds_enabled)
 		mixer_width = cstate->ds_cfg[0].lm_width;
 	else
-		mixer_width = (sde_crtc->num_mixers == CRTC_DUAL_MIXERS ?
-			mode->hdisplay / CRTC_DUAL_MIXERS : mode->hdisplay);
+		mixer_width = mode->hdisplay / cstate->num_mixers;
 
 	return mixer_width;
 }
@@ -504,10 +510,10 @@ static inline int sde_crtc_get_mixer_width(struct sde_crtc *sde_crtc,
  * Mixer height will be same as panel height unless
  * destination scaler feature is enabled
  */
-static inline int sde_crtc_get_mixer_height(struct sde_crtc *sde_crtc,
-		struct sde_crtc_state *cstate, struct drm_display_mode *mode)
+static inline int sde_crtc_get_mixer_height(struct sde_crtc_state *cstate,
+		struct drm_display_mode *mode)
 {
-	if (!sde_crtc || !cstate || !mode)
+	if (!cstate || !mode)
 		return 0;
 
 	return (cstate->num_ds_enabled ?
@@ -858,5 +864,39 @@ int sde_crtc_calc_vpadding_param(struct drm_crtc_state *state,
  */
 int sde_crtc_get_num_datapath(struct drm_crtc *crtc,
 		struct drm_connector *connector);
+
+/**
+ * sde_crtc_state_set_topology_name - set current topology name
+ * @state: Pointer to crtc_state
+ */
+static inline void sde_crtc_state_set_topology_name(
+		struct drm_crtc_state *state,
+		enum sde_rm_topology_name topology_name)
+{
+	struct sde_crtc_state *cstate = to_sde_crtc_state(state);
+
+	if (!state)
+		return;
+
+	cstate->topology_name = topology_name;
+
+	switch (topology_name) {
+	case SDE_RM_TOPOLOGY_DUALPIPE:
+	case SDE_RM_TOPOLOGY_DUALPIPE_DSC:
+	case SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE:
+	case SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC:
+	case SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE:
+		cstate->num_mixers = 2;
+		break;
+	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE:
+	case SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE:
+	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC:
+		cstate->num_mixers = 4;
+		break;
+	default:
+		cstate->num_mixers = 1;
+		break;
+	}
+}
 
 #endif /* _SDE_CRTC_H_ */
