@@ -1537,7 +1537,7 @@ static int dsi_panel_parse_video_host_config(struct dsi_video_engine_cfg *cfg,
 	}
 
 	override_data_type = utils->read_bool(utils->data,
-						"qcom,mdss-csi-proxy");
+						"qcom,csi-proxy-enable");
 	if (override_data_type) {
 		/* Data Type follow CSI spec. */
 		pr_debug("[%s] enable the CSI proxy mode\n", name);
