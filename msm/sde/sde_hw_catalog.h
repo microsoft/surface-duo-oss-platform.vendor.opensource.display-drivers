@@ -128,6 +128,12 @@ enum sde_intr_enum {
 	MDSS_INTR_AD4_1_INTR,
 	MDSS_INTF_TEAR_1_INTR,
 	MDSS_INTF_TEAR_2_INTR,
+	MDSS_INTR_ROI_MISR_0_INTR,
+	MDSS_INTR_ROI_MISR_1_INTR,
+	MDSS_INTR_ROI_MISR_2_INTR,
+	MDSS_INTR_ROI_MISR_3_INTR,
+	MDSS_INTR_ROI_MISR_4_INTR,
+	MDSS_INTR_ROI_MISR_5_INTR,
 	MDSS_INTR_MAX
 };
 
@@ -258,6 +264,7 @@ enum {
  * @SDE_DSPP_HIST            Histogram block
  * @SDE_DSPP_VLUT            PA VLUT block
  * @SDE_DSPP_AD              AD block
+ * @SDE_DSPP_ROI_MISR        ROI MISR block
  * @SDE_DSPP_MAX             maximum value
  */
 enum {
@@ -272,6 +279,7 @@ enum {
 	SDE_DSPP_HIST,
 	SDE_DSPP_VLUT,
 	SDE_DSPP_AD,
+	SDE_DSPP_ROI_MISR,
 	SDE_DSPP_MAX
 };
 
@@ -602,6 +610,7 @@ struct sde_dspp_sub_blks {
 	struct sde_pp_blk hist;
 	struct sde_pp_blk ad;
 	struct sde_pp_blk vlut;
+	struct sde_pp_blk roi_misr;
 };
 
 struct sde_pingpong_sub_blks {
@@ -712,6 +721,7 @@ struct sde_sspp_cfg {
  * @dspp:              ID of connected DSPP, DSPP_MAX if unsupported
  * @pingpong:          ID of connected PingPong, PINGPONG_MAX if unsupported
  * @ds:                ID of connected DS, DS_MAX if unsupported
+ * @roi_misr:          ID of connected ROI MISR, ROI_MISR_MAX if unsupported
  * @lm_pair_mask:      Bitmask of LMs that can be controlled by same CTL
  */
 struct sde_lm_cfg {
@@ -720,6 +730,7 @@ struct sde_lm_cfg {
 	u32 dspp;
 	u32 pingpong;
 	u32 ds;
+	u32 roi_misr;
 	unsigned long lm_pair_mask;
 };
 
@@ -801,6 +812,17 @@ struct sde_pingpong_cfg  {
  * @features           bit mask identifying sub-blocks/features
  */
 struct sde_dsc_cfg {
+	SDE_HW_BLK_INFO;
+};
+
+/**
+ * struct sde_roi_misr_cfg - information of ROI_MISR blocks
+ * @id                 enum identifying this block
+ * @base               register offset of this block
+ * @len                length of hardware block
+ * @features           bit mask identifying sub-blocks/features
+ */
+struct sde_roi_misr_cfg {
 	SDE_HW_BLK_INFO;
 };
 
@@ -1260,6 +1282,10 @@ struct sde_mdss_cfg {
 
 	u32 dsc_count;
 	struct sde_dsc_cfg dsc[MAX_BLOCKS];
+
+	u32 roi_misr_count;
+	struct sde_roi_misr_cfg roi_misr[MAX_BLOCKS];
+	bool has_roi_misr;
 
 	u32 cdm_count;
 	struct sde_cdm_cfg cdm[MAX_BLOCKS];

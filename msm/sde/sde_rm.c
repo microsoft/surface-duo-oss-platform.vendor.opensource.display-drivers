@@ -208,6 +208,38 @@ int sde_rm_get_topology_num_encoders(struct sde_rm *rm,
 	return 0;
 }
 
+static bool sde_rm_is_dscmerge_case(enum sde_rm_topology_name top_name)
+{
+	return (top_name == SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE);
+}
+
+int sde_rm_get_roi_misr_num(struct sde_rm *rm,
+		enum sde_rm_topology_name topology)
+{
+	int i;
+
+	for (i = 0; i < SDE_RM_TOPOLOGY_MAX; i++)
+		if (rm->topology_tbl[i].top_name == topology) {
+			if (topology == SDE_RM_TOPOLOGY_PPSPLIT)
+				return 0;
+			else if (sde_rm_is_dscmerge_case(topology))
+				return rm->topology_tbl[i].num_intf * 2;
+			else
+				return rm->topology_tbl[i].num_intf;
+		}
+
+	return 0;
+}
+
+static bool sde_rm_is_3dmux_case(enum sde_rm_topology_name top_name)
+{
+	return (top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE
+			|| top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC);
+}
+
 static bool _sde_rm_get_hw_locked(struct sde_rm *rm, struct sde_rm_hw_iter *i)
 {
 	struct list_head *blk_list;
@@ -338,6 +370,9 @@ static void _sde_rm_hw_destroy(enum sde_hw_blk_type type, void *hw)
 	case SDE_HW_BLK_DSC:
 		sde_hw_dsc_destroy(hw);
 		break;
+	case SDE_HW_BLK_ROI_MISR:
+		sde_hw_roi_misr_destroy(hw);
+		break;
 	case SDE_HW_BLK_ROT:
 		sde_hw_rot_destroy(hw);
 		break;
@@ -431,6 +466,9 @@ static int _sde_rm_hw_blk_create(
 		break;
 	case SDE_HW_BLK_DSC:
 		hw = sde_hw_dsc_init(id, mmio, cat);
+		break;
+	case SDE_HW_BLK_ROI_MISR:
+		hw = sde_hw_roi_misr_init(id, mmio, cat);
 		break;
 	case SDE_HW_BLK_ROT:
 		hw = sde_hw_rot_init(id, mmio, cat);
@@ -573,6 +611,15 @@ int sde_rm_init(struct sde_rm *rm,
 		}
 	}
 
+	for (i = 0; i < cat->roi_misr_count; i++) {
+		rc = _sde_rm_hw_blk_create(rm, cat, mmio, SDE_HW_BLK_ROI_MISR,
+			cat->roi_misr[i].id, &cat->roi_misr[i]);
+		if (rc) {
+			SDE_ERROR("failed: roi misr hw not available\n");
+			goto fail;
+		}
+	}
+
 	for (i = 0; i < cat->intf_count; i++) {
 		if (cat->intf[i].type == INTF_NONE) {
 			SDE_DEBUG("skip intf %d with type none\n", i);
@@ -653,6 +700,10 @@ fail:
  *        NULL if dspp was not available, or not matching requirements.
  * @pp: output parameter, pingpong block attached to the layer mixer.
  *      NULL if dspp was not available, or not matching requirements.
+ * @roi_misr: output parameter, roi misr block attached to the layer mixer.
+ *      NULL if misr was not available, or not matching requirements.
+ * @dsc: output parameter, dsc block attached to the layer mixer.
+ *      NULL if dsc was not available, or not matching requirements.
  * @primary_lm: if non-null, this function check if lm is compatible primary_lm
  *              as well as satisfying all other requirements
  * @Return: true if lm matches all requirements, false otherwise
@@ -665,8 +716,12 @@ static bool _sde_rm_check_lm_and_get_connected_blks(
 		struct sde_rm_hw_blk **dspp,
 		struct sde_rm_hw_blk **ds,
 		struct sde_rm_hw_blk **pp,
+		struct sde_rm_hw_blk **roi_misr,
+		struct sde_rm_hw_blk **dsc,
 		struct sde_rm_hw_blk *primary_lm)
 {
+	struct msm_drm_private *priv = rm->dev->dev_private;
+	struct sde_kms *sde_kms = to_sde_kms(priv->kms);
 	const struct sde_lm_cfg *lm_cfg = to_sde_hw_mixer(lm->hw)->cap;
 	const struct sde_pingpong_cfg *pp_cfg;
 	struct sde_rm_hw_iter iter;
@@ -676,12 +731,16 @@ static bool _sde_rm_check_lm_and_get_connected_blks(
 	*dspp = NULL;
 	*ds = NULL;
 	*pp = NULL;
+	*roi_misr = NULL;
+	*dsc = NULL;
 	display_pref = lm_cfg->features & BIT(SDE_DISP_PRIMARY_PREF);
 	cwb_pref = lm_cfg->features & BIT(SDE_DISP_CWB_PREF);
 
-	SDE_DEBUG("check lm %d: dspp %d ds %d pp %d disp_pref: %d cwb_pref%d\n",
+	SDE_DEBUG("check lm %d: dspp %d ds %d pp %d roi_misr %d ",
 		lm_cfg->id, lm_cfg->dspp, lm_cfg->ds,
-		lm_cfg->pingpong, display_pref, cwb_pref);
+		lm_cfg->pingpong, lm_cfg->roi_misr);
+	SDE_DEBUG("disp_pref: %d cwb_pref%d\n",
+		display_pref, cwb_pref);
 
 	/* Check if this layer mixer is a peer of the proposed primary LM */
 	if (primary_lm) {
@@ -813,6 +872,75 @@ static bool _sde_rm_check_lm_and_get_connected_blks(
 		return false;
 	}
 
+	if (lm_cfg->roi_misr != ROI_MISR_MAX) {
+		sde_rm_init_hw_iter(&iter, 0, SDE_HW_BLK_ROI_MISR);
+		while (_sde_rm_get_hw_locked(rm, &iter)) {
+			if (iter.blk->id == lm_cfg->roi_misr) {
+				*roi_misr = iter.blk;
+				break;
+			}
+		}
+
+		if (!*roi_misr) {
+			SDE_ERROR("failed to get roi misr on lm %d\n",
+					lm_cfg->roi_misr);
+			return false;
+		}
+
+		if (RESERVED_BY_OTHER(*roi_misr, rsvp)) {
+			SDE_DEBUG("lm %d roi_misr %d already reserved\n",
+					lm->id, (*roi_misr)->id);
+			*dspp = NULL;
+			*ds = NULL;
+			*pp = NULL;
+			return false;
+		}
+
+		/**
+		 * in 3DMux case, we should set the second roi misr to null,
+		 * because it's not in the control path and only first roi
+		 * misr is available.
+		 */
+		if (primary_lm
+		    && sde_rm_is_3dmux_case(reqs->topology->top_name))
+			*roi_misr = NULL;
+	}
+
+	/**
+	 * if roi misr has been enabled in DT, DSC block
+	 * should be reserved here and skip reserve DSC
+	 * from free pool.
+	 * Due to hardware limitation, DSC block should
+	 * be reserved with roi misr id if both dsc and
+	 * roi misr are enabled.
+	 */
+	if (reqs->topology->num_comp_enc
+		&& sde_kms->catalog->has_roi_misr) {
+		sde_rm_init_hw_iter(&iter, 0, SDE_HW_BLK_DSC);
+		while (_sde_rm_get_hw_locked(rm, &iter)) {
+			if (iter.blk->id == lm_cfg->roi_misr) {
+				*dsc = iter.blk;
+				break;
+			}
+		}
+
+		if (!*dsc) {
+			SDE_ERROR("failed to get dsc on lm %d\n",
+					lm_cfg->roi_misr);
+			return false;
+		}
+
+		if (RESERVED_BY_OTHER(*dsc, rsvp)) {
+			SDE_DEBUG("lm %d dsc %d already reserved\n",
+					lm->id, (*dsc)->id);
+			*dspp = NULL;
+			*ds = NULL;
+			*pp = NULL;
+			*roi_misr = NULL;
+			return false;
+		}
+	}
+
 	pp_cfg = to_sde_hw_pingpong((*pp)->hw)->caps;
 	if ((reqs->topology->top_name == SDE_RM_TOPOLOGY_PPSPLIT) &&
 			!(test_bit(SDE_PINGPONG_SPLIT, &pp_cfg->features))) {
@@ -836,6 +964,8 @@ static int _sde_rm_reserve_lms(
 	struct sde_rm_hw_blk *dspp[MAX_BLOCKS];
 	struct sde_rm_hw_blk *ds[MAX_BLOCKS];
 	struct sde_rm_hw_blk *pp[MAX_BLOCKS];
+	struct sde_rm_hw_blk *roi_misr[MAX_BLOCKS];
+	struct sde_rm_hw_blk *dsc[MAX_BLOCKS];
 	struct sde_rm_hw_iter iter_i, iter_j;
 	u32 lm_mask = 0;
 	int lm_count = 0;
@@ -857,6 +987,8 @@ static int _sde_rm_reserve_lms(
 		dspp[lm_count] = NULL;
 		ds[lm_count] = NULL;
 		pp[lm_count] = NULL;
+		roi_misr[lm_count] = NULL;
+		dsc[lm_count] = NULL;
 
 		SDE_DEBUG("blk id = %d, _lm_ids[%d] = %d\n",
 			iter_i.blk->id,
@@ -869,7 +1001,8 @@ static int _sde_rm_reserve_lms(
 		if (!_sde_rm_check_lm_and_get_connected_blks(
 				rm, rsvp, reqs, lm[lm_count],
 				&dspp[lm_count], &ds[lm_count],
-				&pp[lm_count], NULL))
+				&pp[lm_count], &roi_misr[lm_count],
+				&dsc[lm_count], NULL))
 			continue;
 
 		lm_mask |= (1 << iter_i.blk->id);
@@ -890,11 +1023,13 @@ static int _sde_rm_reserve_lms(
 			dspp[lm_count] = NULL;
 			ds[lm_count] = NULL;
 			pp[lm_count] = NULL;
+			roi_misr[lm_count] = NULL;
 
 			if (!_sde_rm_check_lm_and_get_connected_blks(
 					rm, rsvp, reqs, iter_j.blk,
 					&dspp[lm_count], &ds[lm_count],
-					&pp[lm_count], iter_i.blk))
+					&pp[lm_count], &roi_misr[lm_count],
+					&dsc[lm_count], iter_i.blk))
 				continue;
 
 			SDE_DEBUG("blk id = %d, _lm_ids[%d] = %d\n",
@@ -931,9 +1066,17 @@ static int _sde_rm_reserve_lms(
 		if (ds[i])
 			ds[i]->rsvp_nxt = rsvp;
 
+		if (roi_misr[i])
+			roi_misr[i]->rsvp_nxt = rsvp;
+
+		if (dsc[i])
+			dsc[i]->rsvp_nxt = rsvp;
+
 		SDE_EVT32(lm[i]->type, rsvp->enc_id, lm[i]->id, pp[i]->id,
 				dspp[i] ? dspp[i]->id : 0,
-				ds[i] ? ds[i]->id : 0);
+				ds[i] ? ds[i]->id : 0,
+				roi_misr[i] ? roi_misr[i]->id : 0,
+				dsc[i] ? dsc[i]->id : 0);
 	}
 
 	if (reqs->topology->top_name == SDE_RM_TOPOLOGY_PPSPLIT) {
@@ -1044,10 +1187,22 @@ static int _sde_rm_reserve_dsc(
 		u8 *_dsc_ids)
 {
 	struct sde_rm_hw_iter iter;
+	struct msm_drm_private *priv = rm->dev->dev_private;
+	struct sde_kms *sde_kms;
 	int alloc_count = 0;
 	int num_dsc_enc = top->num_lm;
 
 	if (!top->num_comp_enc)
+		return 0;
+
+	sde_kms = to_sde_kms(priv->kms);
+
+	/**
+	 * if roi misr has been enabled in DT, DSC block
+	 * should be reserved from lm reservation function
+	 * and skip here.
+	 */
+	if (sde_kms->catalog->has_roi_misr)
 		return 0;
 
 	sde_rm_init_hw_iter(&iter, 0, SDE_HW_BLK_DSC);

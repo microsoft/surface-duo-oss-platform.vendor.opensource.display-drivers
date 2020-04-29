@@ -34,6 +34,11 @@ struct shd_stage_range {
 	u32 size;
 };
 
+struct shd_roi_range {
+	u32 start;
+	u32 size;
+};
+
 struct shd_display_base {
 	struct drm_display_mode mode;
 	struct drm_crtc       *crtc;
@@ -63,6 +68,7 @@ struct shd_display {
 	struct sde_rect roi;
 	struct shd_stage_range stage_range;
 	bool full_screen;
+	struct shd_roi_range roi_range;
 
 	struct platform_device *pdev;
 	struct list_head head;
