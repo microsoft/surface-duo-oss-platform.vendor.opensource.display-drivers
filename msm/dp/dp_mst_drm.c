@@ -2171,10 +2171,11 @@ static void dp_mst_hotplug(struct drm_dp_mst_topology_mgr *mgr)
 							mst_mgr);
 	struct drm_device *dev = mst->dp_display->drm_dev;
 	char event_string[] = "MST_HOTPLUG=1";
-	char *envp[2];
+	char *envp[3];
 
 	envp[0] = event_string;
-	envp[1] = NULL;
+	envp[1] = "HOTPLUG=1";
+	envp[2] = NULL;
 
 	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
 
