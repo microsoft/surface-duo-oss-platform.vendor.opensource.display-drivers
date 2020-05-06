@@ -1147,7 +1147,7 @@ int dp_drm_bond_bridge_init(void *display,
 	int i, rc;
 
 	if (type < 0 || type >= DP_BOND_MAX || !bond_displays ||
-		bond_displays->dp_display_num >= MAX_DP_BOND_NUM)
+		bond_displays->dp_display_num > MAX_DP_BOND_NUM)
 		return -EINVAL;
 
 	priv = dp_display->drm_dev->dev_private;
