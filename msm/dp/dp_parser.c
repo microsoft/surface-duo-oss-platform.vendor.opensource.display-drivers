@@ -451,7 +451,7 @@ static int dp_parser_regulator(struct dp_parser *parser)
 	struct platform_device *pdev = parser->pdev;
 
 	/* Parse the regulator information */
-	for (i = DP_CORE_PM; i < DP_MAX_PM; i++) {
+	for (i = DP_CORE_PM; i <= DP_PHY_PM; i++) {
 		rc = dp_parser_get_vreg(parser, i);
 		if (rc) {
 			pr_err("get_dt_vreg_data failed for %s. rc=%d\n",
