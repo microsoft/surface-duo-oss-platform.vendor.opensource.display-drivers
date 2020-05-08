@@ -104,7 +104,6 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 		encoder = drm_atomic_helper_best_encoder(connector);
 		if (encoder == base->encoder) {
 			base->connector = connector;
-			base->connector->num_h_tile = base->tile_num;
 			break;
 		}
 	}
@@ -119,13 +118,6 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 	sde_conn = to_sde_connector(base->connector);
 	base->ops = sde_conn->ops;
 	sde_conn->ops.detect = shd_display_base_detect;
-
-	/* parse builtin modes */
-	if (base->connector->connector_type == DRM_MODE_CONNECTOR_DSI) {
-		if (sde_conn->ops.get_modes)
-			sde_conn->ops.get_modes(base->connector,
-					sde_conn->display);
-	}
 
 	SDE_DEBUG("found base connector %d\n", base->connector->base.id);
 
@@ -737,9 +729,10 @@ static void shd_drm_update_checksum(struct edid *edid)
 static int shd_connector_get_modes(struct drm_connector *connector,
 		void *data)
 {
-	struct drm_display_mode drm_mode;
 	struct shd_display *disp = data;
-	struct drm_display_mode *m;
+	struct drm_display_mode *m, *base_mode = NULL;
+	struct sde_connector *sde_conn;
+	int count;
 	int rc;
 	u32 edid_size;
 	struct edid edid;
@@ -751,34 +744,135 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 		0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
 		0x01, 0x01, 0x01, 0x01,
 	};
+
+	sde_conn = to_sde_connector(disp->base->connector);
+
+	/* get base probed modes */
+	if (!sde_conn->ops.get_modes)
+		return 0;
+	count = sde_conn->ops.get_modes(disp->base->connector,
+			sde_conn->display);
+	if (!count) {
+		SDE_DEBUG("no base mode probed\n");
+		return 0;
+	}
+
+	/* set all old modes to the stale state */
+	list_for_each_entry(m, &connector->modes, head)
+		m->status = MODE_STALE;
+
+	/* update base modes */
+	drm_mode_connector_list_update(disp->base->connector);
+
+	/* validate modes */
+	list_for_each_entry(m, &disp->base->connector->modes, head) {
+		if (sde_conn->ops.mode_valid)
+			m->status = sde_conn->ops.mode_valid(
+					disp->base->connector, m,
+					sde_conn->display);
+	}
+
+	/* prune invalid modes */
+	drm_mode_prune_invalid(disp->drm_dev,
+			&disp->base->connector->modes, false);
+
+	if (list_empty(&disp->base->connector->modes)) {
+		SDE_DEBUG("no valid base mode\n");
+		return 0;
+	}
+
+	/* update vrefresh and remove preferred flag */
+	list_for_each_entry(m, &disp->base->connector->modes, head) {
+		m->vrefresh = drm_mode_vrefresh(m);
+		m->type &= ~DRM_MODE_TYPE_PREFERRED;
+	}
+
+	/* sort base mode */
+	drm_mode_sort(&disp->base->connector->modes);
+
+	/* search for base mode */
+	if (disp->base->dynamic_mode) {
+		list_for_each_entry(m, &disp->base->connector->modes, head) {
+			drm_mode_copy(&disp->base->mode, m);
+			base_mode = m;
+			break;
+		}
+	} else {
+		list_for_each_entry(m, &disp->base->connector->modes, head) {
+			if (disp->base->mode.hdisplay == m->hdisplay &&
+			    disp->base->mode.hsync_start == m->hsync_start &&
+			    disp->base->mode.hsync_end == m->hsync_end &&
+			    disp->base->mode.htotal == m->htotal &&
+			    disp->base->mode.vdisplay == m->vdisplay &&
+			    disp->base->mode.vsync_start == m->vsync_start &&
+			    disp->base->mode.vsync_end == m->vsync_end &&
+			    disp->base->mode.vtotal == m->vtotal &&
+			    disp->base->mode.clock == m->clock &&
+			    disp->base->mode.vrefresh == m->vrefresh) {
+				drm_mode_copy(&disp->base->mode, m);
+				base_mode = m;
+				break;
+			}
+		}
+		if (!base_mode) {
+			SDE_INFO("directly use base mode in DT\n");
+			base_mode = &disp->base->mode;
+			base_mode->private = (int *)&shd_default_priv_info;
+		}
+	}
+
+	if (!base_mode) {
+		SDE_ERROR("can't find base mode\n");
+		return 0;
+	}
+
+	/* check shared display roi */
+	if (!disp->full_screen) {
+		if (disp->roi.x + disp->roi.w > base_mode->hdisplay ||
+			disp->roi.y + disp->roi.h > base_mode->vdisplay) {
+			SDE_INFO("roi exceeds base display mode\n");
+			return 0;
+		}
+	}
+
+	/* update edid name */
 	edid_size = min_t(u32, sizeof(edid), EDID_LENGTH);
 	memcpy(&edid, edid_buf, edid_size);
-
-	memcpy(&drm_mode, &disp->base->mode, sizeof(drm_mode));
-
-	drm_mode.hdisplay = disp->src.w;
-	drm_mode.hsync_start = drm_mode.hdisplay;
-	drm_mode.hsync_end = drm_mode.hsync_start;
-	drm_mode.htotal = drm_mode.hsync_end;
-
-	drm_mode.vdisplay = disp->src.h;
-	drm_mode.vsync_start = drm_mode.vdisplay;
-	drm_mode.vsync_end = drm_mode.vsync_start;
-	drm_mode.vtotal = drm_mode.vsync_end;
-
-	m = drm_mode_duplicate(disp->drm_dev, &drm_mode);
-	if (!m)
-		return 0;
-	drm_mode_set_name(m);
-	drm_mode_probed_add(connector, m);
 
 	rc = shd_drm_update_edid_name(&edid, connector->name);
 	if (rc)
 		return 0;
+
 	shd_drm_update_checksum(&edid);
+
 	rc = drm_mode_connector_update_edid_property(connector, &edid);
 	if (rc)
 		return 0;
+
+	/* duplicate mode from base */
+	m = drm_mode_duplicate(disp->drm_dev, base_mode);
+	if (!m)
+		return 0;
+
+	/* update roi size */
+	if (disp->full_screen) {
+		disp->src.w = base_mode->hdisplay;
+		disp->src.h = base_mode->vdisplay;
+		disp->roi.w = base_mode->hdisplay;
+		disp->roi.h = base_mode->vdisplay;
+	} else {
+		m->hdisplay = disp->src.w;
+		m->hsync_start = m->hdisplay;
+		m->hsync_end = m->hsync_start;
+		m->htotal = m->hsync_end;
+		m->vdisplay = disp->src.h;
+		m->vsync_start = m->vdisplay;
+		m->vsync_end = m->vsync_start;
+		m->vtotal = m->vsync_end;
+		drm_mode_set_name(m);
+	}
+
+	drm_mode_probed_add(connector, m);
 
 	return 1;
 }
@@ -1190,7 +1284,6 @@ static int shd_parse_display(struct shd_display *display)
 	u32 range[2];
 	int rc;
 
-
 	display->base_of = of_parse_phandle(of_node,
 		"qcom,shared-display-base", 0);
 	if (!display->base_of) {
@@ -1201,9 +1294,9 @@ static int shd_parse_display(struct shd_display *display)
 
 	of_src = of_get_child_by_name(of_node, "qcom,shared-display-src-mode");
 	if (!of_src) {
-		SDE_ERROR("No src mode present\n");
-		rc = -ENODEV;
-		goto error;
+		SDE_DEBUG("full screen mode\n");
+		display->full_screen = true;
+		goto next;
 	}
 
 	rc = of_property_read_u32(of_src, "qcom,mode-h-active",
@@ -1255,13 +1348,15 @@ static int shd_parse_display(struct shd_display *display)
 		goto error;
 	}
 
-	rc = of_property_read_u32_array(of_node, "qcom,blend-stage-range",
-		range, 2);
-	if (rc)
-		SDE_ERROR("Failed to parse blend stage range\n");
+	if (src_w != dst_w) {
+		SDE_ERROR("horizontal scaling is not supported\n");
+		goto error;
+	}
 
-	display->name = of_get_property(of_node,
-		"qcom,shared-display-name", NULL);
+	if (src_h > dst_h) {
+		SDE_ERROR("downscale is not supported\n");
+		goto error;
+	}
 
 	display->src.w = src_w;
 	display->src.h = src_h;
@@ -1269,8 +1364,18 @@ static int shd_parse_display(struct shd_display *display)
 	display->roi.y = dst_y;
 	display->roi.w = dst_w;
 	display->roi.h = dst_h;
+
+next:
+	rc = of_property_read_u32_array(of_node, "qcom,blend-stage-range",
+		range, 2);
+	if (rc)
+		SDE_ERROR("Failed to parse blend stage range\n");
+
 	display->stage_range.start = range[0];
 	display->stage_range.size = range[1];
+
+	display->name = of_get_property(of_node,
+		"qcom,shared-display-name", NULL);
 
 	SDE_DEBUG("%s src %dx%d dst %d,%d %dx%d range %d-%d\n", display->name,
 		display->src.w, display->src.h,
@@ -1296,6 +1401,7 @@ static int shd_parse_base(struct shd_display_base *base)
 	u32 h_front_porch, h_pulse_width, h_back_porch;
 	u32 v_front_porch, v_pulse_width, v_back_porch;
 	bool h_active_high, v_active_high;
+	bool tile_mode;
 	u32 flags = 0;
 	int rc;
 
@@ -1306,25 +1412,14 @@ static int shd_parse_base(struct shd_display_base *base)
 		goto fail;
 	}
 
-	rc = of_property_read_u32(of_node, "qcom,shared-display-base-tile-num",
-					&base->tile_num);
-	if (!rc) {
-		if (base->tile_num &&
-				(base->tile_num < 2 || base->tile_num > 3)) {
-			SDE_ERROR("invalid tile num %d\n", base->tile_num);
-			rc = -EINVAL;
-			goto fail;
-		}
-	}
-
 	base->mst_port = of_property_read_bool(of_node,
 					"qcom,shared-display-base-mst");
 
 	node = of_get_child_by_name(of_node, "qcom,shared-display-base-mode");
 	if (!node) {
-		SDE_ERROR("No base mode present\n");
-		rc = -ENODEV;
-		goto fail;
+		SDE_DEBUG("full screen mode\n");
+		base->dynamic_mode = true;
+		return 0;
 	}
 
 	rc = of_property_read_u32(node, "qcom,mode-h-active",
@@ -1403,7 +1498,9 @@ static int shd_parse_base(struct shd_display_base *base)
 		goto fail;
 	}
 
-	mode->private = (int *)&shd_default_priv_info;
+	tile_mode = of_property_read_bool(of_node,
+					"qcom,mode-tile");
+
 	mode->hsync_start = mode->hdisplay + h_front_porch;
 	mode->hsync_end = mode->hsync_start + h_pulse_width;
 	mode->htotal = mode->hsync_end + h_back_porch;
@@ -1418,7 +1515,7 @@ static int shd_parse_base(struct shd_display_base *base)
 		flags |= DRM_MODE_FLAG_PVSYNC;
 	else
 		flags |= DRM_MODE_FLAG_NVSYNC;
-	if (base->tile_num)
+	if (tile_mode)
 		flags |= DRM_MODE_FLAG_CLKDIV2;
 	mode->flags = flags;
 	drm_mode_set_name(mode);
