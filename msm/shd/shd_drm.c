@@ -212,12 +212,6 @@ static int shd_display_init_base_crtc(struct drm_device *dev,
 	crtc->primary = primary;
 	primary->crtc = crtc;
 
-	/* disable crtc from other encoders */
-	for (i = 0; i < priv->num_encoders; i++) {
-		if (priv->encoders[i] != base->encoder)
-			priv->encoders[i]->possible_crtcs &= ~(1 << crtc_idx);
-	}
-
 	/* disable crtc from other connectors */
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	drm_for_each_connector_iter(connector, &conn_iter) {
