@@ -612,7 +612,7 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 	struct drm_connector *connector;
 	char name[HPD_STRING_SIZE], status[HPD_STRING_SIZE],
 		bpp[HPD_STRING_SIZE], pattern[HPD_STRING_SIZE];
-	char *envp[5];
+	char *envp[6];
 
 	if (dp->mst.mst_active) {
 		pr_debug("skip notification for mst mode\n");
@@ -644,7 +644,8 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 	envp[1] = status;
 	envp[2] = bpp;
 	envp[3] = pattern;
-	envp[4] = NULL;
+	envp[4] = "HOTPLUG=1";
+	envp[5] = NULL;
 	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE,
 			envp);
 }
