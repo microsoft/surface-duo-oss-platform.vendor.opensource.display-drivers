@@ -5036,7 +5036,7 @@ static int dsi_display_bind(struct device *dev,
 		j = display->panel->host_config.ext_bridge_map[i];
 		if (!display->ext_bridge[j].node_of) {
 			pr_err("invalid ext bridge node\n");
-			return -EINVAL;
+			continue;
 		}
 
 		if (!of_drm_find_bridge(display->ext_bridge[j].node_of)) {
@@ -5875,6 +5875,10 @@ int dsi_display_drm_ext_bridge_init(struct dsi_display *display,
 		/* return if ext bridge is already initialized */
 		if (ext_bridge_info->bridge)
 			return 0;
+
+		/* continue if no bridge is found */
+		if (!ext_bridge_info->node_of)
+			continue;
 
 		ext_bridge = of_drm_find_bridge(ext_bridge_info->node_of);
 		if (IS_ERR_OR_NULL(ext_bridge)) {
