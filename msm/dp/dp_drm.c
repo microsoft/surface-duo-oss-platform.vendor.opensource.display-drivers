@@ -924,6 +924,11 @@ enum drm_connector_status dp_connector_detect(struct drm_connector *conn,
 			if (dp_bond_check_connector(conn, type))
 				status = connector_status_disconnected;
 		}
+
+		if (dp_display->force_bond_mode) {
+			if (!dp_bond_check_connector(conn, type))
+				status = connector_status_disconnected;
+		}
 	}
 
 	return status;
