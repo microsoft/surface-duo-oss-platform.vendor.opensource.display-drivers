@@ -80,6 +80,8 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 msm_drm-$(CONFIG_DRM_SDE_ROI_MISR) += sde/sde_roi_misr.o \
 	sde/sde_fence_misr.o \
 
+msm_drm-$(CONFIG_SDE_RECOVERY_MANAGER) += sde_recovery_manager.o \
+
 msm_drm-$(CONFIG_DEBUG_FS) += sde_dbg.o \
 	sde_dbg_evtlog.o \
 

@@ -278,6 +278,8 @@ struct sde_kms {
 
 	bool first_kickoff;
 	bool qdss_enabled;
+
+	void *recovery_mgr;
 };
 
 struct vsync_info {
