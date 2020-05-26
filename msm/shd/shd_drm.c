@@ -203,6 +203,7 @@ static int shd_display_init_base_crtc(struct drm_device *dev,
 	if (IS_ERR(primary))
 		return -ENOMEM;
 	priv->planes[priv->num_planes++] = primary;
+	list_del(&primary->head);
 	if (primary->funcs->reset)
 		primary->funcs->reset(primary);
 
