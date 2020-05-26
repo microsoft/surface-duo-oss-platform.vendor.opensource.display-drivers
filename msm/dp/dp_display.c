@@ -2985,6 +2985,7 @@ int dp_display_get_num_of_displays(void)
 int dp_display_get_num_of_streams(void *dp_display)
 {
 	struct dp_display_private *dp;
+	bool has_mst, no_mst_encoder;
 
 	if (!dp_display) {
 		pr_debug("dp display not initialized\n");
@@ -2992,11 +2993,17 @@ int dp_display_get_num_of_streams(void *dp_display)
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
-	if (!dp->parser)
-		return DP_STREAM_MAX;
+	if (!dp->parser) {
+		has_mst = of_property_read_bool(dp->pdev->dev.of_node,
+				"qcom,mst-enable");
+		no_mst_encoder = of_property_read_bool(dp->pdev->dev.of_node,
+				"qcom,no-mst-encoder");
+	} else {
+		has_mst = dp->parser->has_mst;
+		no_mst_encoder = dp->parser->no_mst_encoder;
+	}
 
-	return (dp->parser->has_mst && !dp->parser->no_mst_encoder) ?
-			DP_STREAM_MAX : 0;
+	return (has_mst && !no_mst_encoder) ? DP_STREAM_MAX : 0;
 }
 
 int dp_display_get_num_of_bonds(void *dp_display)
@@ -3010,12 +3017,18 @@ int dp_display_get_num_of_bonds(void *dp_display)
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
-	if (!dp->parser)
-		return dp->cell_idx ? 0 : DP_BOND_MAX;
-
-	for (i = 0; i < DP_BOND_MAX; i++) {
-		if (dp->parser->bond_cfg[i].enable)
+	if (!dp->parser) {
+		if (of_property_count_u32_elems(dp->pdev->dev.of_node,
+				"qcom,bond-dual-ctrl") > 0)
 			cnt++;
+		if (of_property_count_u32_elems(dp->pdev->dev.of_node,
+				"qcom,bond-tri-ctrl") > 0)
+			cnt++;
+	} else {
+		for (i = 0; i < DP_BOND_MAX; i++) {
+			if (dp->parser->bond_cfg[i].enable)
+				cnt++;
+		}
 	}
 
 	return cnt;
