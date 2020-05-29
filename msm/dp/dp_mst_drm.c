@@ -2393,3 +2393,20 @@ void dp_mst_deinit(struct dp_display *dp_display)
 	DP_MST_INFO_LOG("dp drm mst topology manager deinit completed\n");
 }
 
+void dp_mst_dump_topology(struct dp_display *dp_display, struct seq_file *m)
+{
+	struct dp_mst_private *mst;
+
+	if (!dp_display) {
+		pr_err("invalid params\n");
+		return;
+	}
+
+	mst = dp_display->dp_mst_prv_info;
+
+	if (!mst->mst_initialized)
+		return;
+
+	drm_dp_mst_dump_topology(m, &mst->mst_mgr);
+}
+
