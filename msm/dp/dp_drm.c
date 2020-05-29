@@ -1263,6 +1263,37 @@ int dp_connector_update_pps(struct drm_connector *connector,
 	}
 
 	dp_disp = display;
+
+	if (dp_disp->dp_bond_prv_info) {
+		struct dp_bond_info *bond_info;
+		struct dp_bond_bridge *bond_bridge;
+		int i, ret;
+
+		bond_info = dp_disp->dp_bond_prv_info;
+		for (i = 0; i < DP_BOND_MAX; i++) {
+			bond_bridge = bond_info->bond_bridge[i];
+			if (!bond_bridge)
+				continue;
+			if (connector->encoder == bond_bridge->encoder)
+				break;
+		}
+
+		if (!bond_bridge || i == DP_BOND_MAX)
+			goto out;
+
+		for (i = 0; i < bond_bridge->bridge_num; i++) {
+			ret = bond_bridge->bridges[i]->display->update_pps(
+					bond_bridge->bridges[i]->display,
+					bond_bridge->bridges[i]->connector,
+					pps_cmd);
+			if (ret)
+				return ret;
+		}
+
+		return 0;
+	}
+
+out:
 	return dp_disp->update_pps(dp_disp, connector, pps_cmd);
 }
 
