@@ -2826,6 +2826,9 @@ static int dsi_panel_parse_topology(
 		topology[top_sel].num_enc,
 		topology[top_sel].num_intf);
 
+	priv_info->swap_intf = utils->read_bool(utils->data,
+			"qcom,mdss-dsi-panel-swap-intf");
+
 parse_done:
 	memcpy(&priv_info->topology, &topology[top_sel],
 		sizeof(struct msm_display_topology));
