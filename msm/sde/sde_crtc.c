@@ -5563,14 +5563,18 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 
 	for (i = 1; i < SSPP_MAX; i++) {
 		if (pipe_staged[i]) {
-			if (is_sde_plane_virtual(pipe_staged[i]->plane)) {
-				SDE_ERROR(
-					"r1 only virt plane:%d not supported\n",
-					pipe_staged[i]->plane->base.id);
-				rc  = -EINVAL;
-				goto end;
-			}
 			sde_plane_clear_multirect(pipe_staged[i]);
+			if (is_sde_plane_virtual(pipe_staged[i]->plane)) {
+				struct sde_plane_state *psde_state;
+
+				SDE_DEBUG("r1 only virt plane:%d staged\n",
+					 pipe_staged[i]->plane->base.id);
+
+				psde_state = to_sde_plane_state(
+						pipe_staged[i]);
+
+				psde_state->multirect_index = SDE_SSPP_RECT_1;
+			}
 		}
 	}
 
