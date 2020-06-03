@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,10 +20,6 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_plane.h>
 #include "msm_drv.h"
-
-/* drm internal header */
-struct drm_minor *drm_minor_acquire(unsigned int minor_id);
-void drm_minor_release(struct drm_minor *minor);
 
 /* drm crtc internal header */
 int drm_atomic_set_property(struct drm_atomic_state *state,
