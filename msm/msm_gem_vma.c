@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  * Copyright (C) 2016 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -191,25 +191,6 @@ msm_gem_smmu_address_space_create(struct drm_device *dev, struct msm_mmu *mmu,
 	return aspace;
 }
 
-static void
-msm_gem_address_space_destroy(struct kref *kref)
-{
-	struct msm_gem_address_space *aspace = container_of(kref,
-			struct msm_gem_address_space, kref);
-
-	if (aspace && aspace->ops->destroy)
-		aspace->ops->destroy(aspace);
-
-	kfree(aspace);
-}
-
-
-void msm_gem_address_space_put(struct msm_gem_address_space *aspace)
-{
-	if (aspace)
-		kref_put(&aspace->kref, msm_gem_address_space_destroy);
-}
-
 /* GPU address space operations */
 static void iommu_aspace_unmap_vma(struct msm_gem_address_space *aspace,
 		struct msm_gem_vma *vma, struct sg_table *sgt,
@@ -231,16 +212,6 @@ static void iommu_aspace_unmap_vma(struct msm_gem_address_space *aspace,
 
 	msm_gem_address_space_put(aspace);
 }
-
-void
-msm_gem_unmap_vma(struct msm_gem_address_space *aspace,
-		struct msm_gem_vma *vma, struct sg_table *sgt,
-		unsigned int flags)
-{
-	if (aspace && aspace->ops->unmap)
-		aspace->ops->unmap(aspace, vma, sgt, flags);
-}
-
 
 static int iommu_aspace_map_vma(struct msm_gem_address_space *aspace,
 		struct msm_gem_vma *vma, struct sg_table *sgt,
@@ -292,8 +263,6 @@ msm_gem_address_space_create(struct device *dev, struct iommu_domain *domain,
 		const char *name)
 {
 	struct msm_gem_address_space *aspace;
-	u64 size = domain->geometry.aperture_end -
-		domain->geometry.aperture_start;
 
 	aspace = kzalloc(sizeof(*aspace), GFP_KERNEL);
 	if (!aspace)
@@ -305,11 +274,40 @@ msm_gem_address_space_create(struct device *dev, struct iommu_domain *domain,
 	aspace->ops = &msm_iommu_aspace_ops;
 
 	drm_mm_init(&aspace->mm, (domain->geometry.aperture_start >> PAGE_SHIFT),
-		size >> PAGE_SHIFT);
+			(domain->geometry.aperture_end >> PAGE_SHIFT) - 1);
 
 	kref_init(&aspace->kref);
 
 	return aspace;
+}
+
+
+/* Generic address space operations */
+static void
+msm_gem_address_space_destroy(struct kref *kref)
+{
+	struct msm_gem_address_space *aspace = container_of(kref,
+			struct msm_gem_address_space, kref);
+
+	if (aspace && aspace->ops->destroy)
+		aspace->ops->destroy(aspace);
+
+	kfree(aspace);
+}
+
+void msm_gem_address_space_put(struct msm_gem_address_space *aspace)
+{
+	if (aspace)
+		kref_put(&aspace->kref, msm_gem_address_space_destroy);
+}
+
+void
+msm_gem_unmap_vma(struct msm_gem_address_space *aspace,
+		struct msm_gem_vma *vma, struct sg_table *sgt,
+		unsigned int flags)
+{
+	if (aspace && aspace->ops->unmap)
+		aspace->ops->unmap(aspace, vma, sgt, flags);
 }
 
 int

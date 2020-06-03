@@ -84,7 +84,6 @@ static int _rsc_hw_seq_memory_init_v3(struct sde_rsc_priv *rsc)
 	const u32 mode_0_start_addr = 0x0;
 	const u32 mode_1_start_addr = 0xc;
 	const u32 mode_2_start_addr = 0x18;
-	u32 br_offset = 0;
 
 	pr_debug("rsc sequencer memory init v2\n");
 
@@ -106,17 +105,17 @@ static int _rsc_hw_seq_memory_init_v3(struct sde_rsc_priv *rsc)
 
 	/* Mode - 2 sequence */
 	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_MEM_0_DRV0 + 0x18,
-						0xbdf9b9a0, rsc->debug_mode);
+						0xfab9baa0, rsc->debug_mode);
 	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_MEM_0_DRV0 + 0x1c,
-						0xa13899fe, rsc->debug_mode);
+						0x9afebdf9, rsc->debug_mode);
 	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_MEM_0_DRV0 + 0x20,
-						0xe0ac81e1, rsc->debug_mode);
+						0xe1a13899, rsc->debug_mode);
 	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_MEM_0_DRV0 + 0x24,
-						0x3982e2a2, rsc->debug_mode);
+						0xa2e0ac81, rsc->debug_mode);
 	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_MEM_0_DRV0 + 0x28,
-						0x208cfd9d, rsc->debug_mode);
+						0x9d3982e2, rsc->debug_mode);
 	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_MEM_0_DRV0 + 0x2c,
-						0x20202020, rsc->debug_mode);
+						0x20208cfd, rsc->debug_mode);
 	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_MEM_0_DRV0 + 0x30,
 						0x20202020, rsc->debug_mode);
 
@@ -131,13 +130,9 @@ static int _rsc_hw_seq_memory_init_v3(struct sde_rsc_priv *rsc)
 						0x00209ce7, rsc->debug_mode);
 
 	/* branch address */
-	if (rsc->hw_drv_ver == SDE_RSC_HW_MAJOR_MINOR_STEP(2, 0, 5) ||
-		rsc->hw_drv_ver == SDE_RSC_HW_MAJOR_MINOR_STEP(1, 9, 0))
-		br_offset = 0xf0;
-
-	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_CFG_BR_ADDR_0_DRV0 + br_offset,
+	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_CFG_BR_ADDR_0_DRV0,
 						0x34, rsc->debug_mode);
-	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_CFG_BR_ADDR_1_DRV0 + br_offset,
+	dss_reg_w(&rsc->drv_io, SDE_RSCC_SEQ_CFG_BR_ADDR_1_DRV0,
 						0x3c, rsc->debug_mode);
 
 	/* start address */
@@ -279,7 +274,7 @@ static int sde_rsc_mode2_entry_trigger(struct sde_rsc_priv *rsc)
 			rc = 0;
 			break;
 		}
-		usleep_range(50, 100);
+		usleep_range(10, 100);
 	}
 
 	return rc;
@@ -344,12 +339,6 @@ static int sde_rsc_mode2_entry_v3(struct sde_rsc_priv *rsc)
 	dss_reg_w(&rsc->drv_io, SDE_RSC_SOLVER_SOLVER_MODES_ENABLED_DRV0,
 						0x7, rsc->debug_mode);
 
-	/**
-	 * increase delay time to wait before mode2 entry,
-	 * longer time required subsequent to panel mode change
-	 */
-	if (rsc->post_poms)
-		usleep_range(750, 1000);
 	for (i = 0; i <= MAX_MODE2_ENTRY_TRY; i++) {
 		rc = sde_rsc_mode2_entry_trigger(rsc);
 		if (!rc)
@@ -407,10 +396,6 @@ static int sde_rsc_state_update_v3(struct sde_rsc_priv *rsc,
 	case SDE_RSC_CMD_STATE:
 		pr_debug("command mode handling\n");
 
-		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL,
-							0x0, rsc->debug_mode);
-		wmb(); /* disable double buffer config before vsync select */
-
 		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL2,
 				BIT(1) | BIT(2) | BIT(3), rsc->debug_mode);
 
@@ -466,17 +451,10 @@ static int sde_rsc_state_update_v3(struct sde_rsc_priv *rsc,
 
 		reg = dss_reg_r(&rsc->wrapper_io,
 			SDE_RSCC_WRAPPER_OVERRIDE_CTRL, rsc->debug_mode);
-		reg &= ~(BIT(0) | BIT(8));
+		reg &= ~BIT(0);
 		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL,
 							reg, rsc->debug_mode);
 		wmb(); /* make sure that solver mode is disabled */
-
-		reg = dss_reg_r(&rsc->wrapper_io,
-			SDE_RSCC_WRAPPER_OVERRIDE_CTRL, rsc->debug_mode);
-		reg |= BIT(8);
-		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL,
-							reg, rsc->debug_mode);
-		wmb(); /* enable double buffer vsync configuration */
 		break;
 
 	case SDE_RSC_IDLE_STATE:
@@ -495,12 +473,9 @@ static int sde_rsc_state_update_v3(struct sde_rsc_priv *rsc,
 	return rc;
 }
 
-int rsc_hw_init_v3(struct sde_rsc_priv *rsc)
+static int rsc_hw_init_v3(struct sde_rsc_priv *rsc)
 {
 	int rc = 0;
-
-	rsc->hw_drv_ver = dss_reg_r(&rsc->drv_io,
-		SDE_RSCC_RSC_ID_DRV0, rsc->debug_mode);
 
 	rc = _rsc_hw_qtimer_init(rsc);
 	if (rc) {
@@ -539,7 +514,7 @@ end:
 	return rc;
 }
 
-int rsc_hw_bwi_status_v3(struct sde_rsc_priv *rsc, bool bw_indication)
+static int rsc_hw_bwi_status_v3(struct sde_rsc_priv *rsc, bool bw_indication)
 {
 	int count, bw_ack;
 	int rc = 0;

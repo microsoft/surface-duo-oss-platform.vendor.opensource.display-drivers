@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_CTL_H
@@ -11,8 +11,6 @@
 #include "sde_hw_catalog.h"
 #include "sde_hw_sspp.h"
 #include "sde_hw_blk.h"
-
-#define INVALID_CTL_STATUS 0xfffff88e
 
 /**
  * sde_ctl_mode_sel: Interface mode selection
@@ -115,6 +113,14 @@ struct sde_ctl_dsc_cfg {
 };
 
 /**
+ * struct sde_ctl_sbuf_cfg - control for stream buffer configuration
+ * @rot_op_mode: rotator operation mode
+ */
+struct sde_ctl_sbuf_cfg {
+	enum sde_ctl_rot_op_mode rot_op_mode;
+};
+
+/**
  * struct sde_ctl_flush_cfg - struct describing flush configuration managed
  * via set, trigger and clear ops.
  * set ops corresponding to the hw_block is called, when the block's
@@ -177,13 +183,6 @@ struct sde_hw_ctl_ops {
 	 * @Return: error code
 	 */
 	int (*trigger_rot_start)(struct sde_hw_ctl *ctx);
-
-	/**
-	 * enable/disable UIDLE feature
-	 * @ctx       : ctl path ctx pointer
-	 * @enable: true to enable the feature
-	 */
-	void (*uidle_enable)(struct sde_hw_ctl *ctx, bool enable);
 
 	/**
 	 * Clear the value of the cached pending_flush_mask
@@ -289,13 +288,6 @@ struct sde_hw_ctl_ops {
 	 * Returns: current value of ctl reset status
 	 */
 	u32 (*get_reset)(struct sde_hw_ctl *ctx);
-
-	/**
-	 * get_scheduler_reset - check ctl scheduler status bit
-	 * @ctx    : ctl path ctx pointer
-	 * Returns: current value of ctl scheduler and idle status
-	 */
-	u32 (*get_scheduler_status)(struct sde_hw_ctl *ctx);
 
 	/**
 	 * hard_reset - force reset on ctl_path
@@ -460,6 +452,14 @@ struct sde_hw_ctl_ops {
 	 */
 	u32 (*get_staged_sspp)(struct sde_hw_ctl *ctx, enum sde_lm lm,
 		struct sde_sspp_index_info *info, u32 info_max_cnt);
+
+	/**
+	 * Setup the stream buffer config like rotation mode
+	 * @ctx       : ctl path ctx pointer
+	 * Returns: 0 on success or -error
+	 */
+	int (*setup_sbuf_cfg)(struct sde_hw_ctl *ctx,
+		struct sde_ctl_sbuf_cfg *cfg);
 
 	/**
 	 * Flush the reg dma by sending last command.

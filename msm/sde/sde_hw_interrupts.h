@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_INTERRUPTS_H
@@ -54,8 +54,6 @@
  * @SDE_IRQ_TYPE_INTF_TEAR_AUTO_REF:	INTF Tear auto refresh
  * @SDE_IRQ_TYPE_INTF_TEAR_TEAR_CHECK:	INTF Tear Tear check
  * @SDE_IRQ_TYPE_INTF_TEAR_TE_CHECK:	INTF Tear TE detection
- * @SDE_IRQ_TYPE_LTM_STATS_DONE:	LTM stats done interrupt
- * @SDE_IRQ_TYPE_LTM_STATS_WB_PB:	LTM stats WB push back interrupt
  * @SDE_IRQ_TYPE_RESERVED:		Reserved for expansion
  */
 enum sde_intr_type {
@@ -91,8 +89,6 @@ enum sde_intr_type {
 	SDE_IRQ_TYPE_INTF_TEAR_AUTO_REF,
 	SDE_IRQ_TYPE_INTF_TEAR_TEAR_CHECK,
 	SDE_IRQ_TYPE_INTF_TEAR_TE_CHECK,
-	SDE_IRQ_TYPE_LTM_STATS_DONE,
-	SDE_IRQ_TYPE_LTM_STATS_WB_PB,
 	SDE_IRQ_TYPE_RESERVED,
 };
 
@@ -117,23 +113,31 @@ struct sde_hw_intr_ops {
 	/**
 	 * irq_idx_lookup - Lookup IRQ index on the HW interrupt type
 	 *                 Used for all irq related ops
-	 * @intr:	HW interrupt handle
 	 * @intr_type:		Interrupt type defined in sde_intr_type
 	 * @instance_idx:	HW interrupt block instance
 	 * @return:		irq_idx or -EINVAL for lookup fail
 	 */
 	int (*irq_idx_lookup)(
-			struct sde_hw_intr *intr,
 			enum sde_intr_type intr_type,
 			u32 instance_idx);
 
 	/**
-	 * enable_irq_nolock - Enable IRQ based on lookup IRQ index without lock
+	 * enable_irq - Enable IRQ based on lookup IRQ index
 	 * @intr:	HW interrupt handle
 	 * @irq_idx:	Lookup irq index return from irq_idx_lookup
 	 * @return:	0 for success, otherwise failure
 	 */
-	int (*enable_irq_nolock)(
+	int (*enable_irq)(
+			struct sde_hw_intr *intr,
+			int irq_idx);
+
+	/**
+	 * disable_irq - Disable IRQ based on lookup IRQ index
+	 * @intr:	HW interrupt handle
+	 * @irq_idx:	Lookup irq index return from irq_idx_lookup
+	 * @return:	0 for success, otherwise failure
+	 */
+	int (*disable_irq)(
 			struct sde_hw_intr *intr,
 			int irq_idx);
 
@@ -282,22 +286,20 @@ struct sde_hw_intr_ops {
  * @ops:              function pointer mapping for IRQ handling
  * @cache_irq_mask:   array of IRQ enable masks reg storage created during init
  * @save_irq_status:  array of IRQ status reg storage created during init
+ * @irq_idx_tbl_size: total number of irq_idx mapped in the hw_interrupts
  * @irq_lock:         spinlock for accessing IRQ resources
  * @sde_irq_size:   total number of elements of the sde_irq_tbl
  * @sde_irq_tbl:	table with the registesrs offsets of the sde interrupts
  *		supported by the hw
- * @sde_irq_map_size: total number of elements of the 'sde_irq_map'
- * @sde_irq_map: total number of interrupt bits valid within the irq regs
  */
 struct sde_hw_intr {
 	struct sde_hw_blk_reg_map hw;
 	struct sde_hw_intr_ops ops;
 	u32 *cache_irq_mask;
 	u32 *save_irq_status;
+	u32 irq_idx_tbl_size;
 	u32 sde_irq_size;
 	struct sde_intr_reg *sde_irq_tbl;
-	u32 sde_irq_map_size;
-	struct sde_irq_type *sde_irq_map;
 	spinlock_t irq_lock;
 };
 

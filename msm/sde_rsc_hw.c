@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[sde_rsc_hw:%s:%d]: " fmt, __func__, __LINE__
@@ -405,19 +405,21 @@ int sde_rsc_mode2_exit(struct sde_rsc_priv *rsc, enum sde_rsc_state state)
 	dss_reg_w(&rsc->drv_io, SDE_RSC_SOLVER_SOLVER_MODES_ENABLED_DRV0,
 						0x3, rsc->debug_mode);
 
-	reg = dss_reg_r(&rsc->wrapper_io,
+	if (rsc->version >= SDE_RSC_REV_3) {
+		reg = dss_reg_r(&rsc->wrapper_io,
 			SDE_RSCC_WRAPPER_OVERRIDE_CTRL, rsc->debug_mode);
-	reg &= ~(BIT(0) | BIT(8));
-	dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL,
+		reg &= ~(BIT(0) | BIT(8));
+		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL,
 						reg, rsc->debug_mode);
-	wmb(); /* make sure to disable rsc solver state */
+		wmb(); /* make sure to disable rsc solver state */
 
-	reg = dss_reg_r(&rsc->wrapper_io,
+		reg = dss_reg_r(&rsc->wrapper_io,
 			SDE_RSCC_WRAPPER_OVERRIDE_CTRL, rsc->debug_mode);
-	reg |= (BIT(0) | BIT(8));
-	dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL,
+		reg |= (BIT(0) | BIT(8));
+		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_OVERRIDE_CTRL,
 						reg, rsc->debug_mode);
-	wmb(); /* make sure to enable rsc solver state */
+		wmb(); /* make sure to enable rsc solver state */
+	}
 
 	rsc_event_trigger(rsc, SDE_RSC_EVENT_POST_CORE_RESTORE);
 
@@ -872,19 +874,14 @@ int rsc_hw_tcs_wait(struct sde_rsc_priv *rsc)
 	}
 
 	/* check for sequence running status before exiting */
-	for (count = (MAX_CHECK_LOOPS / 4); count > 0; count--) {
+	for (count = MAX_CHECK_LOOPS; count > 0; count--) {
 		seq_status = dss_reg_r(&rsc->wrapper_io, SDE_RSCC_WRAPPER_CTRL,
 				rsc->debug_mode) & BIT(1);
 		if (!seq_status) {
 			rc = 0;
 			break;
 		}
-
-		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_CTRL,
-						0x1, rsc->debug_mode);
-		usleep_range(3, 4);
-		dss_reg_w(&rsc->wrapper_io, SDE_RSCC_WRAPPER_CTRL,
-						0x0, rsc->debug_mode);
+		usleep_range(1, 2);
 	}
 
 	return rc;

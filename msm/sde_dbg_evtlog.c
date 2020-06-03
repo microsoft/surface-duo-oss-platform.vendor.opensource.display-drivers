@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"sde_dbg:[%s] " fmt, __func__
@@ -12,7 +12,6 @@
 #include <linux/uaccess.h>
 #include <linux/dma-buf.h>
 #include <linux/slab.h>
-#include <linux/sched/clock.h>
 
 #include "sde_dbg.h"
 #include "sde_trace.h"
@@ -75,12 +74,11 @@ void sde_evtlog_log(struct sde_dbg_evtlog *evtlog, const char *name, int line,
 		goto exit;
 
 	log = &evtlog->logs[evtlog->curr];
-	log->time = local_clock();
+	log->time = ktime_to_us(ktime_get());
 	log->name = name;
 	log->line = line;
 	log->data_cnt = 0;
 	log->pid = current->pid;
-	log->cpu = raw_smp_processor_id();
 
 	va_start(args, flag);
 	for (i = 0; i < SDE_EVTLOG_MAX_DATA; i++) {
@@ -166,8 +164,8 @@ ssize_t sde_evtlog_dump_to_buffer(struct sde_dbg_evtlog *evtlog,
 	}
 
 	off += snprintf((evtlog_buf + off), (evtlog_buf_size - off),
-		"=>[%-8d:%-11llu:%9llu][%-4d]:[%-4d]:", evtlog->first,
-		log->time, (log->time - prev_log->time), log->pid, log->cpu);
+		"=>[%-8d:%-11llu:%9llu][%-4d]:", evtlog->first,
+		log->time, (log->time - prev_log->time), log->pid);
 
 	for (i = 0; i < log->data_cnt; i++)
 		off += snprintf((evtlog_buf + off), (evtlog_buf_size - off),
@@ -190,7 +188,7 @@ void sde_evtlog_dump_all(struct sde_dbg_evtlog *evtlog)
 
 	while (sde_evtlog_dump_to_buffer(evtlog, buf, sizeof(buf),
 				update_last_entry, false)) {
-		pr_info("%s\n", buf);
+		pr_info("%s", buf);
 		update_last_entry = false;
 	}
 }

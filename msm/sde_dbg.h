@@ -34,7 +34,6 @@ enum sde_dbg_evtlog_flag {
 	SDE_EVTLOG_CRITICAL = BIT(0),
 	SDE_EVTLOG_IRQ = BIT(1),
 	SDE_EVTLOG_VERBOSE = BIT(2),
-	SDE_EVTLOG_EXTERNAL = BIT(3),
 	SDE_EVTLOG_ALWAYS = -1
 };
 
@@ -49,8 +48,11 @@ enum sde_dbg_dump_context {
 	SDE_DBG_DUMP_CLK_ENABLED_CTX,
 };
 
-#define SDE_EVTLOG_DEFAULT_ENABLE (SDE_EVTLOG_CRITICAL | SDE_EVTLOG_IRQ | \
-		SDE_EVTLOG_EXTERNAL)
+#ifdef CONFIG_DRM_SDE_EVTLOG_DEBUG
+#define SDE_EVTLOG_DEFAULT_ENABLE (SDE_EVTLOG_CRITICAL | SDE_EVTLOG_IRQ)
+#else
+#define SDE_EVTLOG_DEFAULT_ENABLE 0
+#endif
 
 /*
  * evtlog will print this number of entries when it is called through
@@ -64,7 +66,7 @@ enum sde_dbg_dump_context {
  * number must be greater than print entry to prevent out of bound evtlog
  * entry array access.
  */
-#define SDE_EVTLOG_ENTRY	(SDE_EVTLOG_PRINT_ENTRY * 32)
+#define SDE_EVTLOG_ENTRY	(SDE_EVTLOG_PRINT_ENTRY * 8)
 #define SDE_EVTLOG_MAX_DATA 15
 #define SDE_EVTLOG_BUF_MAX 512
 #define SDE_EVTLOG_BUF_ALIGN 32
@@ -82,7 +84,6 @@ struct sde_dbg_evtlog_log {
 	u32 data[SDE_EVTLOG_MAX_DATA];
 	u32 data_cnt;
 	int pid;
-	u8 cpu;
 };
 
 /**
@@ -125,14 +126,6 @@ extern struct sde_dbg_evtlog *sde_dbg_base_evtlog;
  */
 #define SDE_EVT32_IRQ(...) sde_evtlog_log(sde_dbg_base_evtlog, __func__, \
 		__LINE__, SDE_EVTLOG_IRQ, ##__VA_ARGS__, \
-		SDE_EVTLOG_DATA_LIMITER)
-
-/**
- * SDE_EVT32_EXTERNAL - Write a list of 32bit values for external display events
- * ... - variable arguments
- */
-#define SDE_EVT32_EXTERNAL(...) sde_evtlog_log(sde_dbg_base_evtlog, __func__, \
-		__LINE__, SDE_EVTLOG_EXTERNAL, ##__VA_ARGS__, \
 		SDE_EVTLOG_DATA_LIMITER)
 
 /**
@@ -241,16 +234,18 @@ void sde_dbg_init_dbg_buses(u32 hwversion);
 /**
  * sde_dbg_init - initialize global sde debug facilities: evtlog, regdump
  * @dev:		device handle
+ * @power_ctrl:		power control callback structure for enabling clocks
+ *			during register dumping
  * Returns:		0 or -ERROR
  */
-int sde_dbg_init(struct device *dev);
+int sde_dbg_init(struct device *dev, struct sde_dbg_power_ctrl *power_ctrl);
 
 /**
  * sde_dbg_debugfs_register - register entries at the given debugfs dir
  * @debugfs_root:	debugfs root in which to create sde debug entries
  * Returns:	0 or -ERROR
  */
-int sde_dbg_debugfs_register(struct device *dev);
+int sde_dbg_debugfs_register(struct dentry *debugfs_root);
 
 /**
  * sde_dbg_destroy - destroy the global sde debug facilities
@@ -352,17 +347,11 @@ void sde_evtlog_set_filter(struct sde_dbg_evtlog *evtlog, char *filter);
 int sde_evtlog_get_filter(struct sde_dbg_evtlog *evtlog, int index,
 		char *buf, size_t bufsz);
 
-#ifndef CONFIG_DRM_SDE_RSC
-static inline void sde_rsc_debug_dump(u32 mux_sel)
-{
-}
-#else
 /**
  * sde_rsc_debug_dump - sde rsc debug dump status
- * @mux_sel:»       select mux on rsc debug bus
+ * @mux_sel:	select mux on rsc debug bus
  */
 void sde_rsc_debug_dump(u32 mux_sel);
-#endif
 
 /**
  * dsi_ctrl_debug_dump - dump dsi debug dump status
@@ -407,12 +396,13 @@ static inline void sde_dbg_init_dbg_buses(u32 hwversion)
 {
 }
 
-static inline int sde_dbg_init(struct device *dev)
+static inline int sde_dbg_init(struct device *dev,
+		struct sde_dbg_power_ctrl *power_ctrl)
 {
 	return 0;
 }
 
-static inline int sde_dbg_debugfs_register(struct device *dev)
+static inline int sde_dbg_debugfs_register(struct dentry *debugfs_root)
 {
 	return 0;
 }
@@ -421,7 +411,7 @@ static inline void sde_dbg_destroy(void)
 {
 }
 
-static inline void sde_dbg_dump(enum sde_dbg_dump_context mode,
+static inline void sde_dbg_dump(enum sde_dbg_dump_context,
 	const char *name, ...)
 {
 }
@@ -442,7 +432,7 @@ static inline void sde_dbg_reg_register_dump_range(const char *base_name,
 {
 }
 
-static inline void sde_dbg_set_sde_top_offset(u32 blk_off)
+void sde_dbg_set_sde_top_offset(u32 blk_off)
 {
 }
 
@@ -461,7 +451,7 @@ static inline void sde_rsc_debug_dump(u32 mux_sel)
 {
 }
 
-static inline void dsi_ctrl_debug_dump(u32 *entries, u32 size)
+static inline void dsi_ctrl_debug_dump(u32 entries, u32 size)
 {
 }
 

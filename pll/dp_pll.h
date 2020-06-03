@@ -12,6 +12,7 @@ struct dp_pll_vco_clk {
 	u64		min_rate;	/* min vco rate */
 	u64		max_rate;	/* max vco rate */
 	void		*priv;
+	struct dp_pll_vco_clk *brother;	/* bond mode only */
 };
 
 static inline struct dp_pll_vco_clk *to_dp_vco_hw(struct clk_hw *hw)
@@ -28,6 +29,9 @@ int dp_pll_clock_register_10nm(struct platform_device *pdev,
 
 int dp_pll_clock_register_7nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);
+
+int edp_pll_clock_register_7nm(struct platform_device *pdev,
+				struct mdss_pll_resources *pll_res);
 #else
 static inline int dp_pll_clock_register_14nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res)
@@ -42,6 +46,12 @@ static inline int dp_pll_clock_register_10nm(struct platform_device *pdev,
 }
 
 static inline int dp_pll_clock_register_7nm(struct platform_device *pdev,
+				struct mdss_pll_resources *pll_res)
+{
+	return 0;
+}
+
+static inline int edp_pll_clock_register_7nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res)
 {
 	return 0;

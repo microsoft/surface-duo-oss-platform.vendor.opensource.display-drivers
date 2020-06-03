@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -63,6 +63,12 @@ int sde_rotator_r3_create_debugfs(struct sde_rot_mgr *mgr,
 	if (!debugfs_create_u32("solid_fill", 0644,
 			debugfs_root, &hw_data->solid_fill)) {
 		SDEROT_ERR("fail create solid_fill\n");
+		return -EINVAL;
+	}
+
+	if (!debugfs_create_u32("constant_color", 0644,
+			debugfs_root, &hw_data->constant_color)) {
+		SDEROT_ERR("fail create constant_color\n");
 		return -EINVAL;
 	}
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_ENCODER_PHYS_H__
@@ -25,7 +25,6 @@
 #define KICKOFF_TIMEOUT_MS		84
 #define KICKOFF_TIMEOUT_JIFFIES		msecs_to_jiffies(KICKOFF_TIMEOUT_MS)
 
-#define MAX_TE_PROFILE_COUNT		5
 /**
  * enum sde_enc_split_role - Role this physical encoder will play in a
  *	split-panel configuration, where one panel is master, and others slaves.
@@ -75,13 +74,13 @@ struct sde_encoder_phys;
  * @get_qsync_fps:	Returns the min fps for the qsync feature.
  */
 struct sde_encoder_virt_ops {
-	void (*handle_vblank_virt)(struct drm_encoder *parent,
+	void (*handle_vblank_virt)(struct drm_encoder *,
 			struct sde_encoder_phys *phys);
-	void (*handle_underrun_virt)(struct drm_encoder *parent,
+	void (*handle_underrun_virt)(struct drm_encoder *,
 			struct sde_encoder_phys *phys);
-	void (*handle_frame_done)(struct drm_encoder *parent,
+	void (*handle_frame_done)(struct drm_encoder *,
 			struct sde_encoder_phys *phys, u32 event);
-	void (*get_qsync_fps)(struct drm_encoder *parent,
+	void (*get_qsync_fps)(struct drm_encoder *,
 			u32 *qsync_fps);
 };
 
@@ -170,8 +169,7 @@ struct sde_encoder_phys_ops {
 
 	void (*setup_misr)(struct sde_encoder_phys *phys_encs,
 				bool enable, u32 frame_count);
-	int (*collect_misr)(struct sde_encoder_phys *phys_enc, bool nonblock,
-			u32 *misr_value);
+	u32 (*collect_misr)(struct sde_encoder_phys *phys_enc);
 	void (*hw_reset)(struct sde_encoder_phys *phys_enc);
 	void (*irq_control)(struct sde_encoder_phys *phys, bool enable);
 	void (*update_split_role)(struct sde_encoder_phys *phys_enc,
@@ -190,9 +188,9 @@ struct sde_encoder_phys_ops {
 /**
  * enum sde_intr_idx - sde encoder interrupt index
  * @INTR_IDX_VSYNC:    Vsync interrupt for video mode panel
- * @INTR_IDX_PINGPONG: Pingpong done interrupt for cmd mode panel
- * @INTR_IDX_UNDERRUN: Underrun interrupt for video and cmd mode panel
- * @INTR_IDX_RDPTR:    Readpointer done interrupt for cmd mode panel
+ * @INTR_IDX_PINGPONG: Pingpong done unterrupt for cmd mode panel
+ * @INTR_IDX_UNDERRUN: Underrun unterrupt for video and cmd mode panel
+ * @INTR_IDX_RDPTR:    Readpointer done unterrupt for cmd mode panel
  * @INTR_IDX_WB_DONE:  Writeback done interrupt for WB
  * @INTR_IDX_PP1_OVFL: Pingpong overflow interrupt on PP1 for Concurrent WB
  * @INTR_IDX_PP2_OVFL: Pingpong overflow interrupt on PP2 for Concurrent WB
@@ -201,7 +199,6 @@ struct sde_encoder_phys_ops {
  * @INTR_IDX_PP5_OVFL: Pingpong overflow interrupt on PP5 for Concurrent WB
  * @INTR_IDX_AUTOREFRESH_DONE:  Autorefresh done for cmd mode panel meaning
  *                              autorefresh has triggered a double buffer flip
- * @INTR_IDX_WRPTR:    Writepointer start interrupt for cmd mode panel
  */
 enum sde_intr_idx {
 	INTR_IDX_VSYNC,
@@ -216,7 +213,6 @@ enum sde_intr_idx {
 	INTR_IDX_PP3_OVFL,
 	INTR_IDX_PP4_OVFL,
 	INTR_IDX_PP5_OVFL,
-	INTR_IDX_WRPTR,
 	INTR_IDX_MAX,
 };
 
@@ -278,17 +274,19 @@ struct sde_encoder_irq {
  *				vs. the number of done/vblank irqs. Should hover
  *				between 0-2 Incremented when a new kickoff is
  *				scheduled. Decremented in irq handler
+ * @pending_ctlstart_cnt:	Atomic counter tracking the number of ctl start
+ *                              pending.
  * @pending_retire_fence_cnt:   Atomic counter tracking the pending retire
  *                              fences that have to be signalled.
  * @pending_kickoff_wq:		Wait queue for blocking until kickoff completes
+ * @ctlstart_timeout:		Indicates if ctl start timeout occurred
  * @irq:			IRQ tracking structures
  * @has_intf_te:		Interface TE configuration support
+ * @cont_splash_single_flush	Variable to check if single flush is enabled.
  * @cont_splash_enabled:	Variable to store continuous splash settings.
  * @in_clone_mode		Indicates if encoder is in clone mode ref@CWB
  * @vfp_cached:			cached vertical front porch to be used for
  *				programming ROT and MDP fetch start
- * @frame_trigger_mode:		frame trigger mode indication for command
- *				mode display
  */
 struct sde_encoder_phys {
 	struct drm_encoder *parent;
@@ -321,19 +319,22 @@ struct sde_encoder_phys {
 	atomic_t wbirq_refcount;
 	atomic_t vsync_cnt;
 	atomic_t underrun_cnt;
+	atomic_t pending_ctlstart_cnt;
 	atomic_t pending_kickoff_cnt;
 	atomic_t pending_retire_fence_cnt;
+	atomic_t ctlstart_timeout;
 	wait_queue_head_t pending_kickoff_wq;
 	struct sde_encoder_irq irq[INTR_IDX_MAX];
 	bool has_intf_te;
+	u32 cont_splash_single_flush;
 	bool cont_splash_enabled;
 	bool in_clone_mode;
 	int vfp_cached;
-	enum frame_trigger_mode_type frame_trigger_mode;
 };
 
 static inline int sde_encoder_phys_inc_pending(struct sde_encoder_phys *phys)
 {
+	atomic_inc_return(&phys->pending_ctlstart_cnt);
 	return atomic_inc_return(&phys->pending_kickoff_cnt);
 }
 
@@ -342,12 +343,16 @@ static inline int sde_encoder_phys_inc_pending(struct sde_encoder_phys *phys)
  *	mode specific operations
  * @base:	Baseclass physical encoder structure
  * @timing_params: Current timing parameter
+ * @rot_fetch:	Prefill for inline rotation
  * @error_count: Number of consecutive kickoffs that experienced an error
+ * @rot_fetch_valid: true if rot_fetch is updated (reset in enc enable)
  */
 struct sde_encoder_phys_vid {
 	struct sde_encoder_phys base;
 	struct intf_timing_params timing_params;
+	struct intf_prog_fetch rot_fetch;
 	int error_count;
+	bool rot_fetch_valid;
 };
 
 /**
@@ -363,40 +368,34 @@ struct sde_encoder_phys_cmd_autorefresh {
 };
 
 /**
- * struct sde_encoder_phys_cmd_te_timestamp - list node to keep track of
- *     rd_ptr/TE timestamp
- * @list: list node
- * @timestamp: TE timestamp
- */
-struct sde_encoder_phys_cmd_te_timestamp {
-	struct list_head list;
-	ktime_t timestamp;
-};
-
-/**
  * struct sde_encoder_phys_cmd - sub-class of sde_encoder_phys to handle command
  *	mode specific operations
  * @base:	Baseclass physical encoder structure
+ * @intf_idx:	Intf Block index used by this phys encoder
  * @stream_sel:	Stream selection for multi-stream interfaces
+ * @serialize_wait4pp:	serialize wait4pp feature waits for pp_done interrupt
+ *			after ctl_start instead of before next frame kickoff
  * @pp_timeout_report_cnt: number of pingpong done irq timeout errors
  * @autorefresh: autorefresh feature state
+ * @pending_rd_ptr_cnt: atomic counter to indicate if retire fence can be
+ *                      signaled at the next rd_ptr_irq
+ * @rd_ptr_timestamp: last rd_ptr_irq timestamp
  * @pending_vblank_cnt: Atomic counter tracking pending wait for VBLANK
  * @pending_vblank_wq: Wait queue for blocking until VBLANK received
- * @wr_ptr_wait_success: log wr_ptr_wait success for release fence trigger
- * @te_timestamp_list: List head for the TE timestamp list
- * @te_timestamp: Array of size MAX_TE_PROFILE_COUNT te_timestamp_list elements
+ * @ctl_start_threshold: A threshold in microseconds allows command mode
+ *   engine to trigger the retire fence without waiting for rd_ptr.
  */
 struct sde_encoder_phys_cmd {
 	struct sde_encoder_phys base;
 	int stream_sel;
+	bool serialize_wait4pp;
 	int pp_timeout_report_cnt;
 	struct sde_encoder_phys_cmd_autorefresh autorefresh;
+	atomic_t pending_rd_ptr_cnt;
+	ktime_t rd_ptr_timestamp;
 	atomic_t pending_vblank_cnt;
 	wait_queue_head_t pending_vblank_wq;
-	bool wr_ptr_wait_success;
-	struct list_head te_timestamp_list;
-	struct sde_encoder_phys_cmd_te_timestamp
-			te_timestamp[MAX_TE_PROFILE_COUNT];
+	u32 ctl_start_threshold;
 };
 
 /**
@@ -475,13 +474,11 @@ struct sde_enc_phys_init_params {
  * sde_encoder_wait_info - container for passing arguments to irq wait functions
  * @wq: wait queue structure
  * @atomic_cnt: wait until atomic_cnt equals zero
- * @count_check: wait for specific atomic_cnt instead of zero.
  * @timeout_ms: timeout value in milliseconds
  */
 struct sde_encoder_wait_info {
 	wait_queue_head_t *wq;
 	atomic_t *atomic_cnt;
-	u32 count_check;
 	s64 timeout_ms;
 };
 
@@ -523,14 +520,6 @@ void sde_encoder_phys_setup_cdm(struct sde_encoder_phys *phys_enc,
 		struct sde_rect *wb_roi);
 
 /**
- * sde_encoder_helper_get_pp_line_count - pingpong linecount helper function
- * @drm_enc:    Pointer to drm encoder structure
- * @info:       structure used to populate the pp line count information
- */
-void sde_encoder_helper_get_pp_line_count(struct drm_encoder *drm_enc,
-		struct sde_hw_pp_vsync_info *info);
-
-/**
  * sde_encoder_helper_trigger_flush - control flush helper function
  *	This helper function may be optionally specified by physical
  *	encoders if they require ctl_flush triggering.
@@ -569,21 +558,6 @@ int sde_encoder_helper_wait_event_timeout(
 		int32_t hw_id,
 		struct sde_encoder_wait_info *info);
 
-/*
- * sde_encoder_get_fps - get the allowed panel jitter in nanoseconds
- * @encoder: Pointer to drm encoder object
- */
-void sde_encoder_helper_get_jitter_bounds_ns(struct drm_encoder *encoder,
-			u64 *l_bound, u64 *u_bound);
-
-/**
- * sde_encoder_helper_switch_vsync - switch vsync source to WD or default
- * @drm_enc:     Pointer to drm encoder structure
- * @watchdog_te: switch vsync source to watchdog TE
- */
-int sde_encoder_helper_switch_vsync(struct drm_encoder *drm_enc,
-		bool watchdog_te);
-
 /**
  * sde_encoder_helper_hw_reset - issue ctl hw reset
  *	This helper function may be optionally specified by physical
@@ -604,7 +578,13 @@ static inline enum sde_3d_blend_mode sde_encoder_helper_get_3d_blend_mode(
 	topology = sde_connector_get_topology_name(phys_enc->connector);
 	if (phys_enc->split_role == ENC_ROLE_SOLO &&
 			(topology == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE ||
-			 topology == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC))
+			topology == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC))
+		return BLEND_3D_H_ROW_INT;
+
+	if (((phys_enc->split_role == ENC_ROLE_MASTER) ||
+			(phys_enc->split_role == ENC_ROLE_SLAVE)) &&
+			((topology == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE) ||
+			(topology == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC)))
 		return BLEND_3D_H_ROW_INT;
 
 	return BLEND_3D_NONE;
@@ -743,22 +723,5 @@ static inline bool sde_encoder_phys_needs_single_flush(
  */
 void sde_encoder_helper_phys_disable(struct sde_encoder_phys *phys_enc,
 		struct sde_encoder_phys_wb *wb_enc);
-
-/**
- * sde_encoder_helper_setup_misr - helper function to setup misr
- * @enable: enable/disable flag
- * @frame_count: frame count for misr
- */
-void sde_encoder_helper_setup_misr(struct sde_encoder_phys *phys_enc,
-		bool enable, u32 frame_count);
-
-/**
- * sde_encoder_helper_collect_misr - helper function to collect misr
- * @nonblock:  blocking/non-blocking flag
- * @misr_value:  pointer to misr value
- * @Return: zero on success
- */
-int sde_encoder_helper_collect_misr(struct sde_encoder_phys *phys_enc,
-		bool nonblock, u32 *misr_value);
 
 #endif /* __sde_encoder_phys_H__ */

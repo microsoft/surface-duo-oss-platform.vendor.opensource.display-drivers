@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
+#define pr_fmt(fmt) "msm-dsi-catalog:[%s] " fmt, __func__
 #include <linux/errno.h>
 
 #include "dsi_catalog.h"
@@ -79,6 +80,7 @@ static void dsi_catalog_cmn_init(struct dsi_ctrl_hw *ctrl,
 		ctrl->ops.reg_dump_to_buffer =
 			dsi_ctrl_hw_14_reg_dump_to_buffer;
 		ctrl->ops.schedule_dma_cmd = NULL;
+		ctrl->ops.get_cont_splash_status = NULL;
 		ctrl->ops.kickoff_command_non_embedded_mode = NULL;
 		ctrl->ops.config_clk_gating = NULL;
 		break;
@@ -94,6 +96,7 @@ static void dsi_catalog_cmn_init(struct dsi_ctrl_hw *ctrl,
 		ctrl->ops.clamp_enable = NULL;
 		ctrl->ops.clamp_disable = NULL;
 		ctrl->ops.schedule_dma_cmd = NULL;
+		ctrl->ops.get_cont_splash_status = NULL;
 		ctrl->ops.kickoff_command_non_embedded_mode = NULL;
 		ctrl->ops.config_clk_gating = NULL;
 		break;
@@ -102,6 +105,8 @@ static void dsi_catalog_cmn_init(struct dsi_ctrl_hw *ctrl,
 	case DSI_CTRL_VERSION_2_4:
 		ctrl->ops.phy_reset_config = dsi_ctrl_hw_22_phy_reset_config;
 		ctrl->ops.config_clk_gating = dsi_ctrl_hw_22_config_clk_gating;
+		ctrl->ops.get_cont_splash_status =
+			dsi_ctrl_hw_22_get_cont_splash_status;
 		ctrl->ops.setup_lane_map = dsi_ctrl_hw_20_setup_lane_map;
 		ctrl->ops.wait_for_lane_idle =
 			dsi_ctrl_hw_20_wait_for_lane_idle;
@@ -142,7 +147,7 @@ int dsi_catalog_ctrl_setup(struct dsi_ctrl_hw *ctrl,
 
 	if (version == DSI_CTRL_VERSION_UNKNOWN ||
 	    version >= DSI_CTRL_VERSION_MAX) {
-		DSI_ERR("Unsupported version: %d\n", version);
+		pr_err("Unsupported version: %d\n", version);
 		return -ENOTSUPP;
 	}
 
@@ -260,17 +265,7 @@ static void dsi_catalog_phy_4_0_init(struct dsi_phy_hw *phy)
 	phy->ops.phy_lane_reset = dsi_phy_hw_v4_0_lane_reset;
 	phy->ops.toggle_resync_fifo = dsi_phy_hw_v4_0_toggle_resync_fifo;
 	phy->ops.reset_clk_en_sel = dsi_phy_hw_v4_0_reset_clk_en_sel;
-
-	phy->ops.dyn_refresh_ops.dyn_refresh_config =
-		dsi_phy_hw_v4_0_dyn_refresh_config;
-	phy->ops.dyn_refresh_ops.dyn_refresh_pipe_delay =
-		dsi_phy_hw_v4_0_dyn_refresh_pipe_delay;
-	phy->ops.dyn_refresh_ops.dyn_refresh_helper =
-		dsi_phy_hw_v4_0_dyn_refresh_helper;
-	phy->ops.dyn_refresh_ops.cache_phy_timings =
-		dsi_phy_hw_v4_0_cache_phy_timings;
 	phy->ops.set_continuous_clk = dsi_phy_hw_v4_0_set_continuous_clk;
-	phy->ops.commit_phy_timing = dsi_phy_hw_v4_0_commit_phy_timing;
 }
 
 /**
@@ -291,12 +286,11 @@ int dsi_catalog_phy_setup(struct dsi_phy_hw *phy,
 
 	if (version == DSI_PHY_VERSION_UNKNOWN ||
 	    version >= DSI_PHY_VERSION_MAX) {
-		DSI_ERR("Unsupported version: %d\n", version);
+		pr_err("Unsupported version: %d\n", version);
 		return -ENOTSUPP;
 	}
 
 	phy->index = index;
-	phy->version = version;
 	set_bit(DSI_PHY_DPHY, phy->feature_map);
 
 	dsi_phy_timing_calc_init(phy, version);
@@ -309,7 +303,6 @@ int dsi_catalog_phy_setup(struct dsi_phy_hw *phy,
 		dsi_catalog_phy_3_0_init(phy);
 		break;
 	case DSI_PHY_VERSION_4_0:
-	case DSI_PHY_VERSION_4_1:
 		dsi_catalog_phy_4_0_init(phy);
 		break;
 	case DSI_PHY_VERSION_0_0_HPM:

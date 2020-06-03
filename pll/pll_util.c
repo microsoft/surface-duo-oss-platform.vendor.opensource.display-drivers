@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -14,6 +14,33 @@
 #include <linux/memblock.h>
 
 #include "pll_drv.h"
+
+int mdss_pll_util_resource_init(struct platform_device *pdev,
+					struct mdss_pll_resources *pll_res)
+{
+	int rc = 0;
+	struct dss_module_power *mp = &pll_res->mp;
+
+	rc = msm_dss_config_vreg(&pdev->dev,
+				mp->vreg_config, mp->num_vreg, 1);
+	if (rc) {
+		pr_err("Vreg config failed rc=%d\n", rc);
+		goto vreg_err;
+	}
+
+	rc = msm_dss_get_clk(&pdev->dev, mp->clk_config, mp->num_clk);
+	if (rc) {
+		pr_err("Clock get failed rc=%d\n", rc);
+		goto clk_err;
+	}
+
+	return rc;
+
+clk_err:
+	msm_dss_config_vreg(&pdev->dev, mp->vreg_config, mp->num_vreg, 0);
+vreg_err:
+	return rc;
+}
 
 /**
  * mdss_pll_get_mp_by_reg_name() -- Find power module by regulator name
@@ -47,6 +74,27 @@ struct dss_vreg *mdss_pll_get_mp_by_reg_name(struct mdss_pll_resources *pll_res
 
 error:
 	return regulator;
+}
+
+void mdss_pll_util_resource_deinit(struct platform_device *pdev,
+					 struct mdss_pll_resources *pll_res)
+{
+	struct dss_module_power *mp = &pll_res->mp;
+
+	msm_dss_put_clk(mp->clk_config, mp->num_clk);
+
+	msm_dss_config_vreg(&pdev->dev, mp->vreg_config, mp->num_vreg, 0);
+}
+
+void mdss_pll_util_resource_release(struct platform_device *pdev,
+					struct mdss_pll_resources *pll_res)
+{
+	struct dss_module_power *mp = &pll_res->mp;
+
+	devm_kfree(&pdev->dev, mp->clk_config);
+	devm_kfree(&pdev->dev, mp->vreg_config);
+	mp->num_vreg = 0;
+	mp->num_clk = 0;
 }
 
 int mdss_pll_util_resource_enable(struct mdss_pll_resources *pll_res,
@@ -102,7 +150,7 @@ static int mdss_pll_util_parse_dt_supply(struct platform_device *pdev,
 	supply_root_node = of_get_child_by_name(of_node,
 						"qcom,platform-supply-entries");
 	if (!supply_root_node) {
-		pr_debug("no supply entry present\n");
+		pr_err("no supply entry present\n");
 		return rc;
 	}
 
@@ -281,7 +329,7 @@ static void mdss_pll_free_bootmem(u32 mem_addr, u32 size)
 		free_reserved_page(pfn_to_page(pfn_idx));
 }
 
-static int mdss_pll_util_parse_dt_dfps(struct platform_device *pdev,
+static int mdss_pll_util_parse_dt_dfps_sub(struct platform_device *pdev,
 					struct mdss_pll_resources *pll_res)
 {
 	int rc = 0;
@@ -364,12 +412,9 @@ int mdss_pll_util_resource_parse(struct platform_device *pdev,
 
 	rc = mdss_pll_util_parse_dt_clock(pdev, pll_res);
 	if (rc) {
-		pr_err("clock name parsing failed rc=%d\n", rc);
+		pr_err("clock name parsing failed rc=%d", rc);
 		goto clk_err;
 	}
-
-	if (mdss_pll_util_parse_dt_dfps(pdev, pll_res))
-		pr_err("dfps not enabled!\n");
 
 	return rc;
 
@@ -378,4 +423,14 @@ clk_err:
 	mp->num_vreg = 0;
 end:
 	return rc;
+}
+
+void mdss_pll_util_parse_dt_dfps(struct platform_device *pdev,
+				struct mdss_pll_resources *pll_res)
+{
+	int rc = 0;
+
+	rc = mdss_pll_util_parse_dt_dfps_sub(pdev, pll_res);
+	if (rc)
+		pr_err("dfps not enabled!\n");
 }

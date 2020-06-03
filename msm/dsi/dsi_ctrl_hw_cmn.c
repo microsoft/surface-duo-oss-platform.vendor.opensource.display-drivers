@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
+#define pr_fmt(fmt) "dsi-hw:" fmt
 #include <linux/delay.h>
 #include <linux/iopoll.h>
 
@@ -122,7 +123,7 @@ void dsi_ctrl_hw_cmn_host_setup(struct dsi_ctrl_hw *ctrl,
 
 	if (ctrl->phy_isolation_enabled)
 		DSI_W32(ctrl, DSI_DEBUG_CTRL, BIT(28));
-	DSI_CTRL_HW_DBG(ctrl, "Host configuration complete\n");
+	pr_debug("[DSI_%d]Host configuration complete\n", ctrl->index);
 }
 
 /**
@@ -138,7 +139,7 @@ void dsi_ctrl_hw_cmn_phy_sw_reset(struct dsi_ctrl_hw *ctrl)
 	wmb(); /* ensure reset is cleared before waiting */
 	udelay(100);
 
-	DSI_CTRL_HW_DBG(ctrl, "phy sw reset done\n");
+	pr_debug("[DSI_%d] phy sw reset done\n", ctrl->index);
 }
 
 /**
@@ -180,7 +181,7 @@ void dsi_ctrl_hw_cmn_soft_reset(struct dsi_ctrl_hw *ctrl)
 	/* Re-enable DSI controller */
 	DSI_W32(ctrl, DSI_CTRL, reg_ctrl);
 	wmb(); /* make sure DSI controller is enabled again */
-	DSI_CTRL_HW_DBG(ctrl, "ctrl soft reset done\n");
+	pr_debug("[DSI_%d] ctrl soft reset done\n", ctrl->index);
 }
 
 /**
@@ -211,7 +212,8 @@ void dsi_ctrl_hw_cmn_setup_misr(struct dsi_ctrl_hw *ctrl,
 		config |= frame_count << 8;
 	}
 
-	DSI_CTRL_HW_DBG(ctrl, "MISR ctrl: 0x%x\n", config);
+	pr_debug("[DSI_%d] MISR ctrl: 0x%x\n", ctrl->index,
+			config);
 	DSI_W32(ctrl, addr, config);
 	wmb(); /* make sure MISR is configured */
 }
@@ -241,7 +243,8 @@ u32 dsi_ctrl_hw_cmn_collect_misr(struct dsi_ctrl_hw *ctrl,
 	if (enabled)
 		misr = DSI_R32(ctrl, addr);
 
-	DSI_CTRL_HW_DBG(ctrl, "MISR enabled %x value: 0x%x\n", enabled, misr);
+	pr_debug("[DSI_%d] MISR enabled %x value: 0x%x\n", ctrl->index,
+			enabled, misr);
 	return misr;
 }
 
@@ -261,7 +264,8 @@ void dsi_ctrl_hw_cmn_set_timing_db(struct dsi_ctrl_hw *ctrl,
 		DSI_W32(ctrl, DSI_DSI_TIMING_DB_MODE, 0x0);
 
 	wmb(); /* make sure timing db registers are set */
-	DSI_CTRL_HW_DBG(ctrl, "ctrl timing DB set:%d\n", enable);
+	pr_debug("[DSI_%d] ctrl timing DB set:%d\n", ctrl->index,
+				enable);
 	SDE_EVT32(ctrl->index, enable);
 }
 
@@ -300,7 +304,7 @@ void dsi_ctrl_hw_cmn_set_video_timing(struct dsi_ctrl_hw *ctrl,
 		reg |= 1;
 		DSI_W32(ctrl, DSI_VIDEO_COMPRESSION_MODE_CTRL, reg);
 	} else {
-		width = mode->h_active;
+		width = mode->h_active + mode->overlap_pixels;
 	}
 
 	hs_end = mode->h_sync_width;
@@ -337,7 +341,7 @@ void dsi_ctrl_hw_cmn_set_video_timing(struct dsi_ctrl_hw *ctrl,
 	DSI_W32(ctrl, DSI_HS_TIMER_CTRL, 0x3FD08);
 	DSI_W32(ctrl, DSI_MISR_VIDEO_CTRL, 0x10100);
 	DSI_W32(ctrl, DSI_DSI_TIMING_FLUSH, 0x1);
-	DSI_CTRL_HW_DBG(ctrl, "ctrl video parameters updated\n");
+	pr_debug("[DSI_%d] ctrl video parameters updated\n", ctrl->index);
 	SDE_EVT32(v_total, h_total);
 }
 
@@ -404,15 +408,15 @@ void dsi_ctrl_hw_cmn_setup_cmd_stream(struct dsi_ctrl_hw *ctrl,
 		reg_ctrl2 &= ~(0xFFFF << offset);
 		reg_ctrl2 |= (dsc.bytes_in_slice << offset);
 
-		DSI_CTRL_HW_DBG(ctrl, "reg_ctrl 0x%x reg_ctrl2 0x%x\n",
+		pr_debug("ctrl %d reg_ctrl 0x%x reg_ctrl2 0x%x\n", ctrl->index,
 				reg_ctrl, reg_ctrl2);
 	} else if (roi) {
 		width_final = roi->w;
 		stride_final = roi->w * 3;
 		height_final = roi->h;
 	} else {
-		width_final = mode->h_active;
-		stride_final = h_stride;
+		width_final = mode->h_active + mode->overlap_pixels;
+		stride_final = h_stride + mode->overlap_pixels * 3;
 		height_final = mode->v_active;
 	}
 
@@ -441,7 +445,7 @@ void dsi_ctrl_hw_cmn_setup_cmd_stream(struct dsi_ctrl_hw *ctrl,
 		DSI_W32(ctrl, DSI_COMMAND_MODE_NULL_INSERTION_CTRL, data);
 	}
 
-	DSI_CTRL_HW_DBG(ctrl, "stream_ctrl 0x%x stream_total 0x%x\n",
+	pr_debug("ctrl %d stream_ctrl 0x%x stream_total 0x%x\n", ctrl->index,
 			stream_ctrl, stream_total);
 }
 
@@ -462,7 +466,8 @@ void dsi_ctrl_hw_cmn_setup_avr(struct dsi_ctrl_hw *ctrl, bool enable)
 		reg &= ~BIT(29);
 
 	DSI_W32(ctrl, DSI_VIDEO_MODE_CTRL, reg);
-	DSI_CTRL_HW_DBG(ctrl, "AVR %s\n", enable ? "enabled" : "disabled");
+	pr_debug("ctrl %d AVR %s\n", ctrl->index,
+			enable ? "enabled" : "disabled");
 }
 
 /**
@@ -492,6 +497,27 @@ void dsi_ctrl_hw_cmn_video_engine_setup(struct dsi_ctrl_hw *ctrl,
 	reg |= (video_mode_format_map[common_cfg->dst_format] & 0x3) << 4;
 	DSI_W32(ctrl, DSI_VIDEO_MODE_CTRL, reg);
 
+	if (cfg->data_type.override) {
+		/* Setup sync packets Data Type */
+		reg = (cfg->data_type.vs & 0x3F) << 0;
+		reg |= (cfg->data_type.ve & 0x3F) << 8;
+		reg |= (cfg->data_type.hs & 0x3F) << 16;
+		reg |= (cfg->data_type.he & 0x3F) << 24;
+		DSI_W32(ctrl, DSI_VIDEO_MODE_SYNC_DATATYPE, reg);
+
+		/* Setup pixel stream packets Data Type */
+		reg = (cfg->data_type.rgb565 & 0x3F) << 0;
+		reg |= (cfg->data_type.rgb666_packed & 0x3F) << 8;
+		reg |= (cfg->data_type.rgb666 & 0x3F) << 16;
+		reg |= (cfg->data_type.rgb888 & 0x3F) << 24;
+		DSI_W32(ctrl, DSI_VIDEO_MODE_PIXEL_DATATYPE, reg);
+
+		/* Setup blanking packets Data Type */
+		reg = (cfg->data_type.blank_data & 0xFF) << 0;
+		reg |= (cfg->data_type.blank & 0x3F) << 8;
+		DSI_W32(ctrl, DSI_VIDEO_MODE_BLANKING_DATATYPE, reg);
+	}
+
 	reg = (common_cfg->swap_mode & 0x7) << 12;
 	reg |= (common_cfg->bit_swap_red ? BIT(0) : 0);
 	reg |= (common_cfg->bit_swap_green ? BIT(4) : 0);
@@ -500,7 +526,7 @@ void dsi_ctrl_hw_cmn_video_engine_setup(struct dsi_ctrl_hw *ctrl,
 	/* Disable Timing double buffering */
 	DSI_W32(ctrl, DSI_DSI_TIMING_DB_MODE, 0x0);
 
-	DSI_CTRL_HW_DBG(ctrl, "Video engine setup done\n");
+	pr_debug("[DSI_%d] Video engine setup done\n", ctrl->index);
 }
 
 void dsi_ctrl_hw_cmn_debug_bus(struct dsi_ctrl_hw *ctrl, u32 *entries, u32 size)
@@ -512,8 +538,8 @@ void dsi_ctrl_hw_cmn_debug_bus(struct dsi_ctrl_hw *ctrl, u32 *entries, u32 size)
 		/* make sure that debug test point is enabled */
 		wmb();
 		reg = DSI_R32(ctrl, DSI_DEBUG_BUS_STATUS);
-		DSI_CTRL_HW_INFO(ctrl, "debug bus ctrl: 0x%x status:0x%x\n",
-				entries[i], reg);
+		pr_err("[DSI_%d] debug bus ctrl: 0x%x status:0x%x\n",
+				ctrl->index, entries[i], reg);
 	}
 }
 
@@ -548,7 +574,7 @@ void dsi_ctrl_hw_cmn_cmd_engine_setup(struct dsi_ctrl_hw *ctrl,
 	reg |= (cfg->insert_dcs_command ? BIT(16) : 0);
 	DSI_W32(ctrl, DSI_COMMAND_MODE_MDP_DCS_CMD_CTRL, reg);
 
-	DSI_CTRL_HW_DBG(ctrl, "Cmd engine setup done\n");
+	pr_debug("[DSI_%d] Cmd engine setup done\n", ctrl->index);
 }
 
 /**
@@ -569,7 +595,7 @@ void dsi_ctrl_hw_cmn_video_engine_en(struct dsi_ctrl_hw *ctrl, bool on)
 
 	DSI_W32(ctrl, DSI_CTRL, reg);
 
-	DSI_CTRL_HW_DBG(ctrl, "Video engine = %d\n", on);
+	pr_debug("[DSI_%d] Video engine = %d\n", ctrl->index, on);
 }
 
 /**
@@ -599,7 +625,7 @@ void dsi_ctrl_hw_cmn_ctrl_en(struct dsi_ctrl_hw *ctrl, bool on)
 	DSI_W32(ctrl, DSI_CLK_CTRL, clk_ctrl);
 	wmb(); /* make sure clocks are restored */
 
-	DSI_CTRL_HW_DBG(ctrl, "Controller engine = %d\n", on);
+	pr_debug("[DSI_%d] Controller engine = %d\n", ctrl->index, on);
 }
 
 /**
@@ -620,7 +646,7 @@ void dsi_ctrl_hw_cmn_cmd_engine_en(struct dsi_ctrl_hw *ctrl, bool on)
 
 	DSI_W32(ctrl, DSI_CTRL, reg);
 
-	DSI_CTRL_HW_DBG(ctrl, "command engine = %d\n", on);
+	pr_debug("[DSI_%d] command engine = %d\n", ctrl->index, on);
 }
 
 /**
@@ -744,7 +770,8 @@ void dsi_ctrl_hw_cmn_kickoff_fifo_command(struct dsi_ctrl_hw *ctrl,
 	if (!(flags & DSI_CTRL_HW_CMD_WAIT_FOR_TRIGGER))
 		DSI_W32(ctrl, DSI_CMD_MODE_DMA_SW_TRIGGER, 0x1);
 
-	DSI_CTRL_HW_DBG(ctrl, "size=%d, trigger = %d\n", cmd->size,
+	pr_debug("[DSI_%d]size=%d, trigger = %d\n",
+		 ctrl->index, cmd->size,
 		 (flags & DSI_CTRL_HW_CMD_WAIT_FOR_TRIGGER) ? false : true);
 }
 
@@ -769,7 +796,7 @@ void dsi_ctrl_hw_cmn_reset_cmd_fifo(struct dsi_ctrl_hw *ctrl)
 void dsi_ctrl_hw_cmn_trigger_command_dma(struct dsi_ctrl_hw *ctrl)
 {
 	DSI_W32(ctrl, DSI_CMD_MODE_DMA_SW_TRIGGER, 0x1);
-	DSI_CTRL_HW_DBG(ctrl, "CMD DMA triggered\n");
+	pr_debug("[DSI_%d] CMD DMA triggered\n", ctrl->index);
 }
 
 /**
@@ -824,7 +851,7 @@ u32 dsi_ctrl_hw_cmn_get_cmd_read_data(struct dsi_ctrl_hw *ctrl,
 	if (ack_err)
 		read_cnt -= 4;
 	if (!read_cnt) {
-		DSI_CTRL_HW_ERR(ctrl, "Panel detected error, no data read\n");
+		pr_err("Panel detected error, no data read\n");
 		return 0;
 	}
 
@@ -858,7 +885,7 @@ u32 dsi_ctrl_hw_cmn_get_cmd_read_data(struct dsi_ctrl_hw *ctrl,
 	}
 
 	*hw_read_cnt = read_cnt;
-	DSI_CTRL_HW_DBG(ctrl, "Read %d bytes\n", rx_byte);
+	pr_debug("[DSI_%d] Read %d bytes\n", ctrl->index, rx_byte);
 	return rx_byte;
 }
 
@@ -900,8 +927,8 @@ u32 dsi_ctrl_hw_cmn_get_interrupt_status(struct dsi_ctrl_hw *ctrl)
 	if (reg & BIT(24))
 		ints |= DSI_ERROR;
 
-	DSI_CTRL_HW_DBG(ctrl, "Interrupt status = 0x%x, INT_CTRL=0x%x\n",
-		 ints, reg);
+	pr_debug("[DSI_%d] Interrupt status = 0x%x, INT_CTRL=0x%x\n",
+		 ctrl->index, ints, reg);
 	return ints;
 }
 
@@ -943,8 +970,8 @@ void dsi_ctrl_hw_cmn_clear_interrupt_status(struct dsi_ctrl_hw *ctrl, u32 ints)
 	reg &= ~BIT(24);
 	DSI_W32(ctrl, DSI_INT_CTRL, reg);
 
-	DSI_CTRL_HW_DBG(ctrl, "Clear interrupts, ints = 0x%x, INT_CTRL=0x%x\n",
-		 ints, reg);
+	pr_debug("[DSI_%d] Clear interrupts, ints = 0x%x, INT_CTRL=0x%x\n",
+		 ctrl->index, ints, reg);
 }
 
 /**
@@ -985,8 +1012,8 @@ void dsi_ctrl_hw_cmn_enable_status_interrupts(
 
 	DSI_W32(ctrl, DSI_INT_CTRL, reg);
 
-	DSI_CTRL_HW_DBG(ctrl, "Enable interrupts 0x%x, INT_CTRL=0x%x\n", ints,
-			reg);
+	pr_debug("[DSI_%d] Enable interrupts 0x%x, INT_CTRL=0x%x\n",
+		 ctrl->index, ints, reg);
 }
 
 /**
@@ -1073,10 +1100,10 @@ u64 dsi_ctrl_hw_cmn_get_error_status(struct dsi_ctrl_hw *ctrl)
 	if (dsi_status & BIT(31))
 		errors |= DSI_INTERLEAVE_OP_CONTENTION;
 
-	DSI_CTRL_HW_DBG(ctrl, "Error status = 0x%llx, phy=0x%x, fifo=0x%x\n",
-		 errors, dln0_phy_err, fifo_status);
-	DSI_CTRL_HW_DBG(ctrl, "ack=0x%x, timeout=0x%x, clk=0x%x, dsi=0x%x\n",
-		 ack_error, timeout_errors, clk_error, dsi_status);
+	pr_debug("[DSI_%d] Error status = 0x%llx, phy=0x%x, fifo=0x%x",
+		 ctrl->index, errors, dln0_phy_err, fifo_status);
+	pr_debug("[DSI_%d] ack=0x%x, timeout=0x%x, clk=0x%x, dsi=0x%x\n",
+		 ctrl->index, ack_error, timeout_errors, clk_error, dsi_status);
 	return errors;
 }
 
@@ -1162,10 +1189,10 @@ void dsi_ctrl_hw_cmn_clear_error_status(struct dsi_ctrl_hw *ctrl, u64 errors)
 	DSI_W32(ctrl, DSI_CLK_STATUS, clk_error);
 	DSI_W32(ctrl, DSI_STATUS, dsi_status);
 
-	DSI_CTRL_HW_DBG(ctrl, "clear errors = 0x%llx, phy=0x%x, fifo=0x%x\n",
-		 errors, dln0_phy_err, fifo_status);
-	DSI_CTRL_HW_DBG(ctrl, "ack=0x%x, timeout=0x%x, clk=0x%x, dsi=0x%x\n",
-		 ack_error, timeout_error, clk_error, dsi_status);
+	pr_debug("[DSI_%d] clear errors = 0x%llx, phy=0x%x, fifo=0x%x",
+		 ctrl->index, errors, dln0_phy_err, fifo_status);
+	pr_debug("[DSI_%d] ack=0x%x, timeout=0x%x, clk=0x%x, dsi=0x%x\n",
+		 ctrl->index, ack_error, timeout_error, clk_error, dsi_status);
 }
 
 /**
@@ -1249,8 +1276,8 @@ void dsi_ctrl_hw_cmn_enable_error_interrupts(struct dsi_ctrl_hw *ctrl,
 	DSI_W32(ctrl, DSI_INT_CTRL, int_ctrl);
 	DSI_W32(ctrl, DSI_ERR_INT_MASK0, int_mask0);
 
-	DSI_CTRL_HW_DBG(ctrl, "[DSI_%d] enable errors = 0x%llx, int_mask0=0x%x\n",
-		 errors, int_mask0);
+	pr_debug("[DSI_%d] enable errors = 0x%llx, int_mask0=0x%x\n",
+		 ctrl->index, errors, int_mask0);
 }
 
 /**
@@ -1285,7 +1312,7 @@ void dsi_ctrl_hw_cmn_video_test_pattern_setup(struct dsi_ctrl_hw *ctrl,
 	DSI_W32(ctrl, DSI_TPG_VIDEO_CONFIG, 0x5);
 	DSI_W32(ctrl, DSI_TEST_PATTERN_GEN_CTRL, reg);
 
-	DSI_CTRL_HW_DBG(ctrl, "Video test pattern setup done\n");
+	pr_debug("[DSI_%d] Video test pattern setup done\n", ctrl->index);
 }
 
 /**
@@ -1342,7 +1369,7 @@ void dsi_ctrl_hw_cmn_cmd_test_pattern_setup(struct dsi_ctrl_hw *ctrl,
 	}
 
 	DSI_W32(ctrl, DSI_TEST_PATTERN_GEN_CTRL, reg);
-	DSI_CTRL_HW_DBG(ctrl, "Cmd test pattern setup done\n");
+	pr_debug("[DSI_%d] Cmd test pattern setup done\n", ctrl->index);
 }
 
 /**
@@ -1362,7 +1389,7 @@ void dsi_ctrl_hw_cmn_test_pattern_enable(struct dsi_ctrl_hw *ctrl,
 
 	DSI_W32(ctrl, DSI_TEST_PATTERN_GEN_CTRL, reg);
 
-	DSI_CTRL_HW_DBG(ctrl, "Test pattern enable=%d\n", enable);
+	pr_debug("[DSI_%d] Test pattern enable=%d\n", ctrl->index, enable);
 }
 
 /**
@@ -1388,7 +1415,7 @@ void dsi_ctrl_hw_cmn_trigger_cmd_test_pattern(struct dsi_ctrl_hw *ctrl,
 		break;
 	}
 
-	DSI_CTRL_HW_DBG(ctrl, "Cmd Test pattern trigger\n");
+	pr_debug("[DSI_%d] Cmd Test pattern trigger\n", ctrl->index);
 }
 
 void dsi_ctrl_hw_dln0_phy_err(struct dsi_ctrl_hw *ctrl)
@@ -1402,7 +1429,7 @@ void dsi_ctrl_hw_dln0_phy_err(struct dsi_ctrl_hw *ctrl)
 	status = DSI_R32(ctrl, DSI_DLN0_PHY_ERR);
 	if (status & 0x011111) {
 		DSI_W32(ctrl, DSI_DLN0_PHY_ERR, status);
-		DSI_CTRL_HW_ERR(ctrl, "phy_err_status = %x\n", status);
+		pr_debug("%s: phy_err_status = %x\n", __func__, status);
 	}
 }
 
@@ -1428,7 +1455,8 @@ int dsi_ctrl_hw_cmn_ctrl_reset(struct dsi_ctrl_hw *ctrl,
 	int rc = 0;
 	u32 data;
 
-	DSI_CTRL_HW_DBG(ctrl, "DSI CTRL and PHY reset, mask=%d\n", mask);
+	pr_debug("DSI CTRL and PHY reset. ctrl-num = %d %d\n",
+			ctrl->index, mask);
 
 	data = DSI_R32(ctrl, 0x0004);
 	/* Disable DSI video mode */
@@ -1484,9 +1512,9 @@ void dsi_ctrl_hw_cmn_mask_error_intr(struct dsi_ctrl_hw *ctrl, u32 idx, bool en)
 	}
 
 	if (idx & BIT(DSI_FIFO_UNDERFLOW)) {
-		if (en)
+		if (en) {
 			reg |= (0x1b << 26);
-		else {
+		} else {
 			reg &= ~(0x1b << 26);
 			fifo_status = DSI_R32(ctrl, 0x00c);
 			DSI_W32(ctrl, 0x00c, fifo_status | underflow_clear);
@@ -1494,9 +1522,9 @@ void dsi_ctrl_hw_cmn_mask_error_intr(struct dsi_ctrl_hw *ctrl, u32 idx, bool en)
 	}
 
 	if (idx & BIT(DSI_LP_Rx_TIMEOUT)) {
-		if (en)
+		if (en) {
 			reg |= (0x7 << 23);
-		else {
+		} else {
 			reg &= ~(0x7 << 23);
 			timeout_status = DSI_R32(ctrl, 0x0c0);
 			DSI_W32(ctrl, 0x0c0, timeout_status | lp_rx_clear);
@@ -1559,7 +1587,7 @@ int dsi_ctrl_hw_cmn_wait_for_cmd_mode_mdp_idle(struct dsi_ctrl_hw *ctrl)
 	rc = readl_poll_timeout(ctrl->base + DSI_STATUS, val,
 			!(val & cmd_mode_mdp_busy_mask), sleep_us, timeout_us);
 	if (rc)
-		DSI_CTRL_HW_ERR(ctrl, "timed out waiting for idle\n");
+		pr_err("%s: timed out waiting for idle\n", __func__);
 
 	return rc;
 }
@@ -1600,7 +1628,7 @@ int dsi_ctrl_hw_cmn_wait4dynamic_refresh_done(struct dsi_ctrl_hw *ctrl)
 	rc = readl_poll_timeout(ctrl->base + DSI_INT_CTRL, reg,
 				(reg & dyn_refresh_done), sleep_us, timeout_us);
 	if (rc) {
-		DSI_CTRL_HW_ERR(ctrl, "wait4dynamic refresh timedout %d\n", rc);
+		pr_err("wait4dynamic refresh timedout %d\n", rc);
 		return rc;
 	}
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_HDCP_2X_H__
@@ -58,7 +58,6 @@ enum sde_hdcp_2x_wakeup_cmd {
  * @HDCP_TRANSPORT_CMD_STATUS_SUCCESS: successfully communicated with TrustZone
  * @HDCP_TRANSPORT_CMD_STATUS_FAILED:  failed to communicate with TrustZone
  * @HDCP_TRANSPORT_CMD_LINK_POLL:      poll the HDCP link
- * @HDCP_TRANSPORT_CMD_LINK_CHECK:     check link status in response to cp_irq
  * @HDCP_TRANSPORT_CMD_AUTHENTICATE:   start authentication
  */
 enum hdcp_transport_wakeup_cmd {
@@ -68,8 +67,7 @@ enum hdcp_transport_wakeup_cmd {
 	HDCP_TRANSPORT_CMD_STATUS_SUCCESS,
 	HDCP_TRANSPORT_CMD_STATUS_FAILED,
 	HDCP_TRANSPORT_CMD_LINK_POLL,
-	HDCP_TRANSPORT_CMD_LINK_CHECK,
-	HDCP_TRANSPORT_CMD_AUTHENTICATE,
+	HDCP_TRANSPORT_CMD_AUTHENTICATE
 };
 
 enum sde_hdcp_2x_device_type {
@@ -81,7 +79,6 @@ enum sde_hdcp_2x_device_type {
 /**
  * struct sde_hdcp_2x_lib_wakeup_data - command and data send to HDCP driver
  * @cmd:                       command type
- * @device_type                type of device in use by the HDCP driver
  * @context:                   void pointer to the HDCP driver instance
  * @buf:                       message received from the sink
  * @buf_len:                   length of message received from the sink
@@ -114,37 +111,32 @@ struct sde_hdcp_2x_msg_part {
 
 /**
  * struct sde_hdcp_2x_msg_data - HDCP 2.2 message containing one or more parts
- * @num_messages:          total number of parts in a full message
- * @messages:              array containing num_messages parts
- * @rx_status:             value of rx_status register
- * @transaction_timeout:   maximum duration to read/write message from/to sink
+ * @num_messages:   total number of parts in a full message
+ * @messages:       array containing num_messages parts
+ * @rx_status:      value of rx_status register
  */
 struct sde_hdcp_2x_msg_data {
 	uint32_t num_messages;
 	struct sde_hdcp_2x_msg_part messages[HDCP_MAX_MESSAGE_PARTS];
 	uint8_t rx_status;
-	uint32_t transaction_timeout;
 };
 
 /**
  * struct hdcp_transport_wakeup_data - data sent to display transport layer
- * @cmd:                  command type
- * @context:              void pointer to the display transport layer
- * @send_msg_buf:         buffer containing message to be sent to sink
- * @send_msg_len:         length of the message to be sent to sink
- * @timeout:              timeout value for timed transactions
- * @abort_mask:           mask used to determine whether HDCP link is valid
- * @message_data:         a pointer to the message description
- * @transaction_delay:    amount of time to delay before performing transaction
- * @transaction_timeout:  maximum duration to read/write message from/to sink
+ * @cmd:            command type
+ * @context:        void pointer to the display transport layer
+ * @send_msg_buf:   buffer containing message to be sent to sink
+ * @send_msg_len:   length of the message to be sent to sink
+ * @timeout:        timeout value for timed transactions
+ * @abort_mask:     mask used to determine whether HDCP link is valid
+ * @message_data:   a pointer to the message description
  */
 struct hdcp_transport_wakeup_data {
 	enum hdcp_transport_wakeup_cmd cmd;
 	void *context;
 	unsigned char *buf;
 	u32 buf_len;
-	u32 transaction_delay;
-	u32 transaction_timeout;
+	u32 timeout;
 	u8 abort_mask;
 	const struct sde_hdcp_2x_msg_data *message_data;
 };
@@ -220,5 +212,7 @@ struct sde_hdcp_2x_register_data {
 
 /* functions for the HDCP 2.2 state machine module */
 int sde_hdcp_2x_register(struct sde_hdcp_2x_register_data *data);
+int sde_hdcp_2x_enable(void *data, enum sde_hdcp_2x_device_type device_type);
+void sde_hdcp_2x_disable(void *data);
 void sde_hdcp_2x_deregister(void *data);
 #endif

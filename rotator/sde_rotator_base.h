@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_ROTATOR_BASE_H__
@@ -44,8 +44,8 @@
 #define SDE_MDP_HW_REV_520	SDE_MDP_REV(5, 2, 0)	/* sdmmagpie v1.0 */
 #define SDE_MDP_HW_REV_530	SDE_MDP_REV(5, 3, 0)	/* sm6150 v1.0 */
 #define SDE_MDP_HW_REV_540	SDE_MDP_REV(5, 4, 0)	/* sdmtrinket v1.0 */
-#define SDE_MDP_HW_REV_600	SDE_MDP_REV(6, 0, 0)    /* msmnile+ v1.0 */
-#define SDE_MDP_HW_REV_630	SDE_MDP_REV(6, 3, 0)	/* bengal v1.0 */
+#define SDE_MDP_HW_REV_620	SDE_MDP_REV(6, 2, 0)	/* atoll */
+#define SDE_MDP_HW_REV_320	SDE_MDP_REV(3, 2, 0)	/* sdm660 */
 
 #define SDE_MDP_VBIF_4_LEVEL_REMAPPER	4
 #define SDE_MDP_VBIF_8_LEVEL_REMAPPER	8
@@ -54,6 +54,9 @@
 #define XIN_SSPP	0
 #define XIN_WRITEBACK	1
 #define MAX_XIN		2
+
+#define MDSS_MDP_HW_REV_320	0x30020000  /* sdm660 */
+#define MDSS_MDP_HW_REV_330	0x30030000  /* sdm630 */
 
 struct sde_mult_factor {
 	uint32_t numer;
@@ -140,7 +143,6 @@ enum sde_rot_type {
  * @SDE_CAPS_PARTIALWR: partial write override
  * @SDE_CAPS_HW_TIMESTAMP: rotator has hw timestamp support
  * @SDE_CAPS_UBWC_3: universal bandwidth compression version 3
- * @SDE_CAPS_UBWC_4: universal bandwidth compression version 4
  */
 enum sde_caps_settings {
 	SDE_CAPS_R1_WB,
@@ -152,7 +154,6 @@ enum sde_caps_settings {
 	SDE_CAPS_PARTIALWR,
 	SDE_CAPS_HW_TIMESTAMP,
 	SDE_CAPS_UBWC_3,
-	SDE_CAPS_UBWC_4,
 	SDE_CAPS_MAX,
 };
 
@@ -184,7 +185,7 @@ struct reg_bus_client {
 
 struct sde_smmu_client {
 	struct device *dev;
-	struct iommu_domain *rot_domain;
+	struct dma_iommu_mapping *mmu_mapping;
 	struct sde_module_power mp;
 	struct reg_bus_client *reg_bus_clt;
 	bool domain_attached;
@@ -272,7 +273,9 @@ struct sde_rot_data_type {
 
 	int iommu_attached;
 	int iommu_ref_cnt;
-
+	int (*iommu_ctrl)(int enable);
+	int (*secure_session_ctrl)(int enable);
+	int (*wait_for_transition)(int state, int request);
 	struct sde_rot_vbif_debug_bus *nrt_vbif_dbg_bus;
 	u32 nrt_vbif_dbg_bus_size;
 	struct sde_rot_debug_bus *rot_dbg_bus;
@@ -290,6 +293,7 @@ struct sde_rot_data_type {
 	struct sde_rot_lut_cfg inline_lut_cfg[SDE_ROT_OP_MAX];
 
 	bool clk_always_on;
+	bool callback_request;
 };
 
 int sde_rotator_base_init(struct sde_rot_data_type **pmdata,

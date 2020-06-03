@@ -10,6 +10,9 @@
 #include <drm/drm_mipi_dsi.h>
 #include "msm_drv.h"
 
+#define MAX_EXT_BRIDGE_PORT_CONFIG             16
+#define MAX_DSI_CTRLS_PER_DISPLAY             2
+
 #define DSI_H_TOTAL(t) (((t)->h_active) + ((t)->h_back_porch) + \
 			((t)->h_sync_width) + ((t)->h_front_porch))
 
@@ -38,19 +41,10 @@
 		value;\
 	})
 
-
 #define DSI_DEBUG_NAME_LEN		32
 #define display_for_each_ctrl(index, display) \
 	for (index = 0; (index < (display)->ctrl_count) &&\
 			(index < MAX_DSI_CTRLS_PER_DISPLAY); index++)
-
-#define DSI_WARN(fmt, ...)	DRM_WARN("[msm-dsi-warn]: "fmt, ##__VA_ARGS__)
-#define DSI_ERR(fmt, ...)	DRM_DEV_ERROR(NULL, "[msm-dsi-error]: " fmt, \
-								##__VA_ARGS__)
-#define DSI_INFO(fmt, ...)	DRM_DEV_INFO(NULL, "[msm-dsi-info]: "fmt, \
-								##__VA_ARGS__)
-#define DSI_DEBUG(fmt, ...)	DRM_DEV_DEBUG(NULL, "[msm-dsi-debug]: "fmt, \
-								##__VA_ARGS__)
 /**
  * enum dsi_pixel_format - DSI pixel formats
  * @DSI_PIXEL_FORMAT_RGB565:
@@ -93,10 +87,7 @@ enum dsi_op_mode {
  * @DSI_MODE_FLAG_DMS: Seamless transition is dynamic mode switch
  * @DSI_MODE_FLAG_VRR: Seamless transition is DynamicFPS.
  *                     New timing values are sent from DAL.
- * @DSI_MODE_FLAG_POMS:
- *         Seamless transition is dynamic panel operating mode switch
  * @DSI_MODE_FLAG_DYN_CLK: Seamless transition is dynamic clock change
- * @DSI_MODE_FLAG_DMS_FPS: Seamless fps only transition in Dynamic Mode Switch
  */
 enum dsi_mode_flags {
 	DSI_MODE_FLAG_SEAMLESS			= BIT(0),
@@ -104,9 +95,7 @@ enum dsi_mode_flags {
 	DSI_MODE_FLAG_VBLANK_PRE_MODESET	= BIT(2),
 	DSI_MODE_FLAG_DMS			= BIT(3),
 	DSI_MODE_FLAG_VRR			= BIT(4),
-	DSI_MODE_FLAG_POMS			= BIT(5),
-	DSI_MODE_FLAG_DYN_CLK			= BIT(6),
-	DSI_MODE_FLAG_DMS_FPS                   = BIT(7),
+	DSI_MODE_FLAG_DYN_CLK			= BIT(5),
 };
 
 /**
@@ -241,22 +230,6 @@ enum dsi_dfps_type {
 };
 
 /**
- * enum dsi_dyn_clk_feature_type - Dynamic clock feature support type
- * @DSI_DYN_CLK_TYPE_LEGACY:			Constant FPS is not supported
- * @DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_HFP:	Constant FPS supported with
- *						change in hfp
- * @DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_VFP:	Constant FPS supported with
- *						change in vfp
- * @DSI_DYN_CLK_TYPE_MAX:
- */
-enum dsi_dyn_clk_feature_type {
-	DSI_DYN_CLK_TYPE_LEGACY = 0,
-	DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_HFP,
-	DSI_DYN_CLK_TYPE_CONST_FPS_ADJUST_VFP,
-	DSI_DYN_CLK_TYPE_MAX
-};
-
-/**
  * enum dsi_cmd_set_type  - DSI command set type
  * @DSI_CMD_SET_PRE_ON:	                   Panel pre on
  * @DSI_CMD_SET_ON:                        Panel on
@@ -327,15 +300,11 @@ enum dsi_cmd_set_state {
  * @PIXEL_CLK:  DSI pixel clock.
  * @BYTE_CLK:   DSI byte clock.
  * @DSI_PHY:    DSI PHY.
- * @DSI_CLK_ALL: All available DSI clocks
- * @DSI_CLK_NONE: None of the clocks should be gated
  */
 enum dsi_clk_gate_type {
 	PIXEL_CLK = 1,
 	BYTE_CLK = 2,
 	DSI_PHY = 4,
-	DSI_CLK_ALL = (PIXEL_CLK | BYTE_CLK | DSI_PHY),
-	DSI_CLK_NONE = 8,
 };
 
 /**
@@ -413,10 +382,9 @@ struct dsi_panel_cmd_set {
  * @v_sync_polarity:  Polarity of VSYNC (false is active low).
  * @refresh_rate:     Refresh rate in Hz.
  * @clk_rate_hz:      DSI bit clock rate per lane in Hz.
- * @min_dsi_clk_hz:   Min DSI bit clock to transfer in vsync time.
  * @mdp_transfer_time_us:   Specifies the mdp transfer time for command mode
  *                    panels in microseconds.
- * @dsi_transfer_time_us:   Specifies dsi transfer time for command mode.
+ * @overlap_pixels:   overlap pixels for certain panels.
  * @dsc_enabled:      DSC compression enabled.
  * @dsc:              DSC compression configuration.
  * @roi_caps:         Panel ROI capabilities.
@@ -437,9 +405,8 @@ struct dsi_mode_info {
 
 	u32 refresh_rate;
 	u64 clk_rate_hz;
-	u64 min_dsi_clk_hz;
 	u32 mdp_transfer_time_us;
-	u32 dsi_transfer_time_us;
+	u32 overlap_pixels;
 	bool dsc_enabled;
 	struct msm_display_dsc_info *dsc;
 	struct msm_roi_caps roi_caps;
@@ -461,8 +428,6 @@ struct dsi_split_link_config {
  * struct dsi_host_common_cfg - Host configuration common to video and cmd mode
  * @dst_format:          Destination pixel format.
  * @data_lanes:          Physical data lanes to be enabled.
- * @num_data_lanes:      Number of physical data lanes.
- * @bpp:                 Number of bits per pixel.
  * @en_crc_check:        Enable CRC checks.
  * @en_ecc_check:        Enable ECC checks.
  * @te_mode:             Source for TE signalling.
@@ -482,17 +447,16 @@ struct dsi_split_link_config {
  * @ignore_rx_eot:       Ignore Rx EOT packets if set to true.
  * @append_tx_eot:       Append EOT packets for forward transmissions if set to
  *                       true.
- * @ext_bridge_mode:     External bridge is connected.
+ * @ext_bridge_num:      Connected external bridge count.
+ * @ext_bridge_map:      External bridge config reg needs to match with the port
+ *                       reg config.
  * @force_hs_clk_lane:   Send continuous clock to the panel.
  * @phy_type:            DPHY/CPHY is enabled for this panel.
  * @dsi_split_link_config:  Split Link Configuration.
- * @byte_intf_clk_div:   Determines the factor for calculating byte intf clock.
  */
 struct dsi_host_common_cfg {
 	enum dsi_pixel_format dst_format;
 	enum dsi_data_lanes data_lanes;
-	u8 num_data_lanes;
-	u8 bpp;
 	bool en_crc_check;
 	bool en_ecc_check;
 	enum dsi_te_mode te_mode;
@@ -507,11 +471,39 @@ struct dsi_host_common_cfg {
 	u32 t_clk_pre;
 	bool ignore_rx_eot;
 	bool append_tx_eot;
-	bool ext_bridge_mode;
+	u32 ext_bridge_num;
+	u32 ext_bridge_map[MAX_DSI_CTRLS_PER_DISPLAY];
 	bool force_hs_clk_lane;
 	enum dsi_phy_type phy_type;
 	struct dsi_split_link_config split_link;
-	u32 byte_intf_clk_div;
+};
+
+/**
+ * struct dsi_data_type_config - Long/short Packet Data Type Configuration
+ * @override:       Override the default Data Types per DSI-2 spec.
+ * @vs:             Vertical Sync Start packet. Default 0x01.
+ * @ve:             Vertical Sync End packet. Default 0x11.
+ * @hs:             Horizontal Sync Start packet. Default 0x21.
+ * @he:             Horizontal Sync End packet. Default 0x31.
+ * @rgb565:         Packed RGB565 pixel stream packet. Default 0x0E.
+ * @rgb666_packed:  Packed RGB666 pixel stream packet. Default 0x1E.
+ * @rgb666:         Loosely packed RGB666 pixel stream packet. Default 0x2E.
+ * @rgb888:         Packed RGB888 pixel stream packet. Default 0x3E.
+ * @blank:          Blanking packet. Default 0x19.
+ * @blank_data:     Blanking packet payload data. Default 0x00.
+ */
+struct dsi_data_type_config {
+	bool override;
+	u8 vs;
+	u8 ve;
+	u8 hs;
+	u8 he;
+	u8 rgb565;
+	u8 rgb666_packed;
+	u8 rgb666;
+	u8 rgb888;
+	u8 blank;
+	u8 blank_data;
 };
 
 /**
@@ -530,6 +522,7 @@ struct dsi_host_common_cfg {
  * @vc_id:                     Virtual channel identifier.
  * @dma_sched_line:         Line number, after vactive end, at which command dma
  *			       needs to be triggered.
+ * @data_type:                 Data Type for the video mode packets.
  */
 struct dsi_video_engine_cfg {
 	bool last_line_interleave_en;
@@ -542,6 +535,7 @@ struct dsi_video_engine_cfg {
 	enum dsi_video_traffic_mode traffic_mode;
 	u32 vc_id;
 	u32 dma_sched_line;
+	struct dsi_data_type_config data_type;
 };
 
 /**
@@ -597,9 +591,8 @@ struct dsi_host_config {
  * @panel_prefill_lines:  Panel prefill lines for RSC
  * @mdp_transfer_time_us:   Specifies the mdp transfer time for command mode
  *                          panels in microseconds.
- * @dsi_transfer_time_us: Specifies the dsi transfer time for cmd panels.
  * @clk_rate_hz:          DSI bit clock per lane in hz.
- * @min_dsi_clk_hz:       Min dsi clk per lane to transfer frame in vsync time.
+ * @overlap_pixels:       overlap pixels for certain panels.
  * @topology:             Topology selected for the panel
  * @dsc:                  DSC compression info
  * @dsc_enabled:          DSC compression enabled
@@ -615,9 +608,8 @@ struct dsi_display_mode_priv_info {
 	u32 panel_jitter_denom;
 	u32 panel_prefill_lines;
 	u32 mdp_transfer_time_us;
-	u32 dsi_transfer_time_us;
 	u64 clk_rate_hz;
-	u64 min_dsi_clk_hz;
+	u32 overlap_pixels;
 
 	struct msm_display_topology topology;
 	struct msm_display_dsc_info dsc;
@@ -630,14 +622,12 @@ struct dsi_display_mode_priv_info {
  * @timing:         Timing parameters for the panel.
  * @pixel_clk_khz:  Pixel clock in Khz.
  * @dsi_mode_flags: Flags to signal other drm components via private flags
- * @panel_mode:      Panel mode
  * @priv_info:      Mode private info
  */
 struct dsi_display_mode {
 	struct dsi_mode_info timing;
 	u32 pixel_clk_khz;
 	u32 dsi_mode_flags;
-	enum dsi_op_mode panel_mode;
 	struct dsi_display_mode_priv_info *priv_info;
 };
 

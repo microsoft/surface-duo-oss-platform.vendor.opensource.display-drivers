@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -46,6 +46,13 @@ static struct regmap_bus dsi_mux_regmap_bus = {
 	.reg_read = dsi_mux_get_parent_14nm,
 };
 
+static const char * const dsi_vco_clk_parent_names[] = {
+#ifdef CONFIG_FB_MSM_MDSS
+	"xo_board"
+#else
+	"bi_tcxo"
+#endif
+};
 /* Op structures */
 static const struct clk_ops clk_ops_dsi_vco = {
 	.recalc_rate = pll_vco_recalc_rate_14nm,
@@ -70,8 +77,9 @@ static struct dsi_pll_vco_clk dsi0pll_vco_clk = {
 	.pll_enable_seqs[0] = dsi_pll_enable_seq_14nm,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi0pll_vco_clk_14nm",
-			.parent_names = (const char *[]){ "bi_tcxo" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_dsi_vco,
 		},
 };
@@ -82,8 +90,9 @@ static struct dsi_pll_vco_clk dsi0pll_shadow_vco_clk = {
 	.max_rate = 2600000000u,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi0pll_shadow_vco_clk_14nm",
-			.parent_names = (const char *[]){ "bi_tcxo" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_shadow_dsi_vco,
 		},
 };
@@ -96,8 +105,9 @@ static struct dsi_pll_vco_clk dsi1pll_vco_clk = {
 	.pll_enable_seqs[0] = dsi_pll_enable_seq_14nm,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi1pll_vco_clk_14nm",
-			.parent_names = (const char *[]){ "bi_tcxo" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_dsi_vco,
 		},
 };
@@ -110,8 +120,9 @@ static struct dsi_pll_vco_clk dsi1pll_shadow_vco_clk = {
 	.pll_enable_seqs[0] = dsi_pll_enable_seq_14nm,
 	.hw.init = &(struct clk_init_data){
 			.name = "dsi1pll_shadow_vco_clk_14nm",
-			.parent_names = (const char *[]){ "bi_tcxo" },
+			.parent_names = dsi_vco_clk_parent_names,
 			.num_parents = 1,
+			.flags = CLK_GET_RATE_NOCACHE,
 			.ops = &clk_ops_shadow_dsi_vco,
 		},
 };
@@ -330,7 +341,7 @@ static struct clk_regmap_mux dsi1pll_pixel_clk_mux = {
 
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
-			.name = "dsi1pll_pixel_clk_mux",
+			.name = "dsi1_phy_pll_out_dsiclk",
 			.parent_names =
 				(const char *[]){ "dsi1pll_pixel_clk_src",
 					"dsi1pll_shadow_pixel_clk_src"},
@@ -422,7 +433,7 @@ static struct clk_regmap_mux dsi1pll_byte_clk_mux = {
 
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
-			.name = "dsi1pll_byte_clk_mux",
+			.name = "dsi1_phy_pll_out_byteclk",
 			.parent_names =
 				(const char *[]){"dsi1pll_byte_clk_src",
 					"dsi1pll_shadow_byte_clk_src"},
@@ -473,6 +484,16 @@ int dsi_pll_clock_register_14nm(struct platform_device *pdev,
 	struct regmap *regmap;
 	int num_clks = ARRAY_SIZE(mdss_dsi_pllcc_14nm);
 
+	if (!pdev || !pdev->dev.of_node) {
+		pr_err("Invalid input parameters\n");
+		return -EINVAL;
+	}
+
+	if (!pll_res || !pll_res->pll_base) {
+		pr_err("Invalid PLL resources\n");
+		return -EPROBE_DEFER;
+	}
+
 	if (pll_res->index >= DSI_PLL_NUM) {
 		pr_err("pll ndx=%d is NOT supported\n", pll_res->index);
 		return -EINVAL;
@@ -493,14 +514,17 @@ int dsi_pll_clock_register_14nm(struct platform_device *pdev,
 			pll_res->ssc_ppm = ssc_ppm_default;
 	}
 
-	clk_data = devm_kzalloc(&pdev->dev, sizeof(*clk_data), GFP_KERNEL);
+	clk_data = devm_kzalloc(&pdev->dev, sizeof(struct clk_onecell_data),
+					GFP_KERNEL);
 	if (!clk_data)
 		return -ENOMEM;
 
-	clk_data->clks = devm_kcalloc(&pdev->dev, num_clks,
-				sizeof(struct clk *), GFP_KERNEL);
-	if (!clk_data->clks)
+	clk_data->clks = devm_kzalloc(&pdev->dev, (num_clks *
+				sizeof(struct clk *)), GFP_KERNEL);
+	if (!clk_data->clks) {
+		devm_kfree(&pdev->dev, clk_data);
 		return -ENOMEM;
+	}
 
 	clk_data->clk_num = num_clks;
 
@@ -592,5 +616,7 @@ int dsi_pll_clock_register_14nm(struct platform_device *pdev,
 	}
 
 clk_reg_fail:
+	devm_kfree(&pdev->dev, clk_data->clks);
+	devm_kfree(&pdev->dev, clk_data);
 	return rc;
 }

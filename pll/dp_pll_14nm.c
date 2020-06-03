@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 /*
@@ -403,6 +403,11 @@ int dp_config_vco_rate_14nm(struct dp_pll_vco_clk *vco,
 		QSERDES_COM_CORE_CLK_EN, 0x0f);
 	wmb(); /* make sure write happens */
 
+	MDSS_PLL_REG_W(dp_res->phy_base,
+		QSERDES_TX0_OFFSET + TXn_LANE_MODE_1, pdb->lane_mode_1);
+	MDSS_PLL_REG_W(dp_res->phy_base,
+		QSERDES_TX1_OFFSET + TXn_LANE_MODE_1, pdb->lane_mode_1);
+
 	if (pdb->orientation == ORIENTATION_CC2)
 		MDSS_PLL_REG_W(dp_res->phy_base, DP_PHY_MODE, 0xc9);
 	else
@@ -592,6 +597,7 @@ lock_err:
 
 static int dp_pll_disable_14nm(struct clk_hw *hw)
 {
+	int rc = 0;
 	struct dp_pll_vco_clk *vco = to_dp_vco_hw(hw);
 	struct mdss_pll_resources *dp_res = vco->priv;
 
@@ -603,7 +609,7 @@ static int dp_pll_disable_14nm(struct clk_hw *hw)
 	 */
 	wmb();
 
-	return 0;
+	return rc;
 }
 
 
@@ -769,15 +775,27 @@ int dp_pll_clock_register_14nm(struct platform_device *pdev,
 	struct regmap *regmap;
 	int num_clks = ARRAY_SIZE(mdss_dp_pllcc_14nm);
 
-	clk_data = devm_kzalloc(&pdev->dev, sizeof(*clk_data), GFP_KERNEL);
+	if (!pdev || !pdev->dev.of_node) {
+		pr_err("Invalid input parameters\n");
+		return -EINVAL;
+	}
+
+	if (!pll_res || !pll_res->pll_base || !pll_res->phy_base) {
+		pr_err("Invalid input parameters\n");
+		return -EINVAL;
+	}
+
+	clk_data = devm_kzalloc(&pdev->dev, sizeof(struct clk_onecell_data),
+					GFP_KERNEL);
 	if (!clk_data)
 		return -ENOMEM;
 
-	clk_data->clks = devm_kcalloc(&pdev->dev, num_clks,
-				sizeof(struct clk *), GFP_KERNEL);
-	if (!clk_data->clks)
+	clk_data->clks = devm_kzalloc(&pdev->dev, (num_clks *
+				sizeof(struct clk *)), GFP_KERNEL);
+	if (!clk_data->clks) {
+		devm_kfree(&pdev->dev, clk_data);
 		return -ENOMEM;
-
+	}
 	clk_data->clk_num = num_clks;
 
 	pll_res->priv = &dp_pdb;
@@ -816,5 +834,7 @@ int dp_pll_clock_register_14nm(struct platform_device *pdev,
 	}
 	return 0;
 clk_reg_fail:
+	devm_kfree(&pdev->dev, clk_data->clks);
+	devm_kfree(&pdev->dev, clk_data);
 	return rc;
 }

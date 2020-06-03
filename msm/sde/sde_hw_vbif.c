@@ -178,7 +178,7 @@ static bool sde_hw_get_halt_ctrl(struct sde_hw_vbif *vbif,
 
 	reg_val = SDE_REG_READ(c, VBIF_XIN_HALT_CTRL1);
 
-	return ((reg_val >> 16) & BIT(xin_id)) ? true : false;
+	return (reg_val & BIT(xin_id)) ? true : false;
 }
 
 static void sde_hw_set_qos_remap(struct sde_hw_vbif *vbif,
@@ -237,7 +237,7 @@ static void _setup_vbif_ops(const struct sde_mdss_cfg *m,
 	if (IS_SM8150_TARGET(m->hwversion) || IS_SM6150_TARGET(m->hwversion) ||
 			IS_SDMMAGPIE_TARGET(m->hwversion) ||
 			IS_SDMTRINKET_TARGET(m->hwversion) ||
-			IS_SDE_MAJOR_SAME(m->hwversion, SDE_HW_VER_600))
+			IS_ATOLL_TARGET(m->hwversion))
 		ops->set_mem_type = sde_hw_set_mem_type_v1;
 	else
 		ops->set_mem_type = sde_hw_set_mem_type;

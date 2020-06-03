@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
+#define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
 #include <linux/interrupt.h>
 #include <linux/delay.h>
@@ -13,7 +14,6 @@
 #include <linux/sde_io_util.h>
 #include <linux/of_gpio.h>
 #include "dp_gpio_hpd.h"
-#include "dp_debug.h"
 
 struct dp_gpio_hpd_private {
 	struct device *dev;
@@ -30,7 +30,7 @@ static int dp_gpio_hpd_connect(struct dp_gpio_hpd_private *gpio_hpd, bool hpd)
 	int rc = 0;
 
 	if (!gpio_hpd) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		rc = -EINVAL;
 		goto error;
 	}
@@ -42,7 +42,7 @@ static int dp_gpio_hpd_connect(struct dp_gpio_hpd_private *gpio_hpd, bool hpd)
 	if (!gpio_hpd->cb ||
 		!gpio_hpd->cb->configure ||
 		!gpio_hpd->cb->disconnect) {
-		DP_ERR("invalid cb\n");
+		pr_err("invalid cb\n");
 		rc = -EINVAL;
 		goto error;
 	}
@@ -61,7 +61,7 @@ static int dp_gpio_hpd_attention(struct dp_gpio_hpd_private *gpio_hpd)
 	int rc = 0;
 
 	if (!gpio_hpd) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		rc = -EINVAL;
 		goto error;
 	}
@@ -143,7 +143,7 @@ static void dp_gpio_hpd_work(struct work_struct *work)
 	}
 
 	if (ret < 0)
-		DP_ERR("Cannot claim IRQ dp-gpio-intp\n");
+		pr_err("Cannot claim IRQ dp-gpio-intp\n");
 }
 
 static int dp_gpio_hpd_simulate_connect(struct dp_hpd *dp_hpd, bool hpd)
@@ -152,7 +152,7 @@ static int dp_gpio_hpd_simulate_connect(struct dp_hpd *dp_hpd, bool hpd)
 	struct dp_gpio_hpd_private *gpio_hpd;
 
 	if (!dp_hpd) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		rc = -EINVAL;
 		goto error;
 	}
@@ -170,7 +170,7 @@ static int dp_gpio_hpd_simulate_attention(struct dp_hpd *dp_hpd, int vdo)
 	struct dp_gpio_hpd_private *gpio_hpd;
 
 	if (!dp_hpd) {
-		DP_ERR("invalid input\n");
+		pr_err("invalid input\n");
 		rc = -EINVAL;
 		goto error;
 	}
@@ -201,7 +201,7 @@ int dp_gpio_hpd_register(struct dp_hpd *dp_hpd)
 		edge | IRQF_ONESHOT,
 		"dp-gpio-intp", gpio_hpd);
 	if (rc) {
-		DP_ERR("Failed to request INTP threaded IRQ: %d\n", rc);
+		pr_err("Failed to request INTP threaded IRQ: %d\n", rc);
 		return rc;
 	}
 
@@ -220,7 +220,7 @@ struct dp_hpd *dp_gpio_hpd_get(struct device *dev,
 	struct dp_pinctrl pinctrl = {0};
 
 	if (!dev || !cb) {
-		DP_ERR("invalid device\n");
+		pr_err("invalid device\n");
 		rc = -EINVAL;
 		goto error;
 	}
@@ -239,7 +239,7 @@ struct dp_hpd *dp_gpio_hpd_get(struct device *dev,
 			rc = pinctrl_select_state(pinctrl.pin,
 					pinctrl.state_hpd_active);
 			if (rc) {
-				DP_ERR("failed to set hpd active state\n");
+				pr_err("failed to set hpd active state\n");
 				goto gpio_error;
 			}
 		}
@@ -248,7 +248,7 @@ struct dp_hpd *dp_gpio_hpd_get(struct device *dev,
 	gpio_hpd->gpio_cfg.gpio = of_get_named_gpio(dev->of_node,
 		hpd_gpio_name, 0);
 	if (!gpio_is_valid(gpio_hpd->gpio_cfg.gpio)) {
-		DP_ERR("%s gpio not specified\n", hpd_gpio_name);
+		pr_err("%s gpio not specified\n", hpd_gpio_name);
 		rc = -EINVAL;
 		goto gpio_error;
 	}
@@ -260,7 +260,7 @@ struct dp_hpd *dp_gpio_hpd_get(struct device *dev,
 	rc = gpio_request(gpio_hpd->gpio_cfg.gpio,
 		gpio_hpd->gpio_cfg.gpio_name);
 	if (rc) {
-		DP_ERR("%s: failed to request gpio\n", hpd_gpio_name);
+		pr_err("%s: failed to request gpio\n", hpd_gpio_name);
 		goto gpio_error;
 	}
 	gpio_direction_input(gpio_hpd->gpio_cfg.gpio);

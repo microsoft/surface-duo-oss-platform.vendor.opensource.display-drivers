@@ -20,16 +20,15 @@
 #define _SDE_CRTC_H_
 
 #include <linux/kthread.h>
-#include <linux/of_fdt.h>
 #include <drm/drm_crtc.h>
 #include "msm_prop.h"
 #include "sde_fence.h"
 #include "sde_kms.h"
 #include "sde_core_perf.h"
+#include "sde_hw_blk.h"
 #include "sde_hw_ds.h"
 
 #define SDE_CRTC_NAME_SIZE	12
-#define RGB_NUM_COMPONENTS	3
 
 /* define the maximum number of in-flight frame events */
 /* Expand it to 2x for handling atleast 2 connectors safely */
@@ -106,8 +105,8 @@ struct sde_crtc_mixer {
  * @connector:  pointer to drm connector which is source of frame event
  */
 struct sde_crtc_frame_event_cb_data {
-	struct drm_crtc *crtc;
-	struct drm_connector *connector;
+	 struct drm_crtc *crtc;
+	 struct drm_connector *connector;
 };
 
 /**
@@ -164,38 +163,6 @@ struct sde_crtc_fps_info {
 	u32 next_time_index;
 };
 
-/**
- * struct sde_ltm_buffer - defines LTM buffer structure.
- * @fb: frm framebuffer for the buffer
- * @gem: drm gem handle for the buffer
- * @asapce : pointer to address space
- * @drm_fb_id: framebuffer id associated with this buffer
- * @offset: offset for alignment
- * @iova: device address
- * @kva: kernel virtual address
- * @node: list node for LTM buffer list;
- */
-struct sde_ltm_buffer {
-	struct drm_framebuffer *fb;
-	struct drm_gem_object *gem;
-	struct msm_gem_address_space *aspace;
-	u32 drm_fb_id;
-	u32 offset;
-	u64 iova;
-	void *kva;
-	struct list_head node;
-};
-
-/**
- * struct sde_crtc_misr_info - structure for misr information
- * @misr_enable : enable/disable flag
- * @misr_frame_count : Number of frames for misr calculation.
- */
-struct sde_crtc_misr_info {
-	bool misr_enable;
-	u32 misr_frame_count;
-};
-
 /*
  * Maximum number of free event structures to cache
  */
@@ -226,6 +193,8 @@ struct sde_crtc_misr_info {
  * @vblank_last_cb_time  : ktime at last vblank notification
  * @sysfs_dev  : sysfs device node for crtc
  * @vsync_event_sf : vsync event notifier sysfs device
+ * @vblank_requested : whether the user has requested vblank events
+ * @suspend         : whether or not a suspend operation is in progress
  * @enabled       : whether the SDE CRTC is currently enabled. updated in the
  *                  commit-thread, not state-swap time which is earlier, so
  *                  safe to make decisions on during VBLANK on/off work
@@ -233,8 +202,8 @@ struct sde_crtc_misr_info {
  * @feature_list  : list of color processing features supported on a crtc
  * @active_list   : list of color processing features are active
  * @dirty_list    : list of color processing features are dirty
- * @ad_dirty      : list containing ad properties that are dirty
- * @ad_active     : list containing ad properties that are active
+ * @ad_dirty: list containing ad properties that are dirty
+ * @ad_active: list containing ad properties that are active
  * @crtc_lock     : crtc lock around create, destroy and access.
  * @frame_pending : Whether or not an update is pending
  * @frame_events  : static allocation of in-flight frame events
@@ -245,36 +214,32 @@ struct sde_crtc_misr_info {
  * @event_cache   : Local cache of event worker structures
  * @event_free_list : List of available event structures
  * @event_lock    : Spinlock around event handling code
- * @misr_enable_sui : boolean entry indicates misr enable/disable status
- *                    for secure cases.
- * @misr_enable_debugfs : boolean entry indicates misr enable/disable status
- *                        from debugfs.
+ * @misr_enable   : boolean entry indicates misr enable/disable status.
  * @misr_frame_count  : misr frame count provided by client
  * @misr_data     : store misr data before turning off the clocks.
+ * @sbuf_op_mode_old : inline rotator op mode for previous commit cycle
+ * @sbuf_rot_id   : inline rotator block id for attached planes
+ * @sbuf_rot_id_old: inline rotator id for previous commit
+ * @sbuf_rot_id_delta: inline rotator id for current delta state
  * @idle_notify_work: delayed worker to notify idle timeout to user space
  * @power_event   : registered power event handle
  * @cur_perf      : current performance committed to clock/bandwidth driver
+ * @rp_lock       : serialization lock for resource pool
+ * @rp_head       : list of active resource pool
  * @plane_mask_old: keeps track of the planes used in the previous commit
- * @frame_trigger_mode: frame trigger mode
- * @ltm_buffer_cnt  : number of ltm buffers
- * @ltm_buffers     : struct stores ltm buffer related data
- * @ltm_buf_free    : list of LTM buffers that are available
- * @ltm_buf_busy    : list of LTM buffers that are been used by HW
- * @ltm_hist_en     : flag to indicate whether LTM hist is enabled or not
- * @ltm_buffer_lock : muttx to protect ltm_buffers allcation and free
- * @ltm_lock        : Spinlock to protect ltm buffer_cnt, hist_en and ltm lists
- * @needs_hw_reset  : Initiate a hw ctl reset
- * @comp_ratio      : Compression ratio
  */
 struct sde_crtc {
 	struct drm_crtc base;
 	char name[SDE_CRTC_NAME_SIZE];
 
-	/* HW Resources reserved for the crtc */
+	/*
+	 * HW Resources reserved for the crtc, they can only
+	 * be accessed at commit stage.
+	 */
 	u32 num_ctls;
 	u32 num_mixers;
 	bool mixers_swapped;
-	struct sde_crtc_mixer mixers[CRTC_DUAL_MIXERS];
+	struct sde_crtc_mixer mixers[MAX_MIXERS_PER_CRTC];
 
 	struct drm_pending_vblank_event *event;
 	u32 vsync_count;
@@ -286,7 +251,7 @@ struct sde_crtc {
 	/* output fence support */
 	struct sde_fence_context *output_fence;
 
-	struct sde_hw_stage_cfg stage_cfg;
+	struct sde_hw_stage_cfg stage_cfg[MAX_LAYOUTS_PER_CRTC];
 	struct dentry *debugfs_root;
 	void *priv_handle;
 
@@ -297,6 +262,8 @@ struct sde_crtc {
 	struct sde_crtc_fps_info fps_info;
 	struct device *sysfs_dev;
 	struct kernfs_node *vsync_event_sf;
+	bool vblank_requested;
+	bool suspend;
 	bool enabled;
 
 	bool ds_reconfig;
@@ -319,9 +286,14 @@ struct sde_crtc {
 	struct sde_crtc_event event_cache[SDE_CRTC_MAX_EVENT_COUNT];
 	struct list_head event_free_list;
 	spinlock_t event_lock;
-	bool misr_enable_sui;
-	bool misr_enable_debugfs;
+	bool misr_enable;
 	u32 misr_frame_count;
+	u32 misr_data[CRTC_DUAL_MIXERS];
+
+	u32 sbuf_op_mode_old;
+	u32 sbuf_rot_id;
+	u32 sbuf_rot_id_old;
+	u32 sbuf_rot_id_delta;
 	struct kthread_delayed_work idle_notify_work;
 
 	struct sde_power_event *power_event;
@@ -329,26 +301,70 @@ struct sde_crtc {
 	struct sde_core_perf_params cur_perf;
 	struct sde_core_perf_params new_perf;
 
+	struct mutex rp_lock;
+	struct list_head rp_head;
+
 	u32 plane_mask_old;
 
 	/* blob for histogram data */
 	struct drm_property_blob *hist_blob;
-	enum frame_trigger_mode_type frame_trigger_mode;
-
-	u32 ltm_buffer_cnt;
-	struct sde_ltm_buffer *ltm_buffers[LTM_BUFFER_SIZE];
-	struct list_head ltm_buf_free;
-	struct list_head ltm_buf_busy;
-	bool ltm_hist_en;
-	struct drm_msm_ltm_cfg_param ltm_cfg;
-	struct mutex ltm_buffer_lock;
-	spinlock_t ltm_lock;
-	bool needs_hw_reset;
-
-	int comp_ratio;
 };
 
 #define to_sde_crtc(x) container_of(x, struct sde_crtc, base)
+
+/**
+ * struct sde_crtc_res_ops - common operations for crtc resources
+ * @get: get given resource
+ * @put: put given resource
+ */
+struct sde_crtc_res_ops {
+	void *(*get)(void *val, u32 type, u64 tag);
+	void (*put)(void *val);
+};
+
+/* crtc resource type (0x0-0xffff reserved for hw block type */
+#define SDE_CRTC_RES_ROT_PLANE		0x10000
+#define SDE_CRTC_RES_ROT_IN_FB		0x10001
+
+#define SDE_CRTC_RES_FLAG_FREE		BIT(0)
+
+/**
+ * struct sde_crtc_res - definition of crtc resources
+ * @list: list of crtc resource
+ * @type: crtc resource type
+ * @tag: unique identifier per type
+ * @refcount: reference/usage count
+ * @ops: callback operations
+ * @val: resource handle associated with type/tag
+ * @flags: customization flags
+ */
+struct sde_crtc_res {
+	struct list_head list;
+	u32 type;
+	u64 tag;
+	atomic_t refcount;
+	struct sde_crtc_res_ops ops;
+	void *val;
+	u32 flags;
+};
+
+/**
+ * sde_crtc_respool - crtc resource pool
+ * @rp_lock: pointer to serialization lock
+ * @rp_head: pointer to head of active resource pools of this crtc
+ * @rp_list: list of crtc resource pool
+ * @sequence_id: sequence identifier, incremented per state duplication
+ * @res_list: list of resource managed by this resource pool
+ * @ops: resource operations for parent resource pool
+ */
+struct sde_crtc_respool {
+	struct mutex *rp_lock;
+	struct list_head *rp_head;
+	struct list_head rp_list;
+	u32 sequence_id;
+	struct list_head res_list;
+	struct sde_crtc_res_ops ops;
+};
 
 /**
  * struct sde_crtc_state - sde container for atomic crtc state
@@ -359,6 +375,8 @@ struct sde_crtc {
  * @is_ppsplit    : Whether current topology requires PPSplit special handling
  * @bw_control    : true if bw/clk controlled by core bw/clk properties
  * @bw_split_vote : true if bw controlled by llcc/dram bw properties
+ * @topology_name : Current topology name
+ * @num_mixers    : Number of mixers in current topology
  * @crtc_roi      : Current CRTC ROI. Possibly sub-rectangle of mode.
  *                  Origin top left of CRTC.
  * @lm_bounds     : LM boundaries based on current mode full resolution, no ROI.
@@ -377,6 +395,14 @@ struct sde_crtc {
  * @ds_cfg: Destination scaler config
  * @scl3_lut_cfg: QSEED3 lut config
  * @new_perf: new performance state being requested
+ * @sbuf_cfg: stream buffer configuration
+ * @sbuf_prefill_line: number of line for inline rotator prefetch
+ * @sbuf_clk_rate : previous and current user specified inline rotator clock
+ * @sbuf_clk_shifted : whether or not sbuf_clk_rate has been shifted as part
+ *	of crtc atomic check
+ * @padding_height: panel height after line padding
+ * @padding_active: active lines in panel stacking pattern
+ * @padding_dummy: dummy lines in panel stacking pattern
  */
 struct sde_crtc_state {
 	struct drm_crtc_state base;
@@ -388,10 +414,12 @@ struct sde_crtc_state {
 	bool bw_control;
 	bool bw_split_vote;
 
+	enum sde_rm_topology_name topology_name;
+	u32 num_mixers;
 	bool is_ppsplit;
 	struct sde_rect crtc_roi;
-	struct sde_rect lm_bounds[CRTC_DUAL_MIXERS];
-	struct sde_rect lm_roi[CRTC_DUAL_MIXERS];
+	struct sde_rect lm_bounds[MAX_MIXERS_PER_CRTC];
+	struct sde_rect lm_roi[MAX_MIXERS_PER_CRTC];
 	struct msm_roi_list user_roi_list;
 
 	struct msm_property_state property_state;
@@ -406,6 +434,16 @@ struct sde_crtc_state {
 	struct sde_hw_scaler3_lut_cfg scl3_lut_cfg;
 
 	struct sde_core_perf_params new_perf;
+	struct sde_ctl_sbuf_cfg sbuf_cfg;
+	u32 sbuf_prefill_line;
+	u64 sbuf_clk_rate[2];
+	bool sbuf_clk_shifted;
+
+	u32 padding_height;
+	u32 padding_active;
+	u32 padding_dummy;
+
+	struct sde_crtc_respool rp;
 };
 
 enum sde_crtc_irq_state {
@@ -451,19 +489,18 @@ struct sde_crtc_irq_info {
  * Mixer width will be same as panel width(/2 for split)
  * unless destination scaler feature is enabled
  */
-static inline int sde_crtc_get_mixer_width(struct sde_crtc *sde_crtc,
-	struct sde_crtc_state *cstate, struct drm_display_mode *mode)
+static inline int sde_crtc_get_mixer_width(struct sde_crtc_state *cstate,
+		struct drm_display_mode *mode)
 {
 	u32 mixer_width;
 
-	if (!sde_crtc || !cstate || !mode)
+	if (!cstate || !mode)
 		return 0;
 
 	if (cstate->num_ds_enabled)
 		mixer_width = cstate->ds_cfg[0].lm_width;
 	else
-		mixer_width = (sde_crtc->num_mixers == CRTC_DUAL_MIXERS ?
-			mode->hdisplay / CRTC_DUAL_MIXERS : mode->hdisplay);
+		mixer_width = mode->hdisplay / cstate->num_mixers;
 
 	return mixer_width;
 }
@@ -473,14 +510,27 @@ static inline int sde_crtc_get_mixer_width(struct sde_crtc *sde_crtc,
  * Mixer height will be same as panel height unless
  * destination scaler feature is enabled
  */
-static inline int sde_crtc_get_mixer_height(struct sde_crtc *sde_crtc,
-		struct sde_crtc_state *cstate, struct drm_display_mode *mode)
+static inline int sde_crtc_get_mixer_height(struct sde_crtc_state *cstate,
+		struct drm_display_mode *mode)
 {
-	if (!sde_crtc || !cstate || !mode)
+	if (!cstate || !mode)
 		return 0;
 
 	return (cstate->num_ds_enabled ?
 			cstate->ds_cfg[0].lm_height : mode->vdisplay);
+}
+
+/**
+ * sde_crtc_get_rotator_op_mode - get the rotator op mode from the crtc state
+ * @crtc: Pointer to drm crtc object
+ */
+static inline enum sde_ctl_rot_op_mode sde_crtc_get_rotator_op_mode(
+		struct drm_crtc *crtc)
+{
+	if (!crtc || !crtc->state)
+		return SDE_CTL_ROT_OP_MODE_OFFLINE;
+
+	return to_sde_crtc_state(crtc->state)->sbuf_cfg.rot_op_mode;
 }
 
 /**
@@ -496,46 +546,6 @@ static inline int sde_crtc_frame_pending(struct drm_crtc *crtc)
 
 	sde_crtc = to_sde_crtc(crtc);
 	return atomic_read(&sde_crtc->frame_pending);
-}
-
-/**
- * sde_crtc_set_needs_hw_reset - set hw reset flag, to handle reset during
- *                               commit kickoff
- * @crtc: Pointer to DRM crtc instance
- */
-static inline void sde_crtc_set_needs_hw_reset(struct drm_crtc *crtc)
-{
-	struct sde_crtc *sde_crtc;
-
-	if (!crtc)
-		return;
-
-	sde_crtc = to_sde_crtc(crtc);
-	sde_crtc->needs_hw_reset = true;
-}
-
-/**
- * sde_crtc_reset_hw - attempt hardware reset on errors
- * @crtc: Pointer to DRM crtc instance
- * @old_state: Pointer to crtc state for previous commit
- * @recovery_events: Whether or not recovery events are enabled
- * Returns: Zero if current commit should still be attempted
- */
-int sde_crtc_reset_hw(struct drm_crtc *crtc, struct drm_crtc_state *old_state,
-	bool recovery_events);
-
-/**
- * sde_crtc_request_frame_reset - requests for next frame reset
- * @crtc: Pointer to drm crtc object
- */
-static inline int sde_crtc_request_frame_reset(struct drm_crtc *crtc)
-{
-	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
-
-	if (sde_crtc->frame_trigger_mode == FRAME_DONE_WAIT_POSTED_START)
-		sde_crtc_reset_hw(crtc, crtc->state, false);
-
-	return 0;
 }
 
 /**
@@ -604,20 +614,12 @@ int sde_crtc_register_custom_event(struct sde_kms *kms,
 
 /**
  * sde_crtc_get_intf_mode - get interface mode of the given crtc
- * @crtc: Pointert to DRM crtc
- * @crtc: Pointert to DRM crtc_state
- */
-enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
-		struct drm_crtc_state *cstate);
-
-/**
- * sde_crtc_get_fps_mode - get frame rate of the given crtc
  * @crtc: Pointert to crtc
  */
-u32 sde_crtc_get_fps_mode(struct drm_crtc *crtc);
+enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc);
 
 /**
- * sde_crtc_get_client_type - check the crtc type- rt, rsc_rt, etc.
+ * sde_crtc_get_client_type - check the crtc type- rt, nrt, rsc, etc.
  * @crtc: Pointer to crtc
  */
 static inline enum sde_crtc_client_type sde_crtc_get_client_type(
@@ -627,23 +629,10 @@ static inline enum sde_crtc_client_type sde_crtc_get_client_type(
 			crtc ? to_sde_crtc_state(crtc->state) : NULL;
 
 	if (!cstate)
-		return RT_CLIENT;
+		return NRT_CLIENT;
 
-	return cstate->rsc_client ? RT_RSC_CLIENT : RT_CLIENT;
-}
-
-/**
- * sde_crtc_is_rt_client - check if real-time client or not
- * @crtc: Pointer to DRM crtc
- * @crtc_state: Pointer to DRM crtc_state
- */
-static inline bool sde_crtc_is_rt_client(struct drm_crtc *crtc,
-		struct drm_crtc_state *cstate)
-{
-	if (!crtc || !cstate)
-		return true;
-
-	return (sde_crtc_get_intf_mode(crtc, cstate) != INTF_MODE_WB_LINE);
+	return sde_crtc_get_intf_mode(crtc) == INTF_MODE_WB_LINE ? NRT_CLIENT :
+			(cstate->rsc_client ? RT_RSC_CLIENT : RT_CLIENT);
 }
 
 /**
@@ -653,6 +642,23 @@ static inline bool sde_crtc_is_rt_client(struct drm_crtc *crtc,
 static inline bool sde_crtc_is_enabled(struct drm_crtc *crtc)
 {
 	return crtc ? crtc->enabled : false;
+}
+
+/**
+ * sde_crtc_get_inline_prefill - get current inline rotation prefill
+ * @crtc: Pointer to crtc
+ * return: number of prefill lines
+ */
+static inline u32 sde_crtc_get_inline_prefill(struct drm_crtc *crtc)
+{
+	struct sde_crtc_state *cstate;
+
+	if (!crtc || !crtc->state)
+		return 0;
+
+	cstate = to_sde_crtc_state(crtc->state);
+	return cstate->sbuf_cfg.rot_op_mode != SDE_CTL_ROT_OP_MODE_OFFLINE ?
+		cstate->sbuf_prefill_line : 0;
 }
 
 /**
@@ -692,6 +698,36 @@ int sde_crtc_event_queue(struct drm_crtc *crtc,
 		void *usr, bool color_processing_event);
 
 /**
+ * sde_crtc_res_add - add given resource to resource pool in crtc state
+ * @state: Pointer to drm crtc state
+ * @type: Resource type
+ * @tag: Search tag for given resource
+ * @val: Resource handle
+ * @ops: Resource callback operations
+ * return: 0 if success; error code otherwise
+ */
+int sde_crtc_res_add(struct drm_crtc_state *state, u32 type, u64 tag,
+		void *val, struct sde_crtc_res_ops *ops);
+
+/**
+ * sde_crtc_res_get - get given resource from resource pool in crtc state
+ * @state: Pointer to drm crtc state
+ * @type: Resource type
+ * @tag: Search tag for given resource
+ * return: Resource handle if success; pointer error or null otherwise
+ */
+void *sde_crtc_res_get(struct drm_crtc_state *state, u32 type, u64 tag);
+
+/**
+ * sde_crtc_res_put - return given resource to resource pool in crtc state
+ * @state: Pointer to drm crtc state
+ * @type: Resource type
+ * @tag: Search tag for given resource
+ * return: None
+ */
+void sde_crtc_res_put(struct drm_crtc_state *state, u32 type, u64 tag);
+
+/**
  * sde_crtc_get_crtc_roi - retrieve the crtc_roi from the given state object
  *	used to allow the planes to adjust their final lm out_xy value in the
  *	case of partial update
@@ -723,25 +759,6 @@ static inline int sde_crtc_get_secure_level(struct drm_crtc *crtc,
 
 	return sde_crtc_get_property(to_sde_crtc_state(state),
 			CRTC_PROP_SECURITY_LEVEL);
-}
-
-/** sde_crtc_atomic_check_has_modeset - checks if the new_crtc_state in the
- *	drm_atomic_state has a modeset
- * @state : pointer to drm_atomic_state
- * @crtc : Pointer to drm crtc structure
- * Returns true if crtc has modeset
- */
-static inline bool sde_crtc_atomic_check_has_modeset(
-	struct drm_atomic_state *state, struct drm_crtc *crtc)
-{
-	struct drm_crtc_state *crtc_state;
-
-	if (!state || !crtc)
-		return false;
-
-	crtc_state = drm_atomic_get_new_crtc_state(state,
-					crtc);
-	return (crtc_state && drm_atomic_crtc_needs_modeset(crtc_state));
 }
 
 /**
@@ -812,6 +829,13 @@ void sde_crtc_update_cont_splash_settings(
 		struct drm_crtc *crtc);
 
 /**
+ * sde_crtc_get_sbuf_clk - get user specified sbuf clock settings
+ * @state: Pointer to DRM crtc state object
+ * Returns: Filtered sbuf clock setting from user space
+ */
+uint64_t sde_crtc_get_sbuf_clk(struct drm_crtc_state *state);
+
+/**
  * sde_crtc_misr_setup - to configure and enable/disable MISR
  * @crtc: Pointer to drm crtc structure
  * @enable: boolean to indicate enable/disable misr
@@ -820,12 +844,17 @@ void sde_crtc_update_cont_splash_settings(
 void sde_crtc_misr_setup(struct drm_crtc *crtc, bool enable, u32 frame_count);
 
 /**
- * sde_crtc_get_misr_info - to configure and enable/disable MISR
- * @crtc: Pointer to drm crtc structure
- * @crtc_misr_info: Pointer to crtc misr info structure
+ * sde_crtc_calc_vpadding_param - calculate vpadding parameters
+ * @state: Pointer to DRM crtc state object
+ * @crtc_y: Plane's CRTC_Y offset
+ * @crtc_h: Plane's CRTC_H size
+ * @padding_y: Padding Y offset
+ * @padding_start: Padding start offset
+ * @padding_height: Padding height in total
  */
-void sde_crtc_get_misr_info(struct drm_crtc *crtc,
-		struct sde_crtc_misr_info *crtc_misr_info);
+int sde_crtc_calc_vpadding_param(struct drm_crtc_state *state,
+		uint32_t crtc_y, uint32_t crtc_h, uint32_t *padding_y,
+		uint32_t *padding_start, uint32_t *padding_height);
 
 /**
  * sde_crtc_get_num_datapath - get the number of datapath active
@@ -836,31 +865,38 @@ void sde_crtc_get_misr_info(struct drm_crtc *crtc,
 int sde_crtc_get_num_datapath(struct drm_crtc *crtc,
 		struct drm_connector *connector);
 
-/*
- * sde_crtc_set_compression_ratio - set compression ratio src_bpp/target_bpp
- * @msm_mode_info: Mode info
- * @crtc: Pointer to drm crtc structure
+/**
+ * sde_crtc_state_set_topology_name - set current topology name
+ * @state: Pointer to crtc_state
  */
-static inline void sde_crtc_set_compression_ratio(
-		struct msm_mode_info mode_info, struct drm_crtc *crtc)
+static inline void sde_crtc_state_set_topology_name(
+		struct drm_crtc_state *state,
+		enum sde_rm_topology_name topology_name)
 {
-	int target_bpp, src_bpp;
-	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+	struct sde_crtc_state *cstate = to_sde_crtc_state(state);
 
-	/**
-	 * In cases where DSC compression type is not found, set
-	 * compression value to default value of 1.
-	 */
-	if (mode_info.comp_info.comp_type != MSM_DISPLAY_COMPRESSION_DSC) {
-		sde_crtc->comp_ratio = 1;
-		goto end;
+	if (!state)
+		return;
+
+	cstate->topology_name = topology_name;
+
+	switch (topology_name) {
+	case SDE_RM_TOPOLOGY_DUALPIPE:
+	case SDE_RM_TOPOLOGY_DUALPIPE_DSC:
+	case SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE:
+	case SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC:
+	case SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE:
+		cstate->num_mixers = 2;
+		break;
+	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE:
+	case SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE:
+	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC:
+		cstate->num_mixers = 4;
+		break;
+	default:
+		cstate->num_mixers = 1;
+		break;
 	}
-
-	target_bpp = mode_info.comp_info.dsc_info.bpp;
-	src_bpp = mode_info.comp_info.dsc_info.bpc * RGB_NUM_COMPONENTS;
-	sde_crtc->comp_ratio = mult_frac(1, src_bpp, target_bpp);
-end:
-	SDE_DEBUG("sde_crtc comp ratio: %d\n", sde_crtc->comp_ratio);
 }
 
 #endif /* _SDE_CRTC_H_ */

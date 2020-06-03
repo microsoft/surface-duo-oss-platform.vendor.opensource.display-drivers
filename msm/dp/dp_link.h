@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DP_LINK_H_
@@ -13,18 +13,17 @@
 #define DP_LINK_ENUM_STR(x)		#x
 
 enum dp_link_voltage_level {
-	DP_LINK_VOLTAGE_LEVEL_0,
-	DP_LINK_VOLTAGE_LEVEL_1,
-	DP_LINK_VOLTAGE_LEVEL_2,
-	DP_LINK_VOLTAGE_MAX = DP_LINK_VOLTAGE_LEVEL_2,
+	DP_LINK_VOLTAGE_LEVEL_0	= 0,
+	DP_LINK_VOLTAGE_LEVEL_1	= 1,
+	DP_LINK_VOLTAGE_LEVEL_2	= 2,
+	DP_LINK_VOLTAGE_MAX	= DP_LINK_VOLTAGE_LEVEL_2,
 };
 
 enum dp_link_preemaphasis_level {
-	DP_LINK_PRE_EMPHASIS_LEVEL_0,
-	DP_LINK_PRE_EMPHASIS_LEVEL_1,
-	DP_LINK_PRE_EMPHASIS_LEVEL_2,
-	DP_LINK_PRE_EMPHASIS_LEVEL_3,
-	DP_LINK_PRE_EMPHASIS_MAX = DP_LINK_PRE_EMPHASIS_LEVEL_3,
+	DP_LINK_PRE_EMPHASIS_LEVEL_0	= 0,
+	DP_LINK_PRE_EMPHASIS_LEVEL_1	= 1,
+	DP_LINK_PRE_EMPHASIS_LEVEL_2	= 2,
+	DP_LINK_PRE_EMPHASIS_MAX	= DP_LINK_PRE_EMPHASIS_LEVEL_2,
 };
 
 struct dp_link_sink_count {

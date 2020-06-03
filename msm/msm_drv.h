@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -74,11 +74,6 @@ struct msm_gem_vma;
 #define TEARDOWN_DEADLOCK_RETRY_MAX 5
 
 struct msm_file_private {
-	rwlock_t queuelock;
-	struct list_head submitqueues;
-
-	int queueid;
-
 	/* update the refcount when user driver calls power_ctrl IOCTL */
 	unsigned short enable_refcnt;
 
@@ -101,6 +96,7 @@ enum msm_mdp_plane_property {
 	PLANE_PROP_VIG_IGC,
 	PLANE_PROP_DMA_IGC,
 	PLANE_PROP_DMA_GC,
+	PLANE_PROP_ROT_CAPS_V1,
 
 	/* # of blob properties */
 	PLANE_PROP_BLOBCOUNT,
@@ -117,10 +113,15 @@ enum msm_mdp_plane_property {
 	PLANE_PROP_VALUE_ADJUST,
 	PLANE_PROP_CONTRAST_ADJUST,
 	PLANE_PROP_EXCL_RECT_V1,
+	PLANE_PROP_ROT_DST_X,
+	PLANE_PROP_ROT_DST_Y,
+	PLANE_PROP_ROT_DST_W,
+	PLANE_PROP_ROT_DST_H,
 	PLANE_PROP_PREFILL_SIZE,
 	PLANE_PROP_PREFILL_TIME,
 	PLANE_PROP_SCALER_V1,
 	PLANE_PROP_SCALER_V2,
+	PLANE_PROP_ROT_OUT_FB,
 	PLANE_PROP_INVERSE_PMA,
 
 	/* enum/bitmask properties */
@@ -128,6 +129,7 @@ enum msm_mdp_plane_property {
 	PLANE_PROP_SRC_CONFIG,
 	PLANE_PROP_FB_TRANSLATION_MODE,
 	PLANE_PROP_MULTIRECT_MODE,
+	PLANE_PROP_LAYOUT,
 
 	/* total # of properties */
 	PLANE_PROP_COUNT
@@ -189,8 +191,7 @@ enum msm_mdp_conn_property {
 	CONNECTOR_PROP_DST_H,
 	CONNECTOR_PROP_ROI_V1,
 	CONNECTOR_PROP_BL_SCALE,
-	CONNECTOR_PROP_SV_BL_SCALE,
-	CONNECTOR_PROP_SUPPORTED_COLORSPACES,
+	CONNECTOR_PROP_AD_BL_SCALE,
 
 	/* enum/bitmask properties */
 	CONNECTOR_PROP_TOPOLOGY_NAME,
@@ -199,14 +200,12 @@ enum msm_mdp_conn_property {
 	CONNECTOR_PROP_LP,
 	CONNECTOR_PROP_FB_TRANSLATION_MODE,
 	CONNECTOR_PROP_QSYNC_MODE,
-	CONNECTOR_PROP_CMD_FRAME_TRIGGER_MODE,
 
 	/* total # of properties */
 	CONNECTOR_PROP_COUNT
 };
 
-#define MSM_GPU_MAX_RINGS 4
-#define MAX_H_TILES_PER_DISPLAY 2
+#define MAX_H_TILES_PER_DISPLAY 3
 
 /**
  * enum msm_display_compression_type - compression method used for pixel stream
@@ -252,18 +251,6 @@ enum msm_display_caps {
 };
 
 /**
- * enum panel_mode - panel operation mode
- * @MSM_DISPLAY_VIDEO_MODE: video mode panel
- * @MSM_DISPLAY_CMD_MODE:   Command mode panel
- * @MODE_MAX:
- */
-enum panel_op_mode {
-	MSM_DISPLAY_VIDEO_MODE = 0,
-	MSM_DISPLAY_CMD_MODE,
-	MSM_DISPLAY_MODE_MAX,
-};
-
-/**
  * enum msm_event_wait - type of HW events to wait for
  * @MSM_ENC_COMMIT_DONE - wait for the driver to flush the registers to HW
  * @MSM_ENC_TX_COMPLETE - wait for the HW to transfer the frame to panel
@@ -275,6 +262,14 @@ enum msm_event_wait {
 	MSM_ENC_TX_COMPLETE,
 	MSM_ENC_VBLANK,
 	MSM_ENC_ACTIVE_REGION,
+};
+
+/**
+ * enum msm_component_event - type of component events
+ * @MSM_COMP_OBJECT_CREATED - notify when all builtin objects are created
+ */
+enum msm_component_event {
+	MSM_COMP_OBJECT_CREATED = 0,
 };
 
 /**
@@ -357,8 +352,7 @@ struct msm_roi_caps {
  * @range_min_qp:            Min QP allowed.
  * @range_max_qp:            Max QP allowed.
  * @range_bpg_offset:        Bits per group adjustment.
- * @extra_width:             Extra width required in timing calculations.
- * @pps_delay_ms:            Post PPS command delay in milliseconds.
+ * @extra_width:             Extra width required in timing calculations
  */
 struct msm_display_dsc_info {
 	u8 version;
@@ -416,7 +410,6 @@ struct msm_display_dsc_info {
 	char *range_bpg_offset;
 
 	u32 extra_width;
-	u32 pps_delay_ms;
 };
 
 /**
@@ -461,6 +454,8 @@ struct msm_display_topology {
  * @wide_bus_en:	wide-bus mode cfg for interface module
  * @mdp_transfer_time_us   Specifies the mdp transfer time for command mode
  *                         panels in microseconds.
+ * @vpadding:        panel stacking height
+ * @overlap_pixels:	overlap pixels for certain panels
  */
 struct msm_mode_info {
 	uint32_t frame_rate;
@@ -474,22 +469,8 @@ struct msm_mode_info {
 	struct msm_roi_caps roi_caps;
 	bool wide_bus_en;
 	u32 mdp_transfer_time_us;
-};
-
-/**
- * struct msm_resource_caps_info - defines hw resources
- * @num_lm              number of layer mixers available
- * @num_dsc             number of dsc available
- * @num_ctl             number of ctl available
- * @num_3dmux           number of 3d mux available
- * @max_mixer_width:    max width supported by layer mixer
- */
-struct msm_resource_caps_info {
-	uint32_t num_lm;
-	uint32_t num_dsc;
-	uint32_t num_ctl;
-	uint32_t num_3dmux;
-	uint32_t max_mixer_width;
+	u32 vpadding;
+	u32 overlap_pixels;
 };
 
 /**
@@ -507,7 +488,7 @@ struct msm_resource_caps_info {
  * @max_height:         Max height of display. In case of hot pluggable display
  *                      this is max height supported by controller
  * @clk_rate:           DSI bit clock per lane in HZ.
- * @display_type:       Enum for type of display
+ * @is_primary:         Set to true if display is primary display
  * @is_te_using_watchdog_timer:  Boolean to indicate watchdog TE is
  *				 used instead of panel TE in cmd mode panels
  * @roi_caps:           Region of interest capability info
@@ -517,7 +498,7 @@ struct msm_resource_caps_info {
 struct msm_display_info {
 	int intf_type;
 	uint32_t capabilities;
-	enum panel_op_mode curr_panel_mode;
+
 	uint32_t num_of_h_tiles;
 	uint32_t h_tile_instance[MAX_H_TILES_PER_DISPLAY];
 
@@ -530,7 +511,7 @@ struct msm_display_info {
 	uint32_t max_height;
 	uint64_t clk_rate;
 
-	uint32_t display_type;
+	bool is_primary;
 	bool is_te_using_watchdog_timer;
 	struct msm_roi_caps roi_caps;
 
@@ -553,6 +534,8 @@ struct msm_roi_list {
 /**
  * struct - msm_display_kickoff_params - info for display features at kickoff
  * @rois: Regions of interest structure for mapping CRTC to Connector output
+ * @qsync_mode: Qsync mode, where 0: disabled 1: continuous mode
+ * @qsync_update: Qsync settings were changed/updated
  */
 struct msm_display_kickoff_params {
 	struct msm_roi_list *rois;
@@ -561,7 +544,7 @@ struct msm_display_kickoff_params {
 
 /**
  * struct - msm_display_conn_params - info of dpu display features
- * @qsync_mode: Qsync mode, where 0: disabled 1: continuous mode 2: oneshot
+ * @qsync_mode: Qsync mode, where 0: disabled 1: continuous mode
  * @qsync_update: Qsync settings were changed/updated
  */
 struct msm_display_conn_params {
@@ -573,10 +556,15 @@ struct msm_display_conn_params {
  * struct msm_drm_event - defines custom event notification struct
  * @base: base object required for event notification by DRM framework.
  * @event: event object required for event notification by DRM framework.
+ * @info: contains information of DRM object for which events has been
+ *        requested.
+ * @data: memory location which contains response payload for event.
  */
 struct msm_drm_event {
 	struct drm_pending_event base;
-	struct drm_msm_event_resp event;
+	struct drm_event event;
+	struct drm_msm_event_req info;
+	u8 data[];
 };
 
 /* Commit/Event thread specific structure */
@@ -594,6 +582,7 @@ struct msm_drm_private {
 	struct msm_kms *kms;
 
 	struct sde_power_handle phandle;
+	struct sde_power_client *pclient;
 
 	/* subordinate devices, if present: */
 	struct platform_device *gpu_pdev;
@@ -621,8 +610,7 @@ struct msm_drm_private {
 
 	struct drm_fb_helper *fbdev;
 
-	struct msm_rd_state *rd;       /* debugfs to dump all submits */
-	struct msm_rd_state *hangrd;   /* debugfs to dump hanging submits */
+	struct msm_rd_state *rd;
 	struct msm_perf_state *perf;
 
 	/* list of GEM objects: */
@@ -678,8 +666,6 @@ struct msm_drm_private {
 	struct notifier_block vmap_notifier;
 	struct shrinker shrinker;
 
-	struct drm_atomic_state *pm_state;
-
 	/* task holding struct_mutex.. currently only used in submit path
 	 * to detect and reject faults from copy_from_user() for submit
 	 * ioctl.
@@ -697,6 +683,9 @@ struct msm_drm_private {
 
 	/* update the flag when msm driver receives shutdown notification */
 	bool shutdown_in_progress;
+
+	/* list of component registered for notification */
+	struct blocking_notifier_head component_notifier_list;
 };
 
 /* get struct msm_kms * from drm_device * */
@@ -706,12 +695,6 @@ struct msm_drm_private {
 struct msm_format {
 	uint32_t pixel_format;
 };
-
-int msm_atomic_prepare_fb(struct drm_plane *plane,
-			  struct drm_plane_state *new_state);
-void msm_atomic_commit_tail(struct drm_atomic_state *state);
-int msm_atomic_commit(struct drm_device *dev,
-	struct drm_atomic_state *state, bool nonblock);
 
 /* callback from wq once fence has passed: */
 struct msm_fence_cb {
@@ -727,6 +710,8 @@ void __msm_fence_worker(struct work_struct *work);
 		(_cb)->func = _func;                         \
 	} while (0)
 
+int msm_atomic_commit(struct drm_device *dev,
+		struct drm_atomic_state *state, bool nonblock);
 struct drm_atomic_state *msm_atomic_state_alloc(struct drm_device *dev);
 void msm_atomic_state_clear(struct drm_atomic_state *state);
 void msm_atomic_state_free(struct drm_atomic_state *state);
@@ -812,7 +797,7 @@ void msm_gem_sync(struct drm_gem_object *obj);
 int msm_gem_mmap_obj(struct drm_gem_object *obj,
 			struct vm_area_struct *vma);
 int msm_gem_mmap(struct file *filp, struct vm_area_struct *vma);
-vm_fault_t msm_gem_fault(struct vm_fault *vmf);
+int msm_gem_fault(struct vm_fault *vmf);
 uint64_t msm_gem_mmap_offset(struct drm_gem_object *obj);
 int msm_gem_get_iova(struct drm_gem_object *obj,
 		struct msm_gem_address_space *aspace, uint64_t *iova);
@@ -839,9 +824,13 @@ void msm_gem_prime_unpin(struct drm_gem_object *obj);
 struct drm_gem_object *msm_gem_prime_import(struct drm_device *dev,
 					    struct dma_buf *dma_buf);
 void *msm_gem_get_vaddr(struct drm_gem_object *obj);
-void *msm_gem_get_vaddr_active(struct drm_gem_object *obj);
 void msm_gem_put_vaddr(struct drm_gem_object *obj);
 int msm_gem_madvise(struct drm_gem_object *obj, unsigned madv);
+int msm_gem_sync_object(struct drm_gem_object *obj,
+		struct msm_fence_context *fctx, bool exclusive);
+void msm_gem_move_to_active(struct drm_gem_object *obj,
+		struct msm_gpu *gpu, bool exclusive, struct dma_fence *fence);
+void msm_gem_move_to_inactive(struct drm_gem_object *obj);
 int msm_gem_cpu_prep(struct drm_gem_object *obj, uint32_t op, ktime_t *timeout);
 int msm_gem_cpu_fini(struct drm_gem_object *obj);
 void msm_gem_free_object(struct drm_gem_object *obj);
@@ -911,12 +900,6 @@ static inline void __init msm_edp_register(void)
 static inline void __exit msm_edp_unregister(void)
 {
 }
-
-static inline int msm_edp_modeset_init(struct msm_edp *edp,
-		struct drm_device *dev, struct drm_encoder *encoder)
-{
-	return -EINVAL;
-}
 #endif
 
 struct msm_dsi;
@@ -930,7 +913,7 @@ struct msm_dsi;
  */
 void msm_mode_object_event_notify(struct drm_mode_object *obj,
 		struct drm_device *dev, struct drm_event *event, u8 *payload);
-#ifndef CONFIG_DRM_MSM_DSI
+#ifdef CONFIG_DRM_MSM_DSI
 void __init msm_dsi_register(void);
 void __exit msm_dsi_unregister(void);
 int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
@@ -950,17 +933,8 @@ static inline int msm_dsi_modeset_init(struct msm_dsi *msm_dsi,
 }
 #endif
 
-#ifdef CONFIG_DRM_MSM_MDP5
 void __init msm_mdp_register(void);
 void __exit msm_mdp_unregister(void);
-#else
-static inline void __init msm_mdp_register(void)
-{
-}
-static inline void __exit msm_mdp_unregister(void)
-{
-}
-#endif
 
 #ifdef CONFIG_DEBUG_FS
 void msm_gem_describe(struct drm_gem_object *obj, struct seq_file *m);
@@ -969,23 +943,17 @@ void msm_framebuffer_describe(struct drm_framebuffer *fb, struct seq_file *m);
 int msm_debugfs_late_init(struct drm_device *dev);
 int msm_rd_debugfs_init(struct drm_minor *minor);
 void msm_rd_debugfs_cleanup(struct msm_drm_private *priv);
-void msm_rd_dump_submit(struct msm_rd_state *rd, struct msm_gem_submit *submit,
-		const char *fmt, ...);
+void msm_rd_dump_submit(struct msm_gem_submit *submit);
 int msm_perf_debugfs_init(struct drm_minor *minor);
 void msm_perf_debugfs_cleanup(struct msm_drm_private *priv);
 #else
 static inline int msm_debugfs_late_init(struct drm_device *dev) { return 0; }
-static inline void msm_rd_dump_submit(struct msm_rd_state *rd, struct msm_gem_submit *submit,
-		const char *fmt, ...) {}
+static inline void msm_rd_dump_submit(struct msm_gem_submit *submit) {}
 static inline void msm_rd_debugfs_cleanup(struct msm_drm_private *priv) {}
 static inline void msm_perf_debugfs_cleanup(struct msm_drm_private *priv) {}
 #endif
 
 struct clk *msm_clk_get(struct platform_device *pdev, const char *name);
-int msm_clk_bulk_get(struct device *dev, struct clk_bulk_data **bulk);
-
-struct clk *msm_clk_bulk_get_clock(struct clk_bulk_data *bulk, int count,
-	const char *name);
 void __iomem *msm_ioremap(struct platform_device *pdev, const char *name,
 		const char *dbgname);
 unsigned long msm_iomap_size(struct platform_device *pdev, const char *name);
@@ -1032,6 +1000,36 @@ static inline unsigned long timeout_to_jiffies(const ktime_t *timeout)
 
 int msm_get_mixer_count(struct msm_drm_private *priv,
 		const struct drm_display_mode *mode,
-		const struct msm_resource_caps_info *res, u32 *num_lm);
+		u32 max_mixer_width, u32 *num_lm);
+
+/**
+ * msm_drm_register_component - register a component notifier
+ * @dev: drm device
+ * @nb: notifier block to callback on events
+ *
+ * This function registers a notifier callback function
+ * to msm_drm_component_list, which would be called during probe.
+ */
+int msm_drm_register_component(struct drm_device *dev,
+		struct notifier_block *nb);
+
+
+/**
+ * msm_drm_unregister_component - unregister a component notifier
+ * @dev: drm device
+ * @nb: notifier block to callback on events
+ *
+ * This function registers a notifier callback function
+ * to msm_drm_component_list, which would be called during probe.
+ */
+int msm_drm_unregister_component(struct drm_device *dev,
+		struct notifier_block *nb);
+
+/**
+ * msm_drm_notify_components - notify components of msm_component_event
+ * @event: defined in msm_component_event
+ */
+int msm_drm_notify_components(struct drm_device *dev,
+		enum msm_component_event event);
 
 #endif /* __MSM_DRV_H__ */

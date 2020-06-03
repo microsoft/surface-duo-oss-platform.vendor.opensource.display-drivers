@@ -23,17 +23,14 @@
 
 #include "msm_prop.h"
 #include "sde_hw_mdss.h"
-#include "sde_kms.h"
-#include "sde_connector.h"
 
-#define MAX_CHANNELS_PER_ENC 2
 
+#define MAX_CHANNELS_PER_ENC 4
 #define SDE_ENCODER_FRAME_EVENT_DONE			BIT(0)
 #define SDE_ENCODER_FRAME_EVENT_ERROR			BIT(1)
 #define SDE_ENCODER_FRAME_EVENT_PANEL_DEAD		BIT(2)
 #define SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE	BIT(3)
 #define SDE_ENCODER_FRAME_EVENT_SIGNAL_RETIRE_FENCE	BIT(4)
-#define SDE_ENCODER_FRAME_EVENT_CWB_DONE		BIT(5)
 
 #define IDLE_POWERCOLLAPSE_DURATION	(66 - 16/2)
 #define IDLE_POWERCOLLAPSE_IN_EARLY_WAKEUP (200 - 16/2)
@@ -45,7 +42,7 @@
  * @needs_cdm:	Encoder requests a CDM based on pixel format conversion needs
  * @display_num_of_h_tiles: Number of horizontal tiles in case of split
  *                          interface
- * @display_type: Type of the display
+ * @is_primary: set to true if the display is primary display
  * @topology:   Topology of the display
  */
 struct sde_encoder_hw_resources {
@@ -53,21 +50,32 @@ struct sde_encoder_hw_resources {
 	enum sde_intf_mode wbs[WB_MAX];
 	bool needs_cdm;
 	u32 display_num_of_h_tiles;
-	enum sde_connector_display display_type;
+	bool is_primary;
 	struct msm_display_topology topology;
 };
 
 /**
  * sde_encoder_kickoff_params - info encoder requires at kickoff
+ * @inline_rotate_prefill: number of lines to prefill for inline rotation
+ * @is_primary: set to true if the display is primary display
  * @affected_displays:  bitmask, bit set means the ROI of the commit lies within
  *                      the bounds of the physical display at the bit index
  * @recovery_events_enabled: indicates status of client for recoovery events
- * @frame_trigger_mode: indicates frame trigger mode
  */
 struct sde_encoder_kickoff_params {
+	u32 inline_rotate_prefill;
+	u32 is_primary;
 	unsigned long affected_displays;
 	bool recovery_events_enabled;
-	enum frame_trigger_mode_type frame_trigger_mode;
+	u32 num_channels;
+};
+
+/**
+ * sde_encoder_rsc_config - rsc configuration for encoder
+ * @inline_rotate_prefill: number of lines to prefill for inline rotation
+ */
+struct sde_encoder_rsc_config {
+	u32 inline_rotate_prefill;
 };
 
 /**
@@ -163,11 +171,11 @@ void sde_encoder_kickoff(struct drm_encoder *encoder, bool is_error);
  * @encoder:	encoder pointer
  * @event:      event to wait for
  * MSM_ENC_COMMIT_DONE -  Wait for hardware to have flushed the current pending
- *                        frames to hardware at a vblank or wr_ptr_start
+ *                        frames to hardware at a vblank or ctl_start
  *                        Encoders will map this differently depending on the
  *                        panel type.
  *	                  vid mode -> vsync_irq
- *                        cmd mode -> wr_ptr_start_irq
+ *                        cmd mode -> ctl_start
  * MSM_ENC_TX_COMPLETE -  Wait for the hardware to transfer all the pixels to
  *                        the panel. Encoders will map this differently
  *                        depending on the panel type.
@@ -185,12 +193,6 @@ int sde_encoder_wait_for_event(struct drm_encoder *drm_encoder,
  * Returns: 0 on success, errorcode otherwise
  */
 int sde_encoder_idle_request(struct drm_encoder *drm_enc);
-
-/*
- * sde_encoder_get_fps - get interface frame rate of the given encoder
- * @encoder: Pointer to drm encoder object
- */
-u32 sde_encoder_get_fps(struct drm_encoder *encoder);
 
 /*
  * sde_encoder_get_intf_mode - get interface mode of the given encoder
@@ -219,12 +221,12 @@ void sde_encoder_virt_restore(struct drm_encoder *encoder);
 bool sde_encoder_is_dsc_merge(struct drm_encoder *drm_enc);
 
 /**
- * sde_encoder_check_curr_mode - check if given mode is supported or not
+ * sde_encoder_check_mode - check if given mode is supported or not
  * @drm_enc: Pointer to drm encoder object
  * @mode: Mode to be checked
  * @Return: true if it is cmd mode
  */
-bool sde_encoder_check_curr_mode(struct drm_encoder *drm_enc, u32 mode);
+bool sde_encoder_check_mode(struct drm_encoder *drm_enc, u32 mode);
 
 /**
  * sde_encoder_init - initialize virtual encoder object
@@ -259,7 +261,7 @@ void sde_encoder_destroy(struct drm_encoder *drm_enc);
  *	atomic commit, before any registers are written
  * @drm_enc:    Pointer to previously created drm encoder structure
  */
-int sde_encoder_prepare_commit(struct drm_encoder *drm_enc);
+void sde_encoder_prepare_commit(struct drm_encoder *drm_enc);
 
 /**
  * sde_encoder_update_caps_for_cont_splash - update encoder settings during
@@ -314,20 +316,20 @@ void sde_encoder_recovery_events_handler(struct drm_encoder *encoder,
 bool sde_encoder_in_clone_mode(struct drm_encoder *enc);
 
 /**
+ *sde_encoder_is_topology_ppsplit - checks if the current encoder is in
+	ppsplit topology.
+ *@drm_enc:	Pointer to drm encoder structure
+ *@Return:	true if the present topology is ppsplit
+ */
+bool sde_encoder_is_topology_ppsplit(struct drm_encoder *drm_enc);
+
+/**
  * sde_encoder_is_primary_display - checks if underlying display is primary
  *     display or not.
  * @drm_enc:    Pointer to drm encoder structure
  * @Return:     true if it is primary display. false if secondary display
  */
 bool sde_encoder_is_primary_display(struct drm_encoder *enc);
-
-/**
- * sde_encoder_is_dsi_display - checks if underlying display is DSI
- *     display or not.
- * @drm_enc:    Pointer to drm encoder structure
- * @Return:     true if it is primary display. false if secondary display
- */
-bool sde_encoder_is_dsi_display(struct drm_encoder *enc);
 
 /**
  * sde_encoder_control_idle_pc - control enable/disable of idle power collapse
@@ -344,16 +346,10 @@ void sde_encoder_control_idle_pc(struct drm_encoder *enc, bool enable);
 int sde_encoder_in_cont_splash(struct drm_encoder *enc);
 
 /**
- * sde_encoder_helper_hw_reset - hw reset helper function
+ * sde_encoder_get_ctlstart_timeout_state - checks if ctl start timeout happened
  * @drm_enc:    Pointer to drm encoder structure
+ * @Return:     non zero value if ctl start timeout occurred
  */
-void sde_encoder_needs_hw_reset(struct drm_encoder *enc);
-
-/**
- * sde_encoder_uidle_enable - control enable/disable of uidle
- * @drm_enc:    Pointer to drm encoder structure
- * @enable:	enable/disable flag
- */
-void sde_encoder_uidle_enable(struct drm_encoder *drm_enc, bool enable);
+int sde_encoder_get_ctlstart_timeout_state(struct drm_encoder *enc);
 
 #endif /* __SDE_ENCODER_H__ */

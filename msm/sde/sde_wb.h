@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_WB_H__
@@ -158,14 +158,12 @@ sde_wb_connector_detect(struct drm_connector *connector,
  * sde_wb_connector_get_modes - get display modes of connector
  * @connector:	Pointer to connector
  * @display:	Pointer to writeback device
- * @avail_res: Pointer with curr available resources
  * Returns:	Number of modes
  *
  * If display modes are not specified in writeback configuration IOCTL, this
  * function will install default EDID modes up to maximum resolution support.
  */
-int sde_wb_connector_get_modes(struct drm_connector *connector, void *display,
-		const struct msm_resource_caps_info *avail_res);
+int sde_wb_connector_get_modes(struct drm_connector *connector, void *display);
 
 /**
  * sde_wb_connector_set_property - set atomic connector property
@@ -197,14 +195,14 @@ int sde_wb_get_info(struct drm_connector *connector,
  * @connector: Pointer to drm connector structure
  * @drm_mode: Display mode set for the display
  * @mode_info: Out parameter. information of the mode.
+ * @max_mixer_width: max width supported by HW layer mixer
  * @display: Pointer to private display structure
- * @avail_res: Pointer with curr available resources
  * Returns: zero on success
  */
 int sde_wb_get_mode_info(struct drm_connector *connector,
 		const struct drm_display_mode *drm_mode,
-		struct msm_mode_info *mode_info,
-		void *display, const struct msm_resource_caps_info *avail_res);
+		struct msm_mode_info *mode_info, u32 max_mixer_width,
+		void *display);
 
 /**
  * sde_wb_connector_get_wb - retrieve writeback device of the given connector
@@ -288,7 +286,9 @@ int sde_wb_config(struct drm_device *drm_dev, void *data,
 }
 static inline
 int sde_wb_connector_post_init(struct drm_connector *connector,
-					 void *display)
+		void *info,
+		void *display,
+		struct msm_mode_info *mode_info)
 {
 	return 0;
 }
@@ -301,8 +301,7 @@ sde_wb_connector_detect(struct drm_connector *connector,
 	return connector_status_disconnected;
 }
 static inline
-int sde_wb_connector_get_modes(struct drm_connector *connector, void *display,
-		const struct msm_resource_caps_info *avail_res)
+int sde_wb_connector_get_modes(struct drm_connector *connector, void *display)
 {
 	return -EINVAL;
 }
@@ -316,8 +315,7 @@ int sde_wb_connector_set_property(struct drm_connector *connector,
 	return 0;
 }
 static inline
-int sde_wb_get_info(struct drm_connector *connector,
-		struct msm_display_info *info, void *display)
+int sde_wb_get_info(struct msm_display_info *info, void *display)
 {
 	return 0;
 }
@@ -340,23 +338,7 @@ int sde_wb_connector_state_get_output_roi(struct drm_connector_state *state,
 {
 	return 0;
 }
-static inline
-int sde_wb_connector_set_info_blob(struct drm_connector *connector,
-		void *info,
-		void *display,
-		struct msm_mode_info *mode_info)
-{
-	return 0;
-}
 
-static inline
-int sde_wb_get_mode_info(struct drm_connector *connector,
-		const struct drm_display_mode *drm_mode,
-		struct msm_mode_info *mode_info,
-		void *display, const struct msm_resource_caps_info *avail_res)
-{
-	return 0;
-}
 #endif
 #endif /* __SDE_WB_H__ */
 
