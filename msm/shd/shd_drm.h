@@ -66,6 +66,7 @@ struct shd_display {
 
 	struct platform_device *pdev;
 	struct list_head head;
+	struct notifier_block notifier;
 	struct drm_crtc *crtc;
 };
 

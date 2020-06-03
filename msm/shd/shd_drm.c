@@ -1156,7 +1156,6 @@ static int shd_drm_obj_init(struct shd_display *display)
 		goto end;
 	}
 	priv->crtcs[priv->num_crtcs++] = crtc;
-	sde_crtc_post_init(dev, crtc);
 
 	SDE_DEBUG("create crtc %d index %d\n", DRMID(crtc),
 		drm_crtc_index(crtc));
@@ -1187,54 +1186,6 @@ static int shd_drm_obj_init(struct shd_display *display)
 	crtc->helper_private = &shd_crtc->helper_funcs;
 	crtc->funcs = &shd_crtc->funcs;
 	display->crtc = crtc;
-
-	/* initialize display thread */
-	i = priv->num_crtcs - 1;
-	priv->disp_thread[i].crtc_id = priv->crtcs[i]->base.id;
-	kthread_init_worker(&priv->disp_thread[i].worker);
-	priv->disp_thread[i].dev = dev;
-	priv->disp_thread[i].thread =
-		kthread_run(kthread_worker_fn,
-			&priv->disp_thread[i].worker,
-			"crtc_commit:%d", priv->disp_thread[i].crtc_id);
-	if (IS_ERR(priv->disp_thread[i].thread)) {
-		dev_err(dev->dev, "failed to create crtc_commit kthread\n");
-		priv->disp_thread[i].thread = NULL;
-	}
-
-	/* initialize event thread */
-	priv->event_thread[i].crtc_id = priv->crtcs[i]->base.id;
-	kthread_init_worker(&priv->event_thread[i].worker);
-	priv->event_thread[i].dev = dev;
-	priv->event_thread[i].thread =
-		kthread_run(kthread_worker_fn,
-			&priv->event_thread[i].worker,
-			"crtc_event:%d", priv->event_thread[i].crtc_id);
-	if (IS_ERR(priv->event_thread[i].thread)) {
-		dev_err(dev->dev, "failed to create crtc_event kthread\n");
-		priv->event_thread[i].thread = NULL;
-	}
-
-	/* re-initialize vblank as num_crtcs changes */
-	drm_vblank_cleanup(dev);
-	rc = drm_vblank_init(dev, priv->num_crtcs);
-	if (rc < 0)
-		dev_err(dev->dev, "failed to initialize vblank\n");
-
-	/* register components */
-	if (crtc->funcs->late_register)
-		crtc->funcs->late_register(crtc);
-	if (encoder->funcs->late_register)
-		encoder->funcs->late_register(encoder);
-	drm_connector_register(connector);
-
-	/* reset components */
-	if (crtc->funcs->reset)
-		crtc->funcs->reset(crtc);
-	if (encoder->funcs->reset)
-		encoder->funcs->reset(encoder);
-	if (connector->funcs->reset)
-		connector->funcs->reset(connector);
 
 end:
 	return rc;
@@ -1530,6 +1481,128 @@ fail:
 	return rc;
 }
 
+static int shd_display_notifier(struct notifier_block *nb,
+			unsigned long action, void *data)
+{
+	struct shd_display *shd_dev;
+	struct shd_display_base *base;
+	int rc;
+
+	if (action != MSM_COMP_OBJECT_CREATED)
+		return 0;
+
+	shd_dev = container_of(nb, struct shd_display, notifier);
+
+	list_for_each_entry(base, &g_base_list, head) {
+		if (base->of_node == shd_dev->base_of)
+			goto next;
+	}
+
+	base = devm_kzalloc(&shd_dev->pdev->dev, sizeof(*base), GFP_KERNEL);
+	if (!base) {
+		rc = -ENOMEM;
+		goto error;
+	}
+
+	INIT_LIST_HEAD(&base->disp_list);
+	base->of_node = shd_dev->base_of;
+
+	rc = shd_parse_base(base);
+	if (rc) {
+		SDE_ERROR("failed to parse shared display base\n");
+		goto error;
+	}
+
+	rc = shd_drm_base_init(shd_dev->drm_dev, base);
+	if (rc) {
+		SDE_ERROR("failed to init crtc for shared display base\n");
+		goto error;
+	}
+
+	list_add_tail(&base->head, &g_base_list);
+
+next:
+	shd_dev->base = base;
+	rc = shd_drm_obj_init(shd_dev);
+	if (rc) {
+		SDE_ERROR("failed to init shared drm objects\n");
+		goto error;
+	}
+
+	list_add_tail(&shd_dev->head, &base->disp_list);
+	SDE_DEBUG("add shd to intf %d\n", base->intf_idx);
+
+error:
+	return rc;
+}
+
+static int shd_display_bind(struct device *dev, struct device *master,
+		void *data)
+{
+	int rc = 0;
+	struct shd_display *shd_dev;
+	struct drm_device *drm;
+	struct platform_device *pdev = to_platform_device(dev);
+
+	if (!dev || !pdev || !master) {
+		pr_err("invalid param(s), dev %pK, pdev %pK, master %pK\n",
+				dev, pdev, master);
+		rc = -EINVAL;
+		goto end;
+	}
+
+	drm = dev_get_drvdata(master);
+	shd_dev = platform_get_drvdata(pdev);
+	if (!drm || !shd_dev) {
+		pr_err("invalid param(s), drm %pK, shd_dev %pK\n",
+				drm, shd_dev);
+		rc = -EINVAL;
+		goto end;
+	}
+
+	shd_dev->drm_dev = drm;
+	shd_dev->notifier.notifier_call = shd_display_notifier;
+
+	rc = msm_drm_register_component(drm, &shd_dev->notifier);
+	if (rc) {
+		pr_err("failed to register component notifier\n");
+		goto end;
+	}
+
+	SDE_DEBUG("register component\n");
+end:
+	return rc;
+}
+
+static void shd_display_unbind(struct device *dev, struct device *master,
+		void *data)
+{
+	struct shd_display *shd_dev;
+	struct platform_device *pdev = to_platform_device(dev);
+
+	if (!dev || !pdev) {
+		pr_err("invalid param");
+		return;
+	}
+
+	shd_dev = platform_get_drvdata(pdev);
+	if (!shd_dev) {
+		pr_err("invalid param");
+		return;
+	}
+
+	msm_drm_unregister_component(shd_dev->drm_dev, &shd_dev->notifier);
+
+	list_del_init(&shd_dev->head);
+	if (list_empty(&shd_dev->base->disp_list))
+		list_del_init(&shd_dev->base->head);
+}
+
+static const struct component_ops shd_display_comp_ops = {
+	.bind = shd_display_bind,
+	.unbind = shd_display_unbind,
+};
+
 /**
  * sde_shd_probe - load shared display module
  * @pdev:	Pointer to platform device
@@ -1537,20 +1610,7 @@ fail:
 static int sde_shd_probe(struct platform_device *pdev)
 {
 	struct shd_display *shd_dev;
-	struct shd_display_base *base;
-	struct drm_minor *minor;
-	struct drm_device *ddev;
 	int ret;
-
-	/* defer until primary drm is created */
-	minor = drm_minor_acquire(0);
-	if (IS_ERR(minor))
-		return -EPROBE_DEFER;
-
-	ddev = minor->dev;
-	drm_minor_release(minor);
-	if (!ddev)
-		return -EPROBE_DEFER;
 
 	shd_dev = devm_kzalloc(&pdev->dev, sizeof(*shd_dev), GFP_KERNEL);
 	if (!shd_dev)
@@ -1566,57 +1626,13 @@ static int sde_shd_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, shd_dev);
 
-	list_for_each_entry(base, &g_base_list, head) {
-		if (base->of_node == shd_dev->base_of)
-			goto next;
-	}
-
-	base = devm_kzalloc(&pdev->dev, sizeof(*base), GFP_KERNEL);
-	if (!base) {
-		ret = -ENOMEM;
+	ret = component_add(&pdev->dev, &shd_display_comp_ops);
+	if (ret) {
+		pr_err("component add failed, rc=%d\n", ret);
 		goto error;
 	}
 
-	INIT_LIST_HEAD(&base->disp_list);
-	base->of_node = shd_dev->base_of;
-
-	ret = shd_parse_base(base);
-	if (ret) {
-		SDE_ERROR("failed to parse shared display base\n");
-		goto base_error;
-	}
-
-	mutex_lock(&ddev->mode_config.mutex);
-	ret = shd_drm_base_init(ddev, base);
-	mutex_unlock(&ddev->mode_config.mutex);
-	if (ret) {
-		SDE_ERROR("failed to init crtc for shared display base\n");
-		goto base_error;
-	}
-
-	list_add_tail(&base->head, &g_base_list);
-
-next:
-	shd_dev->base = base;
-	shd_dev->drm_dev = ddev;
-
-	mutex_lock(&ddev->mode_config.mutex);
-	ret = shd_drm_obj_init(shd_dev);
-	mutex_unlock(&ddev->mode_config.mutex);
-	if (ret) {
-		SDE_ERROR("failed to init shared drm objects\n");
-		goto error;
-	}
-
-	list_add_tail(&shd_dev->head, &base->disp_list);
-	SDE_DEBUG("add shd to intf %d\n", base->intf_idx);
-
-	return 0;
-
-base_error:
-	devm_kfree(&pdev->dev, base);
 error:
-	devm_kfree(&pdev->dev, shd_dev);
 	return ret;
 }
 
