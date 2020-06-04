@@ -3068,7 +3068,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 	struct sde_rm_hw_iter dsc_iter, pp_iter, qdss_iter;
 	struct sde_rm_hw_request request_hw;
 	bool is_cmd_mode = false;
-	int i = 0, ret;
+	int i = 0, j, ret;
 	int ratio;
 
 	if (!drm_enc) {
@@ -3158,7 +3158,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 		if (phys) {
 			sde_rm_init_hw_iter(&qdss_iter, drm_enc->base.id,
 						SDE_HW_BLK_QDSS);
-			for (i = 0; i < QDSS_MAX; i++) {
+			for (j = 0; j < QDSS_MAX; j++) {
 				if (sde_rm_get_hw(&sde_kms->rm, &qdss_iter)) {
 					phys->hw_qdss =
 					(struct sde_hw_qdss *)qdss_iter.hw;
