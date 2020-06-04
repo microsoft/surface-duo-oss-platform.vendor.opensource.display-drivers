@@ -334,6 +334,8 @@ static long msm_lease_ioctl(struct file *filp,
 			return -EFAULT;
 
 		return 0;
+	} else if (cmd == DRM_IOCTL_DROP_MASTER) {
+		return -EINVAL;
 	}
 
 	return g_master_ddev_fops->unlocked_ioctl(filp, cmd, arg);
@@ -389,6 +391,8 @@ static long msm_lease_compat_ioctl(struct file *filp,
 			return -EFAULT;
 
 		return 0;
+	} else if (DRM_IOCTL_NR(cmd) == DRM_IOCTL_NR(DRM_IOCTL_DROP_MASTER)) {
+		return -EINVAL;
 	}
 
 	return g_master_ddev_fops->compat_ioctl(filp, cmd, arg);
