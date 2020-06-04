@@ -5959,6 +5959,32 @@ int dsi_display_drm_ext_bridge_init(struct dsi_display *display,
 		display->host.ops = &dsi_host_ext_ops;
 	}
 
+	/*
+	 * Builtin DSI bridge is the first bridge in the bridge chain by
+	 * default. Move the builtin bridge to other position if
+	 * builtin bridge pos is set.
+	 */
+	if (display->panel->host_config.builtin_bridge_pos) {
+		int pos = min(display->panel->host_config.builtin_bridge_pos,
+				display->panel->host_config.ext_bridge_num);
+
+		prev_bridge = bridge;
+		for (i = 0; i < pos; i++) {
+			prev_bridge = prev_bridge->next;
+			if (!prev_bridge) {
+				pr_err("Invalid dsi bridge chain\n");
+				rc = -EINVAL;
+				goto error;
+			}
+		}
+
+		if (prev_bridge != bridge) {
+			encoder->bridge = bridge->next;
+			bridge->next = prev_bridge->next;
+			prev_bridge->next = bridge;
+		}
+	}
+
 	return 0;
 error:
 	return rc;
