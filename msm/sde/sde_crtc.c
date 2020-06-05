@@ -1849,8 +1849,8 @@ static int pstate_cmp(const void *a, const void *b)
 	pa_zpos = sde_plane_get_property(pa->sde_pstate, PLANE_PROP_ZPOS);
 	pb_zpos = sde_plane_get_property(pb->sde_pstate, PLANE_PROP_ZPOS);
 
-	pa_layout = sde_plane_get_property(pa->sde_pstate, PLANE_PROP_LAYOUT);
-	pb_layout = sde_plane_get_property(pb->sde_pstate, PLANE_PROP_LAYOUT);
+	pa_layout = pa->sde_pstate->layout;
+	pb_layout = pb->sde_pstate->layout;
 
 	if (pa_zpos != pb_zpos)
 		rc = pa_zpos - pb_zpos;
@@ -2118,8 +2118,7 @@ static void _sde_crtc_blend_setup_mixer(struct drm_crtc *crtc,
 		 * none or left layout will program to layer mixer group 0,
 		 * right layout will program to layer mixer group 1.
 		 */
-		if (sde_plane_get_property(pstate, PLANE_PROP_LAYOUT) <=
-				SDE_LAYOUT_LEFT)
+		if (pstate->layout <= SDE_LAYOUT_LEFT)
 			layout_idx = 0;
 		else
 			layout_idx = 1;
@@ -2155,8 +2154,7 @@ static void _sde_crtc_blend_setup_mixer(struct drm_crtc *crtc,
 		pstates[cnt].drm_pstate = state;
 		pstates[cnt].stage = sde_plane_get_property(
 				pstates[cnt].sde_pstate, PLANE_PROP_ZPOS);
-		pstates[cnt].layout = sde_plane_get_property(
-				pstates[cnt].sde_pstate, PLANE_PROP_LAYOUT);
+		pstates[cnt].layout = pstates[cnt].sde_pstate->layout;
 		pstates[cnt].pipe_id = sde_plane_pipe(plane);
 
 		cnt++;
@@ -5300,7 +5298,6 @@ static int _sde_crtc_check_plane_layout(struct drm_crtc *crtc,
 	struct drm_plane *plane;
 	struct drm_plane_state *plane_state;
 	struct sde_plane_state *pstate;
-	enum sde_layout layout;
 	int layout_split;
 
 	if (!_sde_crtc_setup_is_quad_pipe(crtc_state))
@@ -5313,24 +5310,18 @@ static int _sde_crtc_check_plane_layout(struct drm_crtc *crtc,
 			continue;
 
 		pstate = to_sde_plane_state(plane_state);
-		layout = sde_plane_get_property(pstate, PLANE_PROP_LAYOUT);
 		layout_split = crtc_state->mode.hdisplay >> 1;
 
-		/* update layout if global coordinate is used */
-		if (layout == SDE_LAYOUT_NONE) {
-			if (plane_state->crtc_x >= layout_split) {
-				layout = SDE_LAYOUT_RIGHT;
-				plane_state->crtc_x -= layout_split;
-				pstate->layout_offset = layout_split;
-			} else {
-				layout = SDE_LAYOUT_LEFT;
-				pstate->layout_offset = -1;
-			}
-			pstate->property_values[PLANE_PROP_LAYOUT].value =
-					layout;
-			SDE_DEBUG("plane%d updated: crtc_x=%d layout=%d\n",
-				DRMID(plane), plane_state->crtc_x, layout);
+		/* update layout based on global coordinate */
+		if (plane_state->crtc_x >= layout_split) {
+			pstate->layout = SDE_LAYOUT_RIGHT;
+			plane_state->crtc_x -= layout_split;
+			pstate->layout_offset = layout_split;
+		} else {
+			pstate->layout = SDE_LAYOUT_LEFT;
 		}
+		SDE_DEBUG("plane%d updated: crtc_x=%d layout=%d\n",
+			DRMID(plane), plane_state->crtc_x, pstate->layout);
 
 		/* check layout boundary */
 		if (CHECK_LAYER_BOUNDS(plane_state->crtc_x,
@@ -5338,7 +5329,7 @@ static int _sde_crtc_check_plane_layout(struct drm_crtc *crtc,
 			SDE_ERROR("invalid horizontal destination\n");
 			SDE_ERROR("x:%d w:%d hdisp:%d layout:%d\n",
 				plane_state->crtc_x, plane_state->crtc_w,
-				layout_split, layout);
+				layout_split, pstate->layout);
 			return -E2BIG;
 		}
 	}
@@ -5476,8 +5467,7 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 		pstates[cnt].drm_pstate = pstate;
 		pstates[cnt].stage = sde_plane_get_property(
 				pstates[cnt].sde_pstate, PLANE_PROP_ZPOS);
-		pstates[cnt].layout = sde_plane_get_property(
-				pstates[cnt].sde_pstate, PLANE_PROP_LAYOUT);
+		pstates[cnt].layout = pstates[cnt].sde_pstate->layout;
 		pstates[cnt].pipe_id = sde_plane_pipe(plane);
 
 		/*
