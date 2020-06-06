@@ -730,6 +730,11 @@ static int dsi_ctrl_axi_bus_client_init(struct platform_device *pdev,
 	int rc = 0;
 	struct dsi_ctrl_bus_scale_info *bus = &ctrl->axi_bus_info;
 
+	if (!of_find_property(pdev->dev.of_node, "qcom,msm-bus,name", NULL)) {
+		pr_debug("no bus name defined, skip axi bus init\n");
+		return 0;
+	}
+
 	bus->bus_scale_table = msm_bus_cl_get_pdata(pdev);
 	if (IS_ERR_OR_NULL(bus->bus_scale_table)) {
 		rc = PTR_ERR(bus->bus_scale_table);

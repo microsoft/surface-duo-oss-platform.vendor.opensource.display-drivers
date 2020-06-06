@@ -46,7 +46,7 @@ struct shd_display_base {
 
 	int intf_idx;
 	bool mst_port;
-	int tile_num;
+	bool dynamic_mode;
 };
 
 struct shd_display {
@@ -62,9 +62,11 @@ struct shd_display {
 	struct sde_rect src;
 	struct sde_rect roi;
 	struct shd_stage_range stage_range;
+	bool full_screen;
 
 	struct platform_device *pdev;
 	struct list_head head;
+	struct notifier_block notifier;
 	struct drm_crtc *crtc;
 };
 

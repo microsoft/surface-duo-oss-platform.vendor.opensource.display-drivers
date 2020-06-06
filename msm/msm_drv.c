@@ -512,6 +512,7 @@ static int msm_drm_init(struct device *dev, struct drm_driver *drv)
 
 	INIT_LIST_HEAD(&priv->client_event_list);
 	INIT_LIST_HEAD(&priv->inactive_list);
+	BLOCKING_INIT_NOTIFIER_HEAD(&priv->component_notifier_list);
 
 	ret = sde_power_resource_init(pdev, &priv->phandle);
 	if (ret) {
@@ -590,6 +591,8 @@ static int msm_drm_init(struct device *dev, struct drm_driver *drv)
 			goto fail;
 		}
 	}
+
+	msm_drm_notify_components(ddev, MSM_COMP_OBJECT_CREATED);
 
 	/**
 	 * this priority was found during empiric testing to have appropriate
@@ -1377,6 +1380,48 @@ void msm_mode_object_event_notify(struct drm_mode_object *obj,
 		drm_send_event_locked(dev, &notify->base);
 	}
 	spin_unlock_irqrestore(&dev->event_lock, flags);
+}
+
+int msm_drm_register_component(struct drm_device *dev,
+		struct notifier_block *nb)
+{
+	struct msm_drm_private *priv;
+
+	if (!dev)
+		return -EINVAL;
+
+	priv = dev->dev_private;
+
+	return blocking_notifier_chain_register(&priv->component_notifier_list,
+			nb);
+}
+
+int msm_drm_unregister_component(struct drm_device *dev,
+		struct notifier_block *nb)
+{
+	struct msm_drm_private *priv;
+
+	if (!dev)
+		return -EINVAL;
+
+	priv = dev->dev_private;
+
+	return blocking_notifier_chain_unregister(
+			&priv->component_notifier_list,	nb);
+}
+
+int msm_drm_notify_components(struct drm_device *dev,
+		enum msm_component_event event)
+{
+	struct msm_drm_private *priv;
+
+	if (!dev)
+		return -EINVAL;
+
+	priv = dev->dev_private;
+
+	return blocking_notifier_call_chain(&priv->component_notifier_list,
+			event, NULL);
 }
 
 static int msm_release(struct inode *inode, struct file *filp)

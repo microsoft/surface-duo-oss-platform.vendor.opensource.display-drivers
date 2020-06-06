@@ -199,5 +199,12 @@ int dp_mst_init(struct dp_display *dp_display);
  */
 void dp_mst_deinit(struct dp_display *dp_display);
 
+/**
+ * dp_mst_dump_topology - dump out current mst topology
+ * @display: Pointer to private display structure
+ * @m: Pointer to sequential file
+ */
+void dp_mst_dump_topology(struct dp_display *dp_display, struct seq_file *m);
+
 #endif /* _DP_DRM_H_ */
 
