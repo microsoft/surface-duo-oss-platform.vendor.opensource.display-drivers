@@ -1183,6 +1183,12 @@ static void _dp_panel_dsc_get_num_extra_pclk(struct msm_display_dsc_info *dsc,
 
 	_dp_panel_get_dto_m_n(ratio, dsc->bpc * 3, &dto_n, &dto_d);
 
+	if (!dto_n) {
+		pr_err("invalid ratio %d bpc %d\n", ratio, dsc->bpc);
+		dsc->extra_width = 0;
+		return;
+	}
+
 	ack_required = dsc->pclk_per_line;
 
 	/* number of pclk cycles left outside of the complete DTO set */
@@ -1504,6 +1510,17 @@ static int dp_panel_dsc_prepare_basic_params(
 	int slice_width;
 	u32 ppr = dp_mode->timing.pixel_clk_khz/1000;
 	int max_slice_width;
+
+	/*
+	 * DSC only support 24/30/36 bpp which is defined in
+	 * dsi_dsc_ratio_type enum. dp_panel_get_supported_bpp
+	 * will return 18/24/30, so we only check 18 here.
+	 */
+	if (dp_mode->timing.bpp < 24) {
+		pr_debug("bpp %d is not supported in dsc mode\n",
+				dp_mode->timing.bpp);
+		return -EINVAL;
+	}
 
 	comp_info->dsc_info.slice_per_pkt = 0;
 	for (i = 0; i < ARRAY_SIZE(slice_per_line_tbl); i++) {
