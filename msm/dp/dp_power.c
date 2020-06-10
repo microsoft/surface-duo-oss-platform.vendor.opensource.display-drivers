@@ -18,6 +18,7 @@ struct dp_power_private {
 	struct clk *pixel_parent;
 	struct clk *pixel1_clk_rcg;
 	struct clk *pixel1_parent;
+	struct clk *pixel_parent_xo;
 	struct clk *bond_pixel_parent;
 
 	struct dp_power dp_power;
@@ -194,6 +195,12 @@ static int dp_power_clk_init(struct dp_power_private *power, bool enable)
 			power->pixel1_parent = NULL;
 		}
 
+		power->pixel_parent_xo = devm_clk_get(dev, "xo_clk");
+		if (IS_ERR(power->pixel_parent_xo)) {
+			pr_debug("Unable to get DP XO clk parent\n");
+			power->pixel_parent_xo = NULL;
+		}
+
 		power->bond_pixel_parent = devm_clk_get(dev,
 						"bond_pixel_parent");
 		if (IS_ERR(power->bond_pixel_parent)) {
@@ -273,6 +280,8 @@ static int dp_power_clk_enable(struct dp_power *dp_power,
 	int rc = 0;
 	struct dss_module_power *mp;
 	struct dp_power_private *power;
+	enum dp_stream_id stream_id;
+	enum dp_phy_bond_mode phy_bond_mode;
 
 	if (!dp_power) {
 		pr_err("invalid power data\n");
@@ -322,6 +331,14 @@ static int dp_power_clk_enable(struct dp_power *dp_power,
 		if (pm_type == DP_LINK_PM && power->link_clks_on) {
 			pr_debug("links clks already enabled\n");
 			return 0;
+		}
+	} else {
+		if (pm_type == DP_STREAM0_PM || pm_type == DP_STREAM1_PM) {
+			stream_id = (pm_type == DP_STREAM0_PM) ?
+				DP_STREAM_0 : DP_STREAM_1;
+			phy_bond_mode = DP_PHY_BOND_MODE_NONE;
+			dp_power->set_pixel_clk_parent(dp_power, stream_id,
+							phy_bond_mode, enable);
 		}
 	}
 
@@ -523,7 +540,7 @@ static void dp_power_client_deinit(struct dp_power *dp_power)
 }
 
 static int dp_power_set_pixel_clk_parent(struct dp_power *dp_power, u32 strm_id,
-			enum dp_phy_bond_mode bond_mode)
+			enum dp_phy_bond_mode bond_mode, bool enable)
 {
 	int rc = 0;
 	struct dp_power_private *power;
@@ -538,18 +555,33 @@ static int dp_power_set_pixel_clk_parent(struct dp_power *dp_power, u32 strm_id,
 
 	if (strm_id == DP_STREAM_0) {
 		if (IS_PCLK_BOND_MODE(bond_mode)) {
-			if (power->pixel_clk_rcg && power->bond_pixel_parent)
+			if (enable && power->pixel_clk_rcg
+				&& power->bond_pixel_parent)
 				clk_set_parent(power->pixel_clk_rcg,
 						power->bond_pixel_parent);
+			else if (!enable && power->pixel_clk_rcg
+				&& power->pixel_parent_xo)
+				clk_set_parent(power->pixel_clk_rcg,
+					power->pixel_parent_xo);
 		} else {
-			if (power->pixel_clk_rcg && power->pixel_parent)
+			if (enable && power->pixel_clk_rcg
+				&& power->pixel_parent)
 				clk_set_parent(power->pixel_clk_rcg,
 						power->pixel_parent);
+			else if (!enable && power->pixel_clk_rcg
+					&& power->pixel_parent_xo)
+				clk_set_parent(power->pixel_clk_rcg,
+					power->pixel_parent_xo);
 		}
 	} else if (strm_id == DP_STREAM_1) {
-		if (power->pixel1_clk_rcg && power->pixel1_parent)
+		if (enable && power->pixel1_clk_rcg && power->pixel1_parent)
 			clk_set_parent(power->pixel1_clk_rcg,
 					power->pixel1_parent);
+		else if (!enable && power->strm1_clks_on == true
+			&& power->pixel1_clk_rcg
+			&& power->pixel_parent_xo)
+			clk_set_parent(power->pixel1_clk_rcg,
+					power->pixel_parent_xo);
 	}
 exit:
 	return rc;

@@ -633,7 +633,7 @@ static int dp_ctrl_enable_stream_clocks(struct dp_ctrl_private *ctrl,
 	char clk_name[32] = "";
 
 	ret = ctrl->power->set_pixel_clk_parent(ctrl->power,
-			dp_panel->stream_id, ctrl->phy_bond_mode);
+			dp_panel->stream_id, ctrl->phy_bond_mode, true);
 
 	if (ret)
 		return ret;
