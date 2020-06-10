@@ -19,6 +19,7 @@ struct dp_power_private {
 	struct clk *pixel1_clk_rcg;
 	struct clk *pixel1_parent;
 	struct clk *pixel_parent_xo;
+	struct clk *link_clk_rcg;
 	struct clk *bond_pixel_parent;
 
 	struct dp_power dp_power;
@@ -201,6 +202,12 @@ static int dp_power_clk_init(struct dp_power_private *power, bool enable)
 			power->pixel_parent_xo = NULL;
 		}
 
+		power->link_clk_rcg = devm_clk_get(dev, "link_clk_rcg");
+		if (IS_ERR(power->link_clk_rcg)) {
+			pr_debug("Unable to get link clk RCG\n");
+			power->link_clk_rcg = NULL;
+		}
+
 		power->bond_pixel_parent = devm_clk_get(dev,
 						"bond_pixel_parent");
 		if (IS_ERR(power->bond_pixel_parent)) {
@@ -219,6 +226,9 @@ static int dp_power_clk_init(struct dp_power_private *power, bool enable)
 
 		if (power->pixel1_clk_rcg)
 			devm_clk_put(dev, power->pixel1_clk_rcg);
+
+		if (power->link_clk_rcg)
+			devm_clk_put(dev, power->link_clk_rcg);
 
 		if (power->bond_pixel_parent)
 			devm_clk_put(dev, power->bond_pixel_parent);
@@ -339,6 +349,10 @@ static int dp_power_clk_enable(struct dp_power *dp_power,
 			phy_bond_mode = DP_PHY_BOND_MODE_NONE;
 			dp_power->set_pixel_clk_parent(dp_power, stream_id,
 							phy_bond_mode, enable);
+		} else if (pm_type == DP_LINK_PM && power->link_clk_rcg
+				&& power->pixel_parent_xo) {
+			clk_set_parent(power->link_clk_rcg,
+					power->pixel_parent_xo);
 		}
 	}
 
