@@ -138,6 +138,17 @@ int dp_connector_atomic_check(
 		struct drm_connector *connector, void *display,
 		struct drm_connector_state *new_conn_state);
 
+/**
+ * dp_connector_get_tile_map - callback to get tile map
+ * @connector: Pointer to drm connector structure
+ * @display: Pointer to private display handle
+ * @num_tile: Number of tiles
+ * @tile_map: Pointer to tile indices
+ * Returns: Zero on success
+ */
+int dp_connector_get_tile_map(struct drm_connector *connector,
+		void *display, int num_tile, int *tile_map);
+
 int dp_drm_bridge_init(void *display,
 	struct drm_encoder *encoder);
 

@@ -599,6 +599,7 @@ struct dsi_host_config {
  * @dsc:                  DSC compression info
  * @dsc_enabled:          DSC compression enabled
  * @roi_caps:		  Panel ROI capabilities
+ * @swap_intf:		  Swap left/right intfs
  */
 struct dsi_display_mode_priv_info {
 	struct dsi_panel_cmd_set cmd_sets[DSI_CMD_SET_MAX];
@@ -617,6 +618,7 @@ struct dsi_display_mode_priv_info {
 	struct msm_display_dsc_info dsc;
 	bool dsc_enabled;
 	struct msm_roi_caps roi_caps;
+	bool swap_intf;
 };
 
 /**

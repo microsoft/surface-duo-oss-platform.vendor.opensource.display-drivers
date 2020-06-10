@@ -1938,6 +1938,22 @@ static void sde_connector_check_status_work(struct work_struct *work)
 	_sde_connector_report_panel_dead(conn, false);
 }
 
+int sde_connector_get_tile_map(struct drm_connector *connector,
+		int num_tile, int *tile_map)
+{
+	struct sde_connector *sde_conn = NULL;
+
+	if (!connector || num_tile < 2 || !tile_map)
+		return -EINVAL;
+
+	sde_conn = to_sde_connector(connector);
+	if (!sde_conn->ops.get_tile_map)
+		return -EINVAL;
+
+	return sde_conn->ops.get_tile_map(connector, sde_conn->display,
+			num_tile, tile_map);
+}
+
 static const struct drm_connector_helper_funcs sde_connector_helper_ops = {
 	.get_modes =    sde_connector_get_modes,
 	.mode_valid =   sde_connector_mode_valid,
