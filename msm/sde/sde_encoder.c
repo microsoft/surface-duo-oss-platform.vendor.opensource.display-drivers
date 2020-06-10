@@ -3056,6 +3056,21 @@ static int _sde_encoder_calc_lm_to_intf_ratio(struct sde_encoder_virt *sde_enc,
 	return 0;
 }
 
+static inline void _sde_encoder_get_tile_map(struct sde_encoder_virt *sde_enc,
+		struct drm_connector *connector, int *tile_map)
+{
+	int i, ret;
+
+	ret = sde_connector_get_tile_map(connector,
+			sde_enc->display_num_of_h_tiles, tile_map);
+	if (!ret)
+		return;
+
+	/* default mapping */
+	for (i = 0; i < sde_enc->display_num_of_h_tiles; i++)
+		tile_map[i] = i;
+}
+
 static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 				      struct drm_display_mode *mode,
 				      struct drm_display_mode *adj_mode)
@@ -3067,6 +3082,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 	struct drm_connector *conn = NULL, *conn_iter;
 	struct sde_rm_hw_iter dsc_iter, pp_iter, qdss_iter;
 	struct sde_rm_hw_request request_hw;
+	int tile_map[MAX_H_TILES_PER_DISPLAY];
 	bool is_cmd_mode = false;
 	int i = 0, j, ret;
 	int ratio;
@@ -3195,6 +3211,8 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 		return;
 	}
 
+	_sde_encoder_get_tile_map(sde_enc, conn, tile_map);
+
 	for (i = 0; i < sde_enc->num_phys_encs; i++) {
 		struct sde_encoder_phys *phys = sde_enc->phys_encs[i];
 
@@ -3205,7 +3223,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 				return;
 			}
 
-			phys->hw_pp = sde_enc->hw_pp[i * ratio];
+			phys->hw_pp = sde_enc->hw_pp[tile_map[i] * ratio];
 			phys->connector = conn->state->connector;
 
 			if (phys->ops.mode_set)
