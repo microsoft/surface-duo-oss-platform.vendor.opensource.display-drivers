@@ -173,6 +173,16 @@ int sde_rm_get_topology_num_encoders(struct sde_rm *rm,
 	enum sde_rm_topology_name topology);
 
 /**
+ * sde_rm_get_roi_misr_num - get the number of roi misr with
+ *                           the given drm_connector
+ * @rm: SDE Resource Manager handle
+ * @topology: topology name
+ * @Return: the number of roi misrs
+ */
+int sde_rm_get_roi_misr_num(struct sde_rm *rm,
+		enum sde_rm_topology_name topology);
+
+/**
  * sde_rm_init - Read hardware catalog and create reservation tracking objects
  *	for all HW blocks.
  * @rm: SDE Resource Manager handle
