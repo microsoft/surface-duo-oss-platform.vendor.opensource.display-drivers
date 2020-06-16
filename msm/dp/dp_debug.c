@@ -2168,7 +2168,7 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		pr_err("[%s] debugfs mst_topology failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug_name, rc);
 	}
 
 	return 0;
