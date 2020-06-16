@@ -924,7 +924,7 @@ static void dp_ctrl_mst_calculate_rg(struct dp_ctrl_private *ctrl,
 	denominator = drm_fixp_from_fraction(256 * lanes, 1);
 	target_sc_fixp = drm_fixp_div(numerator, denominator);
 
-	ts_enum = 256 * lanes;
+	ts_enum = 0;
 	ts_denom = drm_fixp_from_fraction(256 * lanes, 1);
 	ts_int = drm_fixp2int(target_sc_fixp);
 
@@ -953,7 +953,11 @@ static void dp_ctrl_mst_calculate_rg(struct dp_ctrl_private *ctrl,
 	y_frac_enum_fixp = drm_fixp_mul(temp1, temp2);
 
 	temp1 = drm_fixp2int(y_frac_enum_fixp);
-	temp2 = drm_fixp2int_ceil(y_frac_enum_fixp);
+
+	if (y_frac_enum_fixp)
+		temp2 = drm_fixp2int_ceil(y_frac_enum_fixp);
+	else
+		temp2 = 0;
 
 	y_frac_enum = (u32)((temp1 == temp2) ? temp1 : temp1 + 1);
 
