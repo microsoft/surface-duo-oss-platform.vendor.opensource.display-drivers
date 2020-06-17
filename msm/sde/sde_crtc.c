@@ -2071,7 +2071,7 @@ static int pstate_cmp(const void *a, const void *b)
 	struct plane_state *pb = (struct plane_state *)b;
 	int rc = 0;
 	int pa_zpos, pb_zpos;
-	enum sde_layout pa_layout, pb_layout;
+	u32 pa_layout, pb_layout;
 
 	pa_zpos = sde_plane_get_property(pa->sde_pstate, PLANE_PROP_ZPOS);
 	pb_zpos = sde_plane_get_property(pb->sde_pstate, PLANE_PROP_ZPOS);
@@ -2342,13 +2342,12 @@ static void _sde_crtc_blend_setup_mixer(struct drm_crtc *crtc,
 				rot_id != 0);
 
 		/*
-		 * none or left layout will program to layer mixer group 0,
-		 * right layout will program to layer mixer group 1.
+		 * first layout will program to layer mixer group 0,
+		 * second layout will program to layer mixer group 1,
+		 * third layout will program to layer mixer group 2,
+		 * and so on.
 		 */
-		if (pstate->layout <= SDE_LAYOUT_LEFT)
-			layout_idx = 0;
-		else
-			layout_idx = 1;
+		layout_idx = pstate->layout;
 
 		stage_cfg = &sde_crtc->stage_cfg[layout_idx];
 		stage_idx = zpos_cnt[layout_idx][pstate->stage]++;
@@ -5932,15 +5931,17 @@ static int _sde_crtc_check_plane_layout(struct drm_crtc *crtc,
 		layout_split = crtc_state->mode.hdisplay >> 1;
 
 		/* update layout based on global coordinate */
-		if (plane_state->crtc_x >= layout_split) {
-			pstate->layout = SDE_LAYOUT_RIGHT;
-			plane_state->crtc_x -= layout_split;
-			pstate->layout_offset = layout_split;
-		} else {
-			pstate->layout = SDE_LAYOUT_LEFT;
-		}
+		pstate->layout = plane_state->crtc_x / layout_split;
+		pstate->layout_offset = pstate->layout * layout_split;
+		plane_state->crtc_x -= pstate->layout_offset;
 		SDE_DEBUG("plane%d updated: crtc_x=%d layout=%d\n",
 			DRMID(plane), plane_state->crtc_x, pstate->layout);
+
+		if (pstate->layout >= MAX_LAYOUTS_PER_CRTC) {
+			SDE_ERROR("invalid layout >= %d\n",
+				MAX_LAYOUTS_PER_CRTC);
+			return -E2BIG;
+		}
 
 		/* check layout boundary */
 		if (CHECK_LAYER_BOUNDS(plane_state->crtc_x,
@@ -5974,7 +5975,8 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 	struct sde_multirect_plane_states *multirect_plane = NULL;
 	int multirect_count = 0;
 	const struct drm_plane_state *pipe_staged[SSPP_MAX];
-	int left_zpos_cnt = 0, right_zpos_cnt = 0;
+	int zpos_cnt = 0;
+	int layout;
 	int inc_sde_stage = 0;
 
 	struct drm_connector *conn;
@@ -6180,12 +6182,14 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 	}
 
 	z_pos = -1;
+	layout = -1;
 	for (i = 0; i < cnt; i++) {
 		/* reset counts at every new blend stage */
-		if (pstates[i].stage != z_pos) {
-			left_zpos_cnt = 0;
-			right_zpos_cnt = 0;
+		if (pstates[i].stage != z_pos ||
+			pstates[i].sde_pstate->layout != layout) {
+			zpos_cnt = 0;
 			z_pos = pstates[i].stage;
+			layout = pstates[i].sde_pstate->layout;
 		}
 
 		/* verify z_pos setting before using it */
@@ -6194,30 +6198,20 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 					SDE_STAGE_MAX - SDE_STAGE_0);
 			rc = -EINVAL;
 			goto end;
-		} else if (pstates[i].drm_pstate->crtc_x < mixer_width) {
-			if (left_zpos_cnt == 2) {
-				SDE_ERROR("> 2 planes @ stage %d on left\n",
-					z_pos);
-				rc = -EINVAL;
-				goto end;
-			}
-			left_zpos_cnt++;
-
+		} else if (zpos_cnt == 2) {
+			SDE_ERROR("> 2 planes @ stage %d\n", z_pos);
+			rc = -EINVAL;
+			goto end;
 		} else {
-			if (right_zpos_cnt == 2) {
-				SDE_ERROR("> 2 planes @ stage %d on right\n",
-					z_pos);
-				rc = -EINVAL;
-				goto end;
-			}
-			right_zpos_cnt++;
+			zpos_cnt++;
 		}
 
 		if (!kms->catalog->has_base_layer)
 			pstates[i].sde_pstate->stage = z_pos + SDE_STAGE_0;
 		else
 			pstates[i].sde_pstate->stage = z_pos;
-		SDE_DEBUG("%s: zpos %d", sde_crtc->name, z_pos);
+		SDE_DEBUG("%s: layout %d, zpos %d", sde_crtc->name, layout,
+				z_pos);
 	}
 
 	for (i = 0; i < multirect_count; i++) {

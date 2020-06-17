@@ -5085,9 +5085,9 @@ sde_plane_duplicate_state(struct drm_plane *plane)
 	sde_plane_rot_duplicate_state(plane, &pstate->base);
 
 	/* reset layout offset */
-	if (pstate->layout != SDE_LAYOUT_NONE) {
+	if (pstate->layout) {
 		pstate->base.crtc_x += pstate->layout_offset;
-		pstate->layout = SDE_LAYOUT_NONE;
+		pstate->layout = 0;
 		pstate->layout_offset = 0;
 	}
 
