@@ -28,10 +28,10 @@
 #endif
 
 #ifndef SDE_MAX_PLANES
-#define SDE_MAX_PLANES			4
+#define SDE_MAX_PLANES			6
 #endif
 
-#define PIPES_PER_STAGE			2
+#define PIPES_PER_STAGE			6
 #ifndef SDE_MAX_DE_CURVES
 #define SDE_MAX_DE_CURVES		3
 #endif
