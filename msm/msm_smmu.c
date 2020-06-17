@@ -20,28 +20,21 @@
 #include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
 #include <linux/msm_dma_iommu_mapping.h>
-
-#include <asm/dma-iommu.h>
+#include <linux/dma-mapping.h>
 #include <soc/qcom/secure_buffer.h>
-
 #include "msm_drv.h"
 #include "msm_gem.h"
 #include "msm_mmu.h"
 #include "sde_dbg.h"
 
-#ifndef SZ_4G
-#define SZ_4G	(((size_t) SZ_1G) * 4)
-#endif
-
-#ifndef SZ_2G
-#define SZ_2G	(((size_t) SZ_1G) * 2)
-#endif
-
 struct msm_smmu_client {
 	struct device *dev;
-	struct dma_iommu_mapping *mmu_mapping;
+	const char *compat;
+	struct iommu_domain *domain;
+	const struct dma_map_ops *dma_ops;
 	bool domain_attached;
 	bool secure;
+	struct list_head smmu_list;
 };
 
 struct msm_smmu {
@@ -52,16 +45,17 @@ struct msm_smmu {
 
 struct msm_smmu_domain {
 	const char *label;
-	size_t va_start;
-	size_t va_size;
 	bool secure;
 };
 
 #define to_msm_smmu(x) container_of(x, struct msm_smmu, base)
 #define msm_smmu_to_client(smmu) (smmu->client)
 
-static int _msm_smmu_create_mapping(struct msm_smmu_client *client,
-	const struct msm_smmu_domain *domain);
+/* Serialization lock for smmu_list */
+static DEFINE_MUTEX(smmu_list_lock);
+
+/* List of all smmu devices installed */
+static LIST_HEAD(sde_smmu_list);
 
 static int msm_smmu_attach(struct msm_mmu *mmu, const char * const *names,
 		int cnt)
@@ -79,8 +73,13 @@ static int msm_smmu_attach(struct msm_mmu *mmu, const char * const *names,
 	if (client->domain_attached)
 		return 0;
 
-	rc = arm_iommu_attach_device(client->dev,
-			client->mmu_mapping);
+	if (client->dma_ops) {
+		set_dma_ops(client->dev, client->dma_ops);
+		client->dma_ops = NULL;
+		dev_dbg(client->dev, "iommu domain ops restored\n");
+	}
+
+	rc = iommu_attach_device(client->domain, client->dev);
 	if (rc) {
 		dev_err(client->dev, "iommu attach dev failed (%d)\n",
 				rc);
@@ -109,7 +108,15 @@ static void msm_smmu_detach(struct msm_mmu *mmu, const char * const *names,
 		return;
 
 	pm_runtime_get_sync(mmu->dev);
-	arm_iommu_detach_device(client->dev);
+	msm_dma_unmap_all_for_dev(client->dev);
+	iommu_detach_device(client->domain, client->dev);
+
+	client->dma_ops = get_dma_ops(client->dev);
+	if (client->dma_ops) {
+		set_dma_ops(client->dev, NULL);
+		dev_dbg(client->dev, "iommu domain ops removed\n");
+	}
+
 	pm_runtime_put_sync(mmu->dev);
 
 	client->domain_attached = false;
@@ -123,10 +130,10 @@ static int msm_smmu_set_attribute(struct msm_mmu *mmu,
 	struct msm_smmu_client *client = msm_smmu_to_client(smmu);
 	int ret = 0;
 
-	if (!client || !client->mmu_mapping)
+	if (!client || !client->domain)
 		return -ENODEV;
 
-	ret = iommu_domain_set_attr(client->mmu_mapping->domain, attr, data);
+	ret = iommu_domain_set_attr(client->domain, attr, data);
 	if (ret)
 		DRM_ERROR("set domain attribute failed:%d\n", ret);
 
@@ -140,10 +147,10 @@ static int msm_smmu_one_to_one_unmap(struct msm_mmu *mmu,
 	struct msm_smmu_client *client = msm_smmu_to_client(smmu);
 	int ret = 0;
 
-	if (!client || !client->mmu_mapping)
+	if (!client || !client->domain)
 		return -ENODEV;
 
-	ret = iommu_unmap(client->mmu_mapping->domain, dest_address, size);
+	ret = iommu_unmap(client->domain, dest_address, size);
 	if (ret != size)
 		pr_err("smmu unmap failed\n");
 
@@ -157,10 +164,10 @@ static int msm_smmu_one_to_one_map(struct msm_mmu *mmu, uint32_t iova,
 	struct msm_smmu_client *client = msm_smmu_to_client(smmu);
 	int ret = 0;
 
-	if (!client || !client->mmu_mapping)
+	if (!client || !client->domain)
 		return -ENODEV;
 
-	ret = iommu_map(client->mmu_mapping->domain, dest_address, dest_address,
+	ret = iommu_map(client->domain, dest_address, dest_address,
 			size, prot);
 	if (ret)
 		pr_err("smmu map failed\n");
@@ -176,13 +183,12 @@ static int msm_smmu_map(struct msm_mmu *mmu, uint64_t iova,
 	size_t ret = 0;
 
 	if (sgt && sgt->sgl) {
-		ret = iommu_map_sg(client->mmu_mapping->domain, iova, sgt->sgl,
+		ret = iommu_map_sg(client->domain, iova, sgt->sgl,
 				sgt->nents, prot);
-		WARN_ON(ret < 0);
+		WARN_ON((int)ret < 0);
 		DRM_DEBUG("%pad/0x%x/0x%x/\n", &sgt->sgl->dma_address,
 				sgt->sgl->dma_length, prot);
-		SDE_EVT32(sgt->sgl->dma_address, sgt->sgl->dma_length,
-				prot);
+		SDE_EVT32(sgt->sgl->dma_address, sgt->sgl->dma_length, prot);
 	}
 	return (ret == len) ? 0 : -EINVAL;
 }
@@ -194,7 +200,7 @@ static int msm_smmu_unmap(struct msm_mmu *mmu, uint64_t iova,
 	struct msm_smmu_client *client = msm_smmu_to_client(smmu);
 
 	pm_runtime_get_sync(mmu->dev);
-	iommu_unmap(client->mmu_mapping->domain, iova, len);
+	iommu_unmap(client->domain, iova, len);
 	pm_runtime_put_sync(mmu->dev);
 
 	return 0;
@@ -229,6 +235,9 @@ static int msm_smmu_map_dma_buf(struct msm_mmu *mmu, struct sg_table *sgt,
 		DRM_ERROR("sg table is invalid\n");
 		return -ENOMEM;
 	}
+
+	if (flags & MSM_BO_KEEPATTRS)
+		attrs |= DMA_ATTR_IOMMU_USE_LLC_NWA;
 
 	/*
 	 * For import buffer type, dma_map_sg_attrs is called during
@@ -304,26 +313,18 @@ static const struct msm_mmu_funcs funcs = {
 static struct msm_smmu_domain msm_smmu_domains[MSM_SMMU_DOMAIN_MAX] = {
 	[MSM_SMMU_DOMAIN_UNSECURE] = {
 		.label = "mdp_ns",
-		.va_start = SZ_2G,
-		.va_size = SZ_4G - SZ_2G,
 		.secure = false,
 	},
 	[MSM_SMMU_DOMAIN_SECURE] = {
 		.label = "mdp_s",
-		.va_start = SZ_2G,
-		.va_size = SZ_4G - SZ_2G,
 		.secure = true,
 	},
 	[MSM_SMMU_DOMAIN_NRT_UNSECURE] = {
 		.label = "rot_ns",
-		.va_start = SZ_2G,
-		.va_size = SZ_4G - SZ_2G,
 		.secure = false,
 	},
 	[MSM_SMMU_DOMAIN_NRT_SECURE] = {
 		.label = "rot_s",
-		.va_start = SZ_2G,
-		.va_size = SZ_4G - SZ_2G,
 		.secure = true,
 	},
 };
@@ -339,14 +340,37 @@ static const struct of_device_id msm_smmu_dt_match[] = {
 		.data = &msm_smmu_domains[MSM_SMMU_DOMAIN_NRT_SECURE] },
 	{}
 };
-MODULE_DEVICE_TABLE(of, msm_smmu_dt_match);
 
-static struct device *msm_smmu_device_create(struct device *dev,
+static struct msm_smmu_client *msm_smmu_get_smmu(const char *compat)
+{
+	struct msm_smmu_client *curr = NULL;
+	bool found = false;
+
+	if (!compat) {
+		pr_err("invalid param\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	mutex_lock(&smmu_list_lock);
+	list_for_each_entry(curr, &sde_smmu_list, smmu_list) {
+		if (of_compat_cmp(compat, curr->compat, strlen(compat)) == 0) {
+			DRM_DEBUG("found msm_smmu_client for %s\n", compat);
+			found = true;
+			break;
+		}
+	}
+	mutex_unlock(&smmu_list_lock);
+
+	if (!found)
+		return ERR_PTR(-ENODEV);
+
+	return curr;
+}
+
+static struct device *msm_smmu_device_add(struct device *dev,
 		enum msm_mmu_domain_type domain,
 		struct msm_smmu *smmu)
 {
-	struct device_node *child;
-	struct platform_device *pdev;
 	int i;
 	const char *compat = NULL;
 
@@ -363,43 +387,14 @@ static struct device *msm_smmu_device_create(struct device *dev,
 	}
 	DRM_DEBUG("found domain %d compat: %s\n", domain, compat);
 
-	if (domain == MSM_SMMU_DOMAIN_UNSECURE) {
-		int rc;
-
-		smmu->client = devm_kzalloc(dev,
-				sizeof(struct msm_smmu_client), GFP_KERNEL);
-		if (!smmu->client)
-			return ERR_PTR(-ENOMEM);
-
-		smmu->client->dev = dev;
-
-		rc = _msm_smmu_create_mapping(msm_smmu_to_client(smmu),
-			msm_smmu_dt_match[i].data);
-		if (rc) {
-			devm_kfree(dev, smmu->client);
-			smmu->client = NULL;
-			return ERR_PTR(rc);
-		}
-
-		return NULL;
-	}
-
-	child = of_find_compatible_node(dev->of_node, NULL, compat);
-	if (!child) {
-		DRM_DEBUG("unable to find compatible node for %s\n", compat);
+	smmu->client = msm_smmu_get_smmu(compat);
+	if (IS_ERR_OR_NULL(smmu->client)) {
+		DRM_ERROR("unable to find domain %d compat: %s\n", domain,
+				compat);
 		return ERR_PTR(-ENODEV);
 	}
 
-	pdev = of_platform_device_create(child, NULL, dev);
-	if (!pdev) {
-		DRM_ERROR("unable to create smmu platform dev for domain %d\n",
-				domain);
-		return ERR_PTR(-ENODEV);
-	}
-
-	smmu->client = platform_get_drvdata(pdev);
-
-	return &pdev->dev;
+	return smmu->client->dev;
 }
 
 struct msm_mmu *msm_smmu_new(struct device *dev,
@@ -407,21 +402,13 @@ struct msm_mmu *msm_smmu_new(struct device *dev,
 {
 	struct msm_smmu *smmu;
 	struct device *client_dev;
-	bool smmu_full_map;
 
 	smmu = kzalloc(sizeof(*smmu), GFP_KERNEL);
 	if (!smmu)
 		return ERR_PTR(-ENOMEM);
 
-	smmu_full_map = of_property_read_bool(dev->of_node,
-					"qcom,fullsize-va-map");
-	if (smmu_full_map) {
-		msm_smmu_domains[domain].va_start = SZ_128K;
-		msm_smmu_domains[domain].va_size = SZ_4G - SZ_128K;
-	}
-
-	client_dev = msm_smmu_device_create(dev, domain, smmu);
-	if (IS_ERR(client_dev)) {
+	client_dev = msm_smmu_device_add(dev, domain, smmu);
+	if (IS_ERR_OR_NULL(client_dev)) {
 		kfree(smmu);
 		return (void *)client_dev ? : ERR_PTR(-ENODEV);
 	}
@@ -451,69 +438,10 @@ static int msm_smmu_fault_handler(struct iommu_domain *domain,
 	DRM_ERROR("trigger dump, iova=0x%08lx, flags=0x%x\n", iova, flags);
 	DRM_ERROR("SMMU device:%s", client->dev ? client->dev->kobj.name : "");
 
-	/* generate dump, but no panic */
-	SDE_DBG_DUMP("all", "dbg_bus", "vbif_dbg_bus");
-
 	/*
 	 * return -ENOSYS to allow smmu driver to dump out useful
 	 * debug info.
 	 */
-	return rc;
-}
-
-static int _msm_smmu_create_mapping(struct msm_smmu_client *client,
-	const struct msm_smmu_domain *domain)
-{
-	int rc;
-	int mdphtw_llc_enable = 1;
-
-	client->mmu_mapping = arm_iommu_create_mapping(&platform_bus_type,
-			domain->va_start, domain->va_size);
-	if (IS_ERR(client->mmu_mapping)) {
-		dev_err(client->dev,
-			"iommu create mapping failed for domain=%s\n",
-			domain->label);
-		return PTR_ERR(client->mmu_mapping);
-	}
-
-	rc = iommu_domain_set_attr(client->mmu_mapping->domain,
-			DOMAIN_ATTR_USE_UPSTREAM_HINT, &mdphtw_llc_enable);
-	if (rc) {
-		dev_err(client->dev, "couldn't enable mdp pagetable walks: %d\n",
-			rc);
-		goto error;
-	}
-
-	if (domain->secure) {
-		int secure_vmid = VMID_CP_PIXEL;
-
-		client->secure = true;
-		rc = iommu_domain_set_attr(client->mmu_mapping->domain,
-				DOMAIN_ATTR_SECURE_VMID, &secure_vmid);
-		if (rc) {
-			dev_err(client->dev, "couldn't set secure pix vmid\n");
-			goto error;
-		}
-	}
-
-	if (!client->dev->dma_parms)
-		client->dev->dma_parms = devm_kzalloc(client->dev,
-				sizeof(*client->dev->dma_parms), GFP_KERNEL);
-
-	dma_set_max_seg_size(client->dev, DMA_BIT_MASK(32));
-	dma_set_seg_boundary(client->dev, (unsigned long)DMA_BIT_MASK(64));
-
-	iommu_set_fault_handler(client->mmu_mapping->domain,
-			msm_smmu_fault_handler, (void *)client);
-
-	DRM_INFO("Created domain %s [%zx,%zx] secure=%d\n",
-			domain->label, domain->va_start, domain->va_size,
-			domain->secure);
-
-	return 0;
-
-error:
-	arm_iommu_release_mapping(client->mmu_mapping);
 	return rc;
 }
 
@@ -531,7 +459,6 @@ static int msm_smmu_probe(struct platform_device *pdev)
 	const struct of_device_id *match;
 	struct msm_smmu_client *client;
 	const struct msm_smmu_domain *domain;
-	int rc;
 
 	match = of_match_device(msm_smmu_dt_match, &pdev->dev);
 	if (!match || !match->data) {
@@ -552,23 +479,51 @@ static int msm_smmu_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	client->dev = &pdev->dev;
+	client->domain = iommu_get_domain_for_dev(client->dev);
+	if (!client->domain) {
+		dev_err(&pdev->dev, "iommu get domain for dev failed\n");
+		return -EINVAL;
+	}
+	client->compat = match->compatible;
+	client->secure = domain->secure;
+	client->domain_attached = true;
 
-	rc = _msm_smmu_create_mapping(client, domain);
+	if (!client->dev->dma_parms)
+		client->dev->dma_parms = devm_kzalloc(client->dev,
+				sizeof(*client->dev->dma_parms), GFP_KERNEL);
+	dma_set_max_seg_size(client->dev, DMA_BIT_MASK(32));
+	dma_set_seg_boundary(client->dev, (unsigned long)DMA_BIT_MASK(64));
+
+	iommu_set_fault_handler(client->domain,
+			msm_smmu_fault_handler, (void *)client);
+
+	DRM_INFO("Created domain %s, secure=%d\n",
+			domain->label, domain->secure);
+
 	platform_set_drvdata(pdev, client);
 
-	return rc;
+	mutex_lock(&smmu_list_lock);
+	list_add(&client->smmu_list, &sde_smmu_list);
+	mutex_unlock(&smmu_list_lock);
+	return 0;
 }
 
 static int msm_smmu_remove(struct platform_device *pdev)
 {
 	struct msm_smmu_client *client;
+	struct msm_smmu_client *curr, *next;
 
 	client = platform_get_drvdata(pdev);
-	if (client->domain_attached) {
-		arm_iommu_detach_device(client->dev);
-		client->domain_attached = false;
+	client->domain_attached = false;
+
+	mutex_lock(&smmu_list_lock);
+	list_for_each_entry_safe(curr, next, &sde_smmu_list, smmu_list) {
+		if (curr == client) {
+			list_del(&client->smmu_list);
+			break;
+		}
 	}
-	arm_iommu_release_mapping(client->mmu_mapping);
+	mutex_unlock(&smmu_list_lock);
 
 	return 0;
 }

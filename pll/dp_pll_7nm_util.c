@@ -9,11 +9,11 @@
 #include <linux/err.h>
 #include <linux/iopoll.h>
 #include <linux/delay.h>
-#include <linux/usb/usbpd.h>
 
 #include "pll_drv.h"
 #include "dp_pll.h"
 #include "dp_pll_7nm.h"
+#include "dp_hpd.h"
 
 /* PHY PLL bond mode and its role */
 enum bond_mode_role {

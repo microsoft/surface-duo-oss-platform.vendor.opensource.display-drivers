@@ -14,7 +14,7 @@
 #include <linux/msm_hdcp.h>
 #include <drm/drm_dp_helper.h>
 #include "sde_hdcp.h"
-#include "video/msm_hdmi_hdcp_mgr.h"
+#include <video/msm_hdmi_hdcp_mgr.h>
 #include "dp/dp_reg.h"
 
 #define SDE_HDCP_STATE_NAME (sde_hdcp_state_name(hdcp->hdcp_state))

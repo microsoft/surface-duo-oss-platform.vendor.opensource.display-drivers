@@ -49,13 +49,13 @@ v----------+----------v	  |	divsel_two	|    |	   divsel_four	   |
 #include <linux/err.h>
 #include <linux/iopoll.h>
 #include <linux/delay.h>
-#include <linux/usb/usbpd.h>
 
 #include <dt-bindings/clock/mdss-14nm-pll-clk.h>
 
 #include "pll_drv.h"
 #include "dp_pll.h"
 #include "dp_pll_14nm.h"
+#include "dp_hpd.h"
 
 static struct dp_pll_db dp_pdb;
 static struct clk_ops mux_clk_ops;

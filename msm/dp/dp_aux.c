@@ -6,10 +6,10 @@
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
 #include <linux/soc/qcom/fsa4480-i2c.h>
-#include <linux/usb/usbpd.h>
 #include <linux/delay.h>
 
 #include "dp_aux.h"
+#include "dp_hpd.h"
 
 #define DP_AUX_ENUM_STR(x)		#x
 

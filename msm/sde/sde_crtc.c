@@ -20,12 +20,11 @@
 #include <linux/sort.h>
 #include <linux/debugfs.h>
 #include <linux/ktime.h>
-#include <uapi/drm/sde_drm.h>
+#include <drm/sde_drm.h>
 #include <drm/drm_mode.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_flip_work.h>
-#include <linux/clk/qcom.h>
 #include <linux/sde_rsc.h>
 
 #include "sde_kms.h"
@@ -1254,7 +1253,7 @@ static int _sde_crtc_set_crtc_roi(struct drm_crtc *crtc,
 	is_crtc_roi_dirty = sde_crtc_is_crtc_roi_dirty(state);
 	is_any_conn_roi_dirty = false;
 
-	for_each_connector_in_state(state->state, conn, conn_state, i) {
+	for_each_new_connector_in_state(state->state, conn, conn_state, i) {
 		struct sde_connector *sde_conn;
 		struct sde_connector_state *sde_conn_state;
 		struct sde_rect conn_roi;
@@ -1344,7 +1343,7 @@ static int _sde_crtc_check_autorefresh(struct drm_crtc *crtc,
 		return 0;
 
 	/* partial update active, check if autorefresh is also requested */
-	for_each_connector_in_state(state->state, conn, conn_state, i) {
+	for_each_new_connector_in_state(state->state, conn, conn_state, i) {
 		uint64_t autorefresh;
 
 		if (!conn_state || conn_state->crtc != crtc)
@@ -4705,11 +4704,6 @@ static void sde_crtc_handle_power_event(u32 event_type, void *arg)
 
 	switch (event_type) {
 	case SDE_POWER_EVENT_POST_ENABLE:
-		/* disable mdp LUT memory retention */
-		ret = sde_power_clk_set_flags(&priv->phandle, "lut_clk",
-					CLKFLAG_NORETAIN_MEM);
-		if (ret)
-			SDE_ERROR("disable LUT memory retention err %d\n", ret);
 
 		/* restore encoder; crtc will be programmed during commit */
 		drm_for_each_encoder(encoder, crtc->dev) {
@@ -4743,11 +4737,6 @@ static void sde_crtc_handle_power_event(u32 event_type, void *arg)
 		}
 		break;
 	case SDE_POWER_EVENT_PRE_DISABLE:
-		/* enable mdp LUT memory retention */
-		ret = sde_power_clk_set_flags(&priv->phandle, "lut_clk",
-					CLKFLAG_RETAIN_MEM);
-		if (ret)
-			SDE_ERROR("enable LUT memory retention err %d\n", ret);
 
 		drm_for_each_encoder(encoder, crtc->dev) {
 			if (encoder->crtc != crtc)
@@ -6995,7 +6984,6 @@ struct drm_crtc *sde_crtc_init(struct drm_device *dev, struct drm_plane *plane)
 				NULL);
 
 	drm_crtc_helper_add(crtc, &sde_crtc_helper_funcs);
-	plane->crtc = crtc;
 
 	/* save user friendly CRTC name for later */
 	snprintf(sde_crtc->name, SDE_CRTC_NAME_SIZE, "crtc%u", crtc->base.id);

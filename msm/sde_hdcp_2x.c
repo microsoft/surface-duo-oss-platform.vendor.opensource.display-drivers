@@ -530,7 +530,7 @@ static void sde_hdcp_2x_set_hw_key(struct sde_hdcp_2x_ctrl *hdcp)
 		return;
 	}
 
-	rc = hdcp2_app_comm(hdcp->hdcp2_ctx, HDCP2_CMD_SET_HW_KEY,
+	rc = hdcp2_app_comm(hdcp->hdcp2_ctx, HDCP2_CMD_EN_ENCRYPTION,
 			&hdcp->app_data);
 	if (rc) {
 		pr_err("failed to set h/w key: %d\n", rc);

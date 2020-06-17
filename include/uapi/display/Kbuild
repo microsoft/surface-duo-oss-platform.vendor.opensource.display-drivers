@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note
+
+header-y += media/
+header-y += drm/
+header-y += video/
+header-y += linux/

@@ -6,8 +6,6 @@
 #ifndef _DP_USBPD_H_
 #define _DP_USBPD_H_
 
-#include <linux/usb/usbpd.h>
-
 #include <linux/types.h>
 #include <linux/device.h>
 #include "dp_hpd.h"
@@ -47,11 +45,11 @@ struct dp_usbpd {
 	bool debug_en;
 };
 
+#if IS_ENABLED(CONFIG_DRM_MSM_DP_USBPD_LEGACY)
 /**
  * dp_usbpd_init() - initialize the usbpd module
  *
  * @dev: device instance of the caller
- * @pd: handle for the usbpd driver data
  * @cb: struct containing callback function pointers.
  *
  * This function allows the client to initialize the usbpd
@@ -60,8 +58,7 @@ struct dp_usbpd {
  * sink/usb device. This module will notify the client using
  * the callback functions about the connection and status.
  */
-struct dp_hpd *dp_usbpd_init(struct device *dev, struct usbpd *pd,
-		struct dp_hpd_cb *cb);
+struct dp_hpd *dp_usbpd_init(struct device *dev, struct dp_hpd_cb *cb);
 
 /**
  * dp_usbpd_deinit() - deinitialize the usbpd module
@@ -71,4 +68,13 @@ struct dp_hpd *dp_usbpd_init(struct device *dev, struct usbpd *pd,
  * This function will cleanup the usbpd module
  */
 void dp_usbpd_deinit(struct dp_hpd *pd);
+#else
+static inline struct dp_hpd *dp_usbpd_init(struct device *dev, struct dp_hpd_cb *cb)
+{
+	return NULL;
+}
+static inline void dp_usbpd_deinit(struct dp_hpd *pd)
+{
+}
+#endif /* CONFIG_DRM_MSM_DP_USBPD_LEGACY */
 #endif /* _DP_USBPD_H_ */

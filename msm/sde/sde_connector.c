@@ -16,6 +16,7 @@
 #include "dsi_display.h"
 #include "sde_crtc.h"
 #include "sde_rm.h"
+#include <drm/drm_probe_helper.h>
 
 #define BL_NODE_NAME_SIZE 32
 
@@ -1789,17 +1790,20 @@ sde_connector_atomic_best_encoder(struct drm_connector *connector,
 }
 
 static int sde_connector_atomic_check(struct drm_connector *connector,
-		struct drm_connector_state *new_conn_state)
+		struct drm_atomic_state *state)
 {
 	struct sde_connector *c_conn;
 	struct drm_crtc_state *crtc_state;
 	struct sde_connector_state *c_state;
 	bool qsync_dirty;
+	struct drm_connector_state *new_conn_state;
 
 	if (!connector) {
 		SDE_ERROR("invalid connector\n");
 		return -EINVAL;
 	}
+
+	new_conn_state = drm_atomic_get_new_connector_state(state, connector);
 
 	if (!new_conn_state) {
 		SDE_ERROR("invalid connector state\n");
@@ -1811,7 +1815,7 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 
 	if (new_conn_state->crtc) {
 		crtc_state = drm_atomic_get_new_crtc_state(
-			new_conn_state->state, new_conn_state->crtc);
+			state, new_conn_state->crtc);
 
 		qsync_dirty = msm_property_is_dirty(&c_conn->property_info,
 					&c_state->property_state,
@@ -1825,7 +1829,7 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 
 	if (c_conn->ops.atomic_check)
 		return c_conn->ops.atomic_check(connector,
-				c_conn->display, new_conn_state);
+				c_conn->display, state);
 
 	return 0;
 }
@@ -2206,7 +2210,7 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 
 	mutex_init(&c_conn->lock);
 
-	rc = drm_mode_connector_attach_encoder(&c_conn->base, encoder);
+	rc = drm_connector_attach_encoder(&c_conn->base, encoder);
 	if (rc) {
 		SDE_ERROR("failed to attach encoder to connector, %d\n", rc);
 		goto error_cleanup_fence;

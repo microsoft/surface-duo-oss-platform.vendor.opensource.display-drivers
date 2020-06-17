@@ -20,7 +20,7 @@
 #define __MSM_GEM_H__
 
 #include <linux/kref.h>
-#include <linux/reservation.h>
+#include <linux/dma-resv.h>
 #include "msm_drv.h"
 
 /* Additional internal-use only BO flags: */
@@ -124,8 +124,8 @@ struct msm_gem_object {
 	struct list_head vmas;    /* list of msm_gem_vma */
 
 	/* normally (resv == &_resv) except for imported bo's */
-	struct reservation_object *resv;
-	struct reservation_object _resv;
+	struct dma_resv *resv;
+	struct dma_resv _resv;
 
 	/* For physically contiguous buffers.  Used when we don't have
 	 * an IOMMU.  Also used for stolen/splashscreen buffer.

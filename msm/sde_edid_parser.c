@@ -546,7 +546,7 @@ int _sde_edid_update_modes(struct drm_connector *connector,
 
 	SDE_EDID_DEBUG("%s +", __func__);
 	if (edid_ctrl->edid) {
-		drm_mode_connector_update_edid_property(connector,
+		drm_connector_update_edid_property(connector,
 			edid_ctrl->edid);
 
 		rc = drm_add_edid_modes(connector, edid_ctrl->edid);
@@ -556,7 +556,7 @@ int _sde_edid_update_modes(struct drm_connector *connector,
 		return rc;
 	}
 
-	drm_mode_connector_update_edid_property(connector, NULL);
+	drm_connector_update_edid_property(connector, NULL);
 	SDE_EDID_DEBUG("%s null edid -", __func__);
 	return rc;
 }

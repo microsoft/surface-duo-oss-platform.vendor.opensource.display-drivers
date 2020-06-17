@@ -18,7 +18,6 @@
 #define SDE_POWER_HANDLE_CONT_SPLASH_BUS_AB_QUOTA	3000000000ULL
 
 #include <linux/sde_io_util.h>
-#include <soc/qcom/cx_ipeak.h>
 
 /* event will be triggered before power handler disable */
 #define SDE_POWER_EVENT_PRE_DISABLE	0x1
@@ -158,7 +157,6 @@ struct sde_power_event {
  * @event_list: current power handle event list
  * @rsc_client: sde rsc client pointer
  * @rsc_client_init: boolean to control rsc client create
- * @dss_cx_ipeak: client pointer for cx ipeak driver
  */
 struct sde_power_handle {
 	struct dss_module_power mp;
@@ -172,7 +170,6 @@ struct sde_power_handle {
 	struct list_head event_list;
 	struct sde_rsc_client *rsc_client;
 	bool rsc_client_init;
-	struct cx_ipeak_client *dss_cx_ipeak;
 };
 
 /**
@@ -296,17 +293,6 @@ u64 sde_power_clk_get_max_rate(struct sde_power_handle *pdata,
  */
 struct clk *sde_power_clk_get_clk(struct sde_power_handle *phandle,
 		char *clock_name);
-
-/**
- * sde_power_clk_set_flags() - set the clock flags
- * @pdata:  power handle containing the resources
- * @clock_name: clock name to get the clk pointer.
- * @flags: flags to set
- *
- * Return: error code.
- */
-int sde_power_clk_set_flags(struct sde_power_handle *pdata,
-		char *clock_name, unsigned long flags);
 
 /**
  * sde_power_data_bus_set_quota() - set data bus quota for power client

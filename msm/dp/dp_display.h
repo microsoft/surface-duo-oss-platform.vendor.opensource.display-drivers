@@ -9,7 +9,7 @@
 #include <linux/list.h>
 #include <drm/drmP.h>
 #include <drm/msm_drm.h>
-
+#include <drm/sde_drm.h>
 #include "dp_panel.h"
 
 #define DP_MST_SIM_MAX_PORTS	2
@@ -137,6 +137,7 @@ struct dp_display {
 			enum dp_phy_bond_mode mode);
 };
 
+#if IS_ENABLED(CONFIG_DRM_MSM_DP)
 int dp_display_get_num_of_displays(void);
 int dp_display_get_displays(void **displays, int count);
 int dp_display_get_num_of_streams(void *dp_display);
@@ -144,5 +145,31 @@ int dp_display_get_num_of_bonds(void *dp_display);
 int dp_display_get_info(void *dp_display, struct dp_display_info *dp_info);
 int dp_display_get_bond_displays(void *dp_display, enum dp_bond_type type,
 		struct dp_display_bond_displays *dp_bond_info);
-
+#else
+static inline int dp_display_get_num_of_displays(void);
+{
+	return 0;
+}
+static inline int dp_display_get_displays(void **displays, int count)
+{
+	return 0;
+}
+static inline int dp_display_get_num_of_streams(void *dp_display)
+{
+	return 0;
+}
+static inline int dp_display_get_num_of_bonds(void *dp_display)
+{
+	return 0;
+}
+static inline int dp_display_get_info(void *dp_display, struct dp_display_info *dp_info)
+{
+	return 0;
+}
+static inline int dp_display_get_bond_displays(void *dp_display, enum dp_bond_type type,
+	struct dp_display_bond_displays *dp_bond_info)
+{
+	return 0;
+}
+#endif /* CONFIG_DRM_MSM_DP */
 #endif /* _DP_DISPLAY_H_ */

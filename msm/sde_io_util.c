@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2015, 2017-2019 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2015, 2017-2020 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/clk.h>
@@ -82,7 +82,6 @@ static struct resource *msm_dss_get_res_byname(struct platform_device *pdev,
 
 	return res;
 } /* msm_dss_get_res_byname */
-EXPORT_SYMBOL(msm_dss_get_res_byname);
 
 int msm_dss_ioremap_byname(struct platform_device *pdev,
 	struct dss_io_data *io_data, const char *name)

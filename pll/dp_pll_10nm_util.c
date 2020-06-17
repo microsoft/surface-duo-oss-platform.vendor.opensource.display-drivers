@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -9,11 +9,11 @@
 #include <linux/err.h>
 #include <linux/iopoll.h>
 #include <linux/delay.h>
-#include <linux/usb/usbpd.h>
 
 #include "pll_drv.h"
 #include "dp_pll.h"
 #include "dp_pll_10nm.h"
+#include "dp_hpd.h"
 
 #define DP_PHY_REVISION_ID0			0x0000
 #define DP_PHY_REVISION_ID1			0x0004

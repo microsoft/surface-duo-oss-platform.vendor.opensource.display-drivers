@@ -4,8 +4,10 @@ ccflags-y += -I$(srctree)/techpack/display/msm/sde
 ccflags-y += -I$(srctree)/techpack/display/rotator
 ccflags-y += -I$(srctree)/techpack/display/msm/shd
 ccflags-y += -I$(srctree)/techpack/display/msm/shp
+ccflags-y += -I$(srctree)/techpack/display/pll
+ccflags-y += -I$(srctree)/drivers/clk/qcom
 
-msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_usbpd.o \
+msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 	dp/dp_parser.o \
 	dp/dp_power.o \
 	dp/dp_catalog.o \
@@ -28,7 +30,9 @@ msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_usbpd.o \
 	dp/dp_display.o \
 	dp/dp_drm.o \
 	dp/dp_hdcp2p2.o \
-	dp/dp_mst_drm.o \
+	dp/dp_mst_drm.o
+
+msm_drm-$(CONFIG_DRM_MSM_DP_USBPD_LEGACY) += dp/dp_usbpd.o
 
 msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_encoder.o \
@@ -74,17 +78,17 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_hw_dsc.o \
 	sde/sde_hw_ds.o \
 	sde/sde_fence.o \
-	sde/sde_hw_qdss.o \
+	sde/sde_hw_qdss.o
 
 msm_drm-$(CONFIG_DEBUG_FS) += sde_dbg.o \
-	sde_dbg_evtlog.o \
+	sde_dbg_evtlog.o
 
 msm_drm-$(CONFIG_DRM_SDE_WB) += sde/sde_wb.o \
-	sde/sde_encoder_phys_wb.o \
+	sde/sde_encoder_phys_wb.o
 
 msm_drm-$(CONFIG_DRM_SDE_RSC) += sde_rsc.o \
 	sde_rsc_hw.o \
-	sde_rsc_hw_v3.o \
+	sde_rsc_hw_v3.o
 
 msm_drm-$(CONFIG_DRM_MSM_DSI) += dsi/dsi_phy.o \
 	dsi/dsi_pwr.o \
@@ -125,7 +129,7 @@ msm_drm-$(CONFIG_DRM_MSM) += \
 	msm_gem_prime.o \
 	msm_gem_vma.o \
 	msm_smmu.o \
-	msm_prop.o \
+	msm_prop.o
 
 obj-$(CONFIG_DRM_MSM)	+= msm_drm.o
 
