@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
 
-#include <uapi/drm/drm_fourcc.h>
-#include <uapi/media/msm_media_info.h>
+#include <drm/drm_fourcc.h>
+#include <media/msm_media_info.h>
 
 #include "sde_kms.h"
 #include "sde_formats.h"
@@ -1168,10 +1168,11 @@ int sde_format_check_modified_format(
 		const struct drm_mode_fb_cmd2 *cmd,
 		struct drm_gem_object **bos)
 {
-	int ret, i, num_base_fmt_planes;
+	const struct drm_format_info *info;
 	const struct sde_format *fmt;
 	struct sde_hw_fmt_layout layout;
 	uint32_t bos_total_size = 0;
+	int ret, i;
 
 	if (!msm_fmt || !cmd || !bos) {
 		DRM_ERROR("invalid arguments\n");
@@ -1179,14 +1180,16 @@ int sde_format_check_modified_format(
 	}
 
 	fmt = to_sde_format(msm_fmt);
-	num_base_fmt_planes = drm_format_num_planes(fmt->base.pixel_format);
+	info = drm_format_info(fmt->base.pixel_format);
+	if (!info)
+		return -EINVAL;
 
 	ret = sde_format_get_plane_sizes(fmt, cmd->width, cmd->height,
 			&layout, cmd->pitches);
 	if (ret)
 		return ret;
 
-	for (i = 0; i < num_base_fmt_planes; i++) {
+	for (i = 0; i < info->num_planes; i++) {
 		if (!bos[i]) {
 			DRM_ERROR("invalid handle for plane %d\n", i);
 			return -EINVAL;

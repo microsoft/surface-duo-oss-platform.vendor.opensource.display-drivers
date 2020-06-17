@@ -19,6 +19,7 @@
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
 #include <linux/kthread.h>
 #include <linux/debugfs.h>
+#include <linux/input.h>
 #include <linux/seq_file.h>
 #include <linux/sde_rsc.h>
 
@@ -301,27 +302,16 @@ static void _sde_encoder_pm_qos_add_request(struct drm_encoder *drm_enc,
 	struct sde_kms *sde_kms)
 {
 	struct sde_encoder_virt *sde_enc = to_sde_encoder_virt(drm_enc);
-	struct pm_qos_request *req;
-	u32 cpu_mask;
 	u32 cpu_dma_latency;
-	int cpu;
 
 	if (!sde_kms->catalog || !sde_kms->catalog->perf.cpu_mask)
 		return;
 
-	cpu_mask = sde_kms->catalog->perf.cpu_mask;
 	cpu_dma_latency = sde_kms->catalog->perf.cpu_dma_latency;
 
-	req = &sde_enc->pm_qos_cpu_req;
-	req->type = PM_QOS_REQ_AFFINE_CORES;
-	cpumask_empty(&req->cpus_affine);
-	for_each_possible_cpu(cpu) {
-		if ((1 << cpu) & cpu_mask)
-			cpumask_set_cpu(cpu, &req->cpus_affine);
-	}
-	pm_qos_add_request(req, PM_QOS_CPU_DMA_LATENCY, cpu_dma_latency);
+	pm_qos_add_request(&sde_enc->pm_qos_cpu_req, PM_QOS_CPU_DMA_LATENCY, cpu_dma_latency);
 
-	SDE_EVT32_VERBOSE(DRMID(drm_enc), cpu_mask, cpu_dma_latency);
+	SDE_EVT32_VERBOSE(DRMID(drm_enc), cpu_dma_latency);
 }
 
 static void _sde_encoder_pm_qos_remove_request(struct drm_encoder *drm_enc,
@@ -4613,24 +4603,27 @@ static int _sde_encoder_wakeup_time(struct drm_encoder *drm_enc,
 	return 0;
 }
 
-static void sde_encoder_vsync_event_handler(unsigned long data)
+static void sde_encoder_vsync_event_handler(struct timer_list *t)
 {
-	struct drm_encoder *drm_enc = (struct drm_encoder *) data;
-	struct sde_encoder_virt *sde_enc;
+	struct drm_encoder *drm_enc;
+	struct sde_encoder_virt *sde_enc =
+			from_timer(sde_enc, t, vsync_event_timer);
 	struct msm_drm_private *priv;
 	struct msm_drm_thread *event_thread;
+
+	if (!sde_enc || !sde_enc->crtc) {
+		SDE_ERROR("invalid encoder parameters %d\n", !sde_enc);
+		return;
+	}
+
+	drm_enc = &sde_enc->base;
 
 	if (!drm_enc || !drm_enc->dev || !drm_enc->dev->dev_private) {
 		SDE_ERROR("invalid encoder parameters\n");
 		return;
 	}
 
-	sde_enc = to_sde_encoder_virt(drm_enc);
 	priv = drm_enc->dev->dev_private;
-	if (!sde_enc->crtc) {
-		SDE_ERROR("invalid crtc");
-		return;
-	}
 
 	if (sde_enc->crtc->index >= ARRAY_SIZE(priv->event_thread)) {
 		SDE_ERROR("invalid crtc index:%u\n",
@@ -5555,7 +5548,7 @@ static int sde_encoder_setup_display(struct sde_encoder_virt *sde_enc,
 	sde_enc->display_num_of_h_tiles = disp_info->num_of_h_tiles;
 	sde_enc->te_source = disp_info->te_source;
 
-	SDE_DEBUG("dsi_info->num_of_h_tiles %d\n", disp_info->num_of_h_tiles);
+	SDE_DEBUG("disp_info->num_of_h_tiles %d\n", disp_info->num_of_h_tiles);
 
 	if ((disp_info->capabilities & MSM_DISPLAY_CAP_CMD_MODE) ||
 	    (disp_info->capabilities & MSM_DISPLAY_CAP_VID_MODE))
@@ -5701,9 +5694,9 @@ struct drm_encoder *sde_encoder_init_with_ops(
 	drm_encoder_helper_add(drm_enc, &sde_encoder_helper_funcs);
 
 	if (disp_info->intf_type == DRM_MODE_CONNECTOR_DSI)
-		setup_timer(&sde_enc->vsync_event_timer,
+		timer_setup(&sde_enc->vsync_event_timer,
 				sde_encoder_vsync_event_handler,
-				(unsigned long)sde_enc);
+				0);
 
 	for (i = 0; i < sde_enc->num_phys_encs; i++) {
 		phys = sde_enc->phys_encs[i];

@@ -13,6 +13,7 @@
 #include <linux/backlight.h>
 #include <drm/drm_panel.h>
 #include <drm/msm_drm.h>
+#include <drm/sde_drm.h>
 
 #include "dsi_defs.h"
 #include "dsi_ctrl_hw.h"

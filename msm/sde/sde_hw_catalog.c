@@ -2210,7 +2210,7 @@ static int sde_rot_parse_dt(struct device_node *np,
 
 		pdev = of_find_device_by_node(phargs.np);
 		if (pdev) {
-			slice = llcc_slice_getd(&pdev->dev, "rotator");
+			slice = llcc_slice_getd(LLCC_ROTATOR);
 			if (IS_ERR_OR_NULL(slice)) {
 				rot->pdev = NULL;
 				SDE_ERROR("failed to get system cache %ld\n",

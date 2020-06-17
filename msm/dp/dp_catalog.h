@@ -7,6 +7,7 @@
 #define _DP_CATALOG_H_
 
 #include <drm/msm_drm.h>
+#include <drm/sde_drm.h>
 
 #include "dp_parser.h"
 

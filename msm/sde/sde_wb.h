@@ -60,7 +60,7 @@ int sde_wb_get_index(struct sde_wb_device *wb_dev)
 	return wb_dev ? wb_dev->index : -1;
 }
 
-#ifdef CONFIG_DRM_SDE_WB
+#if IS_ENABLED(CONFIG_DRM_SDE_WB)
 /**
  * sde_wb_get_output_fb - get framebuffer in current atomic state
  * @wb_dev:	Pointer to writeback device
@@ -285,7 +285,12 @@ int sde_wb_config(struct drm_device *drm_dev, void *data,
 	return 0;
 }
 static inline
-int sde_wb_connector_post_init(struct drm_connector *connector,
+int sde_wb_connector_post_init(struct drm_connector *connector, void *display)
+{
+	return 0;
+}
+static inline
+int sde_wb_connector_set_info_blob(struct drm_connector *connector,
 		void *info,
 		void *display,
 		struct msm_mode_info *mode_info)
@@ -315,7 +320,16 @@ int sde_wb_connector_set_property(struct drm_connector *connector,
 	return 0;
 }
 static inline
-int sde_wb_get_info(struct msm_display_info *info, void *display)
+int sde_wb_get_info(struct drm_connector *connector,
+		struct msm_display_info *info, void *display)
+{
+	return 0;
+}
+static inline
+int sde_wb_get_mode_info(struct drm_connector *connector,
+		const struct drm_display_mode *drm_mode,
+		struct msm_mode_info *mode_info, u32 max_mixer_width,
+		void *display)
 {
 	return 0;
 }

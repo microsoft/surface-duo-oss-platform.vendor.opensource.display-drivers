@@ -74,7 +74,7 @@ static void msm_framebuffer_destroy(struct drm_framebuffer *fb)
 	for (i = 0; i < n; i++) {
 		struct drm_gem_object *bo = msm_fb->planes[i];
 
-		drm_gem_object_unreference_unlocked(bo);
+		drm_gem_object_put_unlocked(bo);
 	}
 
 	kfree(msm_fb);
@@ -329,9 +329,11 @@ const struct msm_format *msm_framebuffer_format(struct drm_framebuffer *fb)
 struct drm_framebuffer *msm_framebuffer_create(struct drm_device *dev,
 		struct drm_file *file, const struct drm_mode_fb_cmd2 *mode_cmd)
 {
+	const struct drm_format_info *info = drm_get_format_info(dev,
+								mode_cmd);
 	struct drm_gem_object *bos[4] = {0};
 	struct drm_framebuffer *fb;
-	int ret, i, n = drm_format_num_planes(mode_cmd->pixel_format);
+	int ret, i, n = info->num_planes;
 
 	for (i = 0; i < n; i++) {
 		bos[i] = drm_gem_object_lookup(file, mode_cmd->handles[i]);
@@ -351,29 +353,28 @@ struct drm_framebuffer *msm_framebuffer_create(struct drm_device *dev,
 
 out_unref:
 	for (i = 0; i < n; i++)
-		drm_gem_object_unreference_unlocked(bos[i]);
+		drm_gem_object_put_unlocked(bos[i]);
 	return ERR_PTR(ret);
 }
 
 struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 		const struct drm_mode_fb_cmd2 *mode_cmd, struct drm_gem_object **bos)
 {
+	const struct drm_format_info *info = drm_get_format_info(dev,
+								mode_cmd);
 	struct msm_drm_private *priv = dev->dev_private;
 	struct msm_kms *kms = priv->kms;
 	struct msm_framebuffer *msm_fb = NULL;
 	struct drm_framebuffer *fb;
 	const struct msm_format *format;
 	int ret, i, num_planes;
-	unsigned int hsub, vsub;
 	bool is_modified = false;
 
 	DBG("create framebuffer: dev=%pK, mode_cmd=%pK (%dx%d@%4.4s)",
 			dev, mode_cmd, mode_cmd->width, mode_cmd->height,
 			(char *)&mode_cmd->pixel_format);
 
-	num_planes = drm_format_num_planes(mode_cmd->pixel_format);
-	hsub = drm_format_horz_chroma_subsampling(mode_cmd->pixel_format);
-	vsub = drm_format_vert_chroma_subsampling(mode_cmd->pixel_format);
+	num_planes = info->num_planes;
 
 	format = kms->funcs->get_format(kms, mode_cmd->pixel_format,
 			mode_cmd->modifier[0]);
@@ -421,19 +422,26 @@ struct drm_framebuffer *msm_framebuffer_init(struct drm_device *dev,
 				goto fail;
 		}
 	} else {
-		for (i = 0; i < num_planes; i++) {
-			unsigned int width = mode_cmd->width / (i ? hsub : 1);
-			unsigned int height = mode_cmd->height / (i ? vsub : 1);
-			unsigned int min_size;
-			unsigned int cpp;
+		const struct drm_format_info *info;
 
-			cpp = drm_format_plane_cpp(mode_cmd->pixel_format, i);
+		info = drm_format_info(mode_cmd->pixel_format);
+		if (!info || num_planes > ARRAY_SIZE(info->cpp)) {
+			ret = -EINVAL;
+			goto fail;
+		}
+
+		for (i = 0; i < num_planes; i++) {
+			unsigned int width = mode_cmd->width / (i ?
+					info->hsub : 1);
+			unsigned int height = mode_cmd->height / (i ?
+					info->vsub : 1);
+			unsigned int min_size;
 
 			min_size = (height - 1) * mode_cmd->pitches[i]
-				 + width * cpp
-				 + mode_cmd->offsets[i];
+				+ width * info->cpp[i]
+				+ mode_cmd->offsets[i];
 
-			if (bos[i]->size < min_size) {
+			if (!bos[i] || bos[i]->size < min_size) {
 				ret = -EINVAL;
 				goto fail;
 			}
@@ -494,7 +502,7 @@ msm_alloc_stolen_fb(struct drm_device *dev, int w, int h, int p, uint32_t format
 		/* note: if fb creation failed, we can't rely on fb destroy
 		 * to unref the bo:
 		 */
-		drm_gem_object_unreference_unlocked(bo);
+		drm_gem_object_put_unlocked(bo);
 		return ERR_CAST(fb);
 	}
 

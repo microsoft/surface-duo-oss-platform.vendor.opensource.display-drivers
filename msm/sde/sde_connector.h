@@ -6,7 +6,7 @@
 #ifndef _SDE_CONNECTOR_H_
 #define _SDE_CONNECTOR_H_
 
-#include <uapi/drm/msm_drm_pp.h>
+#include <drm/msm_drm_pp.h>
 #include <drm/drmP.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_panel.h>
@@ -276,12 +276,12 @@ struct sde_connector_ops {
 	 * atomic_check - atomic check handling for connector
 	 * @connector: Pointer to drm connector structure
 	 * @display: Pointer to private display handle
-	 * @c_state: Pointer to connector state
+	 * @state: Pointer to atomic state
 	 * Returns: valid drm_encoder for success
 	 */
 	int (*atomic_check)(struct drm_connector *connector,
 			void *display,
-			struct drm_connector_state *c_state);
+			struct drm_atomic_state *state);
 
 	/**
 	 * pre_destroy - handle pre destroy operations for the connector

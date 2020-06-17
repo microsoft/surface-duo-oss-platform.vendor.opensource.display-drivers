@@ -20,8 +20,8 @@
 
 #include <linux/debugfs.h>
 #include <linux/dma-buf.h>
-#include <uapi/drm/sde_drm.h>
-#include <uapi/drm/msm_drm_pp.h>
+#include <drm/sde_drm.h>
+#include <drm/msm_drm_pp.h>
 
 #include "msm_prop.h"
 #include "msm_drv.h"
@@ -1518,6 +1518,7 @@ static void _sde_plane_setup_scaler(struct sde_plane *psde,
 {
 	struct sde_hw_pixel_ext *pe;
 	uint32_t chroma_subsmpl_h, chroma_subsmpl_v;
+	const struct drm_format_info *info = NULL;
 
 	if (!psde || !fmt || !pstate) {
 		SDE_ERROR("invalid arg(s), plane %d fmt %d state %d\n",
@@ -1525,6 +1526,7 @@ static void _sde_plane_setup_scaler(struct sde_plane *psde,
 		return;
 	}
 
+	info = drm_format_info(fmt->base.pixel_format);
 	pe = &pstate->pixel_ext;
 
 	psde->pipe_cfg.horz_decimation =
@@ -1533,10 +1535,8 @@ static void _sde_plane_setup_scaler(struct sde_plane *psde,
 		sde_plane_get_property(pstate, PLANE_PROP_V_DECIMATE);
 
 	/* don't chroma subsample if decimating */
-	chroma_subsmpl_h = psde->pipe_cfg.horz_decimation ? 1 :
-		drm_format_horz_chroma_subsampling(fmt->base.pixel_format);
-	chroma_subsmpl_v = psde->pipe_cfg.vert_decimation ? 1 :
-		drm_format_vert_chroma_subsampling(fmt->base.pixel_format);
+	chroma_subsmpl_h = psde->pipe_cfg.horz_decimation ? 1 : info->hsub;
+	chroma_subsmpl_v = psde->pipe_cfg.vert_decimation ? 1 : info->vsub;
 
 	/* update scaler */
 	if (psde->features & BIT(SDE_SSPP_SCALER_QSEED3) ||
@@ -2772,7 +2772,7 @@ static void sde_plane_rot_destroy_state(struct drm_plane *plane,
 
 	/* remove reference count on output framebuffer */
 	if (rstate->out_sbuf && rstate->rot_hw && rstate->out_fb)
-		drm_framebuffer_unreference(rstate->out_fb);
+		drm_framebuffer_put(rstate->out_fb);
 }
 
 /**
@@ -4997,8 +4997,6 @@ static void sde_plane_destroy(struct drm_plane *plane)
 			drm_property_blob_put(psde->blob_info);
 		msm_property_destroy(&psde->property_info);
 		mutex_destroy(&psde->lock);
-
-		drm_plane_helper_disable(plane);
 
 		/* this will destroy the states as well */
 		drm_plane_cleanup(plane);

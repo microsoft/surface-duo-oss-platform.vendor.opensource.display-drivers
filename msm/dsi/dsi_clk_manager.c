@@ -6,7 +6,6 @@
 #include <linux/of.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
-#include <linux/msm-bus.h>
 #include "dsi_clk.h"
 
 struct dsi_core_clks {
@@ -266,14 +265,6 @@ int dsi_core_clk_start(struct dsi_core_clks *c_clks)
 		}
 	}
 
-	if (c_clks->bus_handle) {
-		rc = msm_bus_scale_client_update_request(c_clks->bus_handle, 1);
-		if (rc) {
-			pr_err("bus scale client enable failed, rc=%d\n", rc);
-			goto error_disable_mmss_clk;
-		}
-	}
-
 	return rc;
 
 error_disable_mmss_clk:
@@ -298,14 +289,6 @@ error:
 int dsi_core_clk_stop(struct dsi_core_clks *c_clks)
 {
 	int rc = 0;
-
-	if (c_clks->bus_handle) {
-		rc = msm_bus_scale_client_update_request(c_clks->bus_handle, 0);
-		if (rc) {
-			pr_err("bus scale client disable failed, rc=%d\n", rc);
-			return rc;
-		}
-	}
 
 	if (c_clks->clks.core_mmss_clk)
 		clk_disable_unprepare(c_clks->clks.core_mmss_clk);

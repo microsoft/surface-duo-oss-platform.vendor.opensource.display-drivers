@@ -5320,8 +5320,10 @@ static int dsi_display_init(struct dsi_display *display)
 	}
 
 	rc = component_add(&pdev->dev, &dsi_display_comp_ops);
-	if (rc)
+	if (rc){
 		pr_err("component add failed, rc=%d\n", rc);
+		goto end;
+	}
 
 	pr_debug("component add success: %s\n", display->name);
 end:
@@ -5608,12 +5610,12 @@ static enum drm_mode_status dsi_display_drm_ext_mode_valid(
 
 static int dsi_display_drm_ext_atomic_check(struct drm_connector *connector,
 		void *disp,
-		struct drm_connector_state *c_state)
+		struct drm_atomic_state *state)
 {
 	struct dsi_display *display = disp;
 
 	return display->ext_conn->helper_private->atomic_check(
-			display->ext_conn, c_state);
+			display->ext_conn, state);
 }
 
 static int dsi_display_ext_get_info(struct drm_connector *connector,
@@ -5757,8 +5759,8 @@ static bool dsi_display_drm_ext_bridge_mode_fixup(
 
 static void dsi_display_drm_ext_bridge_mode_set(
 		struct drm_bridge *bridge,
-		struct drm_display_mode *mode,
-		struct drm_display_mode *adjusted_mode)
+		const struct drm_display_mode *mode,
+		const struct drm_display_mode *adjusted_mode)
 {
 	struct dsi_display_ext_bridge *ext_bridge;
 	struct drm_display_mode tmp;

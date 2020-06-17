@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 #include "sde_hw_mdss.h"
 #include "sde_hw_catalog.h"
+#include <drm/sde_drm.h>
 
 #define REG_MASK(n)                     ((BIT(n)) - 1)
 struct sde_format_extended;
