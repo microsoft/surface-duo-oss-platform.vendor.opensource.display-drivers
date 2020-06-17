@@ -106,12 +106,12 @@ static struct dp_pll_vco_clk dp0_vco_clk = {
 	},
 };
 
-static struct clk_fixed_factor dp_link_clk_divsel_ten = {
+static struct clk_fixed_factor dp_phy_pll_link_clk = {
 	.div = 10,
 	.mult = 1,
 
 	.hw.init = &(struct clk_init_data){
-		.name = "dp_link_clk_divsel_ten",
+		.name = "dp_phy_pll_link_clk",
 		.parent_names =
 			(const char *[]){ "dp0_vco_clk" },
 		.num_parents = 1,
@@ -282,14 +282,14 @@ static unsigned long mux_recalc_rate(struct clk_hw *hw,
 		return (vco->rate / 2);
 }
 
-static struct clk_regmap_mux dp_vco_divided_clk_src_mux = {
+static struct clk_regmap_mux dp_phy_pll_vco_div_clk = {
 	.reg = 0x64,
 	.shift = 0,
 	.width = 2,
 
 	.clkr = {
 		.hw.init = &(struct clk_init_data){
-			.name = "dp_vco_divided_clk_src_mux",
+			.name = "dp_phy_pll_vco_div_clk",
 			.parent_names =
 				(const char *[]){"dp0_vco_divsel_two_clk_src",
 					"dp0_vco_divsel_four_clk_src",
@@ -324,12 +324,12 @@ static struct clk_hw *mdss_dp_pllcc_7nm
 	[DP_PHY_INDEX_MAX][DP_VCO_DIVIDED_CLK_SRC_MUX + 1] = {
 	{
 		[DP_VCO_CLK] = &dp0_vco_clk.hw,
-		[DP_LINK_CLK_DIVSEL_TEN] = &dp_link_clk_divsel_ten.hw,
+		[DP_LINK_CLK_DIVSEL_TEN] = &dp_phy_pll_link_clk.hw,
 		[DP_VCO_DIVIDED_TWO_CLK_SRC] = &dp0_vco_divsel_two_clk_src.hw,
 		[DP_VCO_DIVIDED_FOUR_CLK_SRC] = &dp0_vco_divsel_four_clk_src.hw,
 		[DP_VCO_DIVIDED_SIX_CLK_SRC] = &dp0_vco_divsel_six_clk_src.hw,
 		[DP_VCO_DIVIDED_CLK_SRC_MUX] =
-				&dp_vco_divided_clk_src_mux.clkr.hw,
+				&dp_phy_pll_vco_div_clk.clkr.hw,
 	},
 	{
 		[DP_VCO_CLK] = &dp1_vco_clk.hw,
@@ -388,7 +388,7 @@ int dp_pll_clock_register_7nm(struct platform_device *pdev,
 			pll_res, &dp_pll_7nm_cfg);
 	switch (pll_res->index) {
 	case DP_PHY_INDEX_DP_0:
-		dp_vco_divided_clk_src_mux.clkr.regmap = regmap;
+		dp_phy_pll_vco_div_clk.clkr.regmap = regmap;
 		dp0_vco_clk.priv = pll_res;
 		dp0_vco_clk.brother = &dp1_vco_clk;
 		break;
