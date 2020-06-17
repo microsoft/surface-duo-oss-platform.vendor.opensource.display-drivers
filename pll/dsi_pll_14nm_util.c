@@ -1071,7 +1071,7 @@ int pll_vco_prepare_14nm(struct clk_hw *hw)
 
 	if ((pll->vco_cached_rate != 0)
 	    && (pll->vco_cached_rate == clk_hw_get_rate(hw))) {
-		rc = hw->init->ops->set_rate(hw, pll->vco_cached_rate,
+		rc = pll_vco_set_rate_14nm(hw, pll->vco_cached_rate,
 						pll->vco_cached_rate);
 		if (rc) {
 			pr_err("index=%d vco_set_rate failed. rc=%d\n",

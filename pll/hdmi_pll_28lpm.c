@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 
@@ -435,8 +435,8 @@ int hdmi_vco_prepare_28lpm(struct clk_hw *hw)
 
 	if ((hdmi_res->vco_cached_rate != 0)
 		&& (hdmi_res->vco_cached_rate == clk_hw_get_rate(hw))) {
-		rc = vco->hw.init->ops->set_rate(hw,
-			hdmi_res->vco_cached_rate, hdmi_res->vco_cached_rate);
+		rc = hdmi_vco_set_rate_28lpm(hw, hdmi_res->vco_cached_rate,
+					hdmi_res->vco_cached_rate);
 		if (rc) {
 			pr_err("index=%d vco_set_rate failed. rc=%d\n",
 				rc, hdmi_res->index);
