@@ -335,10 +335,9 @@ static int mdss_pll_util_parse_dt_dfps_sub(struct platform_device *pdev,
 	int rc = 0;
 	struct device_node *pnode;
 	const u32 *addr;
-	struct vm_struct *area;
+	void *trim_codes = NULL;
 	u64 size;
 	u32 offsets[2];
-	unsigned long virt_add;
 
 	pnode = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
 	if (IS_ERR_OR_NULL(pnode)) {
@@ -356,37 +355,26 @@ static int mdss_pll_util_parse_dt_dfps_sub(struct platform_device *pdev,
 	offsets[0] = (u32) of_read_ulong(addr, 2);
 	offsets[1] = (u32) size;
 
-	area = __get_vm_area(offsets[1], VM_IOREMAP, VMALLOC_START, VMALLOC_END);
-	if (!area) {
-		rc = -ENOMEM;
-		goto dfps_mem_err;
-	}
-
-	virt_add = (unsigned long)area->addr;
-	rc = ioremap_page_range(virt_add, (virt_add + offsets[1]),
-			offsets[0], PAGE_KERNEL);
-	if (rc) {
-		rc = -ENOMEM;
-		goto ioremap_err;
+	trim_codes = memremap(offsets[0], offsets[1], MEMREMAP_WB);
+	if (!trim_codes) {
+		rc = -EINVAL;
+		goto mem_err;
 	}
 
 	pll_res->dfps = kzalloc(sizeof(struct dfps_info), GFP_KERNEL);
 	if (IS_ERR_OR_NULL(pll_res->dfps)) {
 		rc = PTR_ERR(pll_res->dfps);
 		pr_err("couldn't allocate dfps kernel memory\n");
-		goto addr_err;
+		goto mem_err;
 	}
 
 	/* memcopy complete dfps structure from kernel virtual memory */
-	memcpy_fromio(pll_res->dfps, area->addr, sizeof(struct dfps_info));
+	memcpy_fromio(pll_res->dfps, trim_codes, sizeof(struct dfps_info));
 
-addr_err:
-	if (virt_add)
-		unmap_kernel_range(virt_add, (unsigned long) size);
-ioremap_err:
-	if (area)
-		vfree(area->addr);
-dfps_mem_err:
+mem_err:
+	if (trim_codes)
+		memunmap(trim_codes);
+
 	/* free the dfps memory here */
 	mdss_pll_free_bootmem(offsets[0], offsets[1]);
 pnode_err:

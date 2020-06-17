@@ -1411,16 +1411,13 @@ static struct platform_driver dp_sim_driver = {
 	},
 };
 
-static int __init dp_sim_register(void)
+void __init dp_sim_register(void)
 {
-	return platform_driver_register(&dp_sim_driver);
+	platform_driver_register(&dp_sim_driver);
 }
 
-static void __exit dp_sim_unregister(void)
+void __exit dp_sim_unregister(void)
 {
 	platform_driver_unregister(&dp_sim_driver);
 }
-
-module_init(dp_sim_register);
-module_exit(dp_sim_unregister);
 

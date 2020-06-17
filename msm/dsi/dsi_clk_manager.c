@@ -267,7 +267,6 @@ int dsi_core_clk_start(struct dsi_core_clks *c_clks)
 
 	return rc;
 
-error_disable_mmss_clk:
 	if (c_clks->clks.core_mmss_clk)
 		clk_disable_unprepare(c_clks->clks.core_mmss_clk);
 error_disable_bus_clk:

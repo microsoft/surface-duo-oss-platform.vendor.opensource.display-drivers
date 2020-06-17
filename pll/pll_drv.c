@@ -466,8 +466,6 @@ static const struct of_device_id mdss_pll_dt_match[] = {
 	{}
 };
 
-MODULE_DEVICE_TABLE(of, mdss_clock_dt_match);
-
 static struct platform_driver mdss_pll_driver = {
 	.probe = mdss_pll_probe,
 	.remove = mdss_pll_remove,
@@ -477,23 +475,15 @@ static struct platform_driver mdss_pll_driver = {
 	},
 };
 
-static int __init mdss_pll_driver_init(void)
+void __init mdss_pll_driver_init(void)
 {
-	int rc;
-
-	rc = platform_driver_register(&mdss_pll_driver);
-	if (rc)
-		pr_err("mdss_register_pll_driver() failed!\n");
-
-	return rc;
+	platform_driver_register(&mdss_pll_driver);
 }
-fs_initcall(mdss_pll_driver_init);
 
-static void __exit mdss_pll_driver_deinit(void)
+void __exit mdss_pll_driver_deinit(void)
 {
 	platform_driver_unregister(&mdss_pll_driver);
 }
-module_exit(mdss_pll_driver_deinit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("mdss pll driver");

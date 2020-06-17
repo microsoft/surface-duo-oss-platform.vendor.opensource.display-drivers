@@ -1923,8 +1923,6 @@ static const struct of_device_id dt_match[] = {
 	{}
 };
 
-MODULE_DEVICE_TABLE(of, dt_match);
-
 static struct platform_driver sde_rsc_platform_driver = {
 	.probe      = sde_rsc_probe,
 	.remove     = sde_rsc_remove,
@@ -1984,11 +1982,8 @@ void __init sde_rsc_register(void)
 	platform_driver_register(&sde_rsc_platform_driver);
 }
 
-static void __exit sde_rsc_unregister(void)
+void __exit sde_rsc_unregister(void)
 {
 	platform_driver_unregister(&sde_rsc_platform_driver);
 	platform_driver_unregister(&sde_rsc_rpmh_driver);
 }
-
-module_init(sde_rsc_register);
-module_exit(sde_rsc_unregister);

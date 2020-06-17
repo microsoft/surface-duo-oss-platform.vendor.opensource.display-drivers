@@ -1559,15 +1559,12 @@ static struct platform_driver sde_shd_driver = {
 	},
 };
 
-static int __init sde_shd_register(void)
+void __init sde_shd_register(void)
 {
-	return platform_driver_register(&sde_shd_driver);
+	platform_driver_register(&sde_shd_driver);
 }
 
-static void __exit sde_shd_unregister(void)
+void __exit sde_shd_unregister(void)
 {
 	platform_driver_unregister(&sde_shd_driver);
 }
-
-module_init(sde_shd_register);
-module_exit(sde_shd_unregister);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -758,15 +758,12 @@ static struct platform_driver sde_shp_driver = {
 	},
 };
 
-static int __init sde_shp_register(void)
+void __init sde_shp_register(void)
 {
-	return platform_driver_register(&sde_shp_driver);
+	platform_driver_register(&sde_shp_driver);
 }
 
-static void __exit sde_shp_unregister(void)
+void __exit sde_shp_unregister(void)
 {
 	platform_driver_unregister(&sde_shp_driver);
 }
-
-module_init(sde_shp_register);
-module_exit(sde_shp_unregister);

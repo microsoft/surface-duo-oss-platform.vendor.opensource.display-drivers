@@ -888,7 +888,7 @@ static inline void __exit msm_hdmi_unregister(void)
 #endif
 
 struct msm_edp;
-#ifdef CONFIG_DRM_MSM_EDP
+#if IS_ENABLED(CONFIG_DRM_MSM_EDP)
 void __init msm_edp_register(void);
 void __exit msm_edp_unregister(void);
 int msm_edp_modeset_init(struct msm_edp *edp, struct drm_device *dev,
@@ -900,7 +900,7 @@ static inline void __init msm_edp_register(void)
 static inline void __exit msm_edp_unregister(void)
 {
 }
-#endif
+#endif /* CONFIG_DRM_MSM_EDP */
 
 struct msm_dsi;
 
@@ -913,12 +913,7 @@ struct msm_dsi;
  */
 void msm_mode_object_event_notify(struct drm_mode_object *obj,
 		struct drm_device *dev, struct drm_event *event, u8 *payload);
-#ifdef CONFIG_DRM_MSM_DSI
-void __init msm_dsi_register(void);
-void __exit msm_dsi_unregister(void);
-int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
-			 struct drm_encoder *encoder);
-#else
+#if IS_ENABLED(CONFIG_DRM_MSM_DSI)
 static inline void __init msm_dsi_register(void)
 {
 }
@@ -931,7 +926,12 @@ static inline int msm_dsi_modeset_init(struct msm_dsi *msm_dsi,
 {
 	return -EINVAL;
 }
-#endif
+#else
+void __init msm_dsi_register(void);
+void __exit msm_dsi_unregister(void);
+int msm_dsi_modeset_init(struct msm_dsi *msm_dsi, struct drm_device *dev,
+			 struct drm_encoder *encoder);
+#endif /* CONFIG_DRM_MSM_DSI */
 
 void __init msm_mdp_register(void);
 void __exit msm_mdp_unregister(void);
@@ -952,6 +952,98 @@ static inline void msm_rd_dump_submit(struct msm_gem_submit *submit) {}
 static inline void msm_rd_debugfs_cleanup(struct msm_drm_private *priv) {}
 static inline void msm_perf_debugfs_cleanup(struct msm_drm_private *priv) {}
 #endif
+
+#if IS_ENABLED(CONFIG_DRM_MSM_DSI)
+void __init dsi_display_register(void);
+void __exit dsi_display_unregister(void);
+#else
+static inline void __init dsi_display_register(void)
+{
+}
+static inline void __exit dsi_display_unregister(void)
+{
+}
+#endif /* CONFIG_DRM_MSM_DSI */
+
+#if IS_ENABLED(CONFIG_DRM_MSM_DP)
+void __init dp_display_register(void);
+void __exit dp_display_unregister(void);
+void __init dp_sim_register(void);
+void __exit dp_sim_unregister(void);
+#else
+static inline void __init dp_display_register(void)
+{
+}
+static inline void __exit dp_display_unregister(void)
+{
+}
+static inline void __init dp_sim_register(void)
+{
+}
+static inline void __exit dp_sim_unregister(void)
+{
+}
+#endif /* CONFIG_DRM_MSM_DP */
+
+#if IS_ENABLED(CONFIG_DRM_SDE_RSC)
+void __init sde_rsc_register(void);
+void __exit sde_rsc_unregister(void);
+#else
+static inline void __init sde_rsc_register(void)
+{
+}
+static inline void __exit sde_rsc_unregister(void)
+{
+}
+#endif /* CONFIG_DRM_SDE_RSC */
+
+#if IS_ENABLED(CONFIG_DRM_SDE_WB)
+void __init sde_wb_register(void);
+void __exit sde_wb_unregister(void);
+#else
+static inline void __init sde_wb_register(void)
+{
+}
+static inline void __exit sde_wb_unregister(void)
+{
+}
+#endif /* CONFIG_DRM_SDE_WB */
+
+#if IS_ENABLED(CONFIG_QCOM_MDSS_PLL)
+void __init mdss_pll_driver_init(void);
+void __exit mdss_pll_driver_deinit(void);
+#else
+static inline void __init mdss_pll_driver_init(void)
+{
+}
+static inline void __exit mdss_pll_driver_deinit(void)
+{
+}
+#endif /* CONFIG_QCOM_MDSS_PLL */
+
+#if IS_ENABLED(CONFIG_DRM_SDE_SHD)
+void __init sde_shd_register(void);
+void __exit sde_shd_unregister(void);
+#else
+static inline void __init sde_shd_register(void)
+{
+}
+static inline void __exit sde_shd_unregister(void)
+{
+}
+#endif /* CONFIG_DRM_SDE_SHD */
+
+#if IS_ENABLED(CONFIG_DRM_SDE_SHP)
+void __init sde_shp_register(void);
+void __exit sde_shp_unregister(void);
+#else
+static inline void __init sde_shp_register(void)
+{
+}
+static inline void __exit sde_shp_unregister(void)
+{
+}
+#endif /* CONFIG_DRM_SDE_SHP */
 
 struct clk *msm_clk_get(struct platform_device *pdev, const char *name);
 void __iomem *msm_ioremap(struct platform_device *pdev, const char *name,
