@@ -90,6 +90,18 @@ static inline bool shd_display_check_enc_intf(
 	return hw_res->intfs[intf_idx] != INTF_MODE_NONE;
 }
 
+static inline int shd_display_get_enc_intf(
+		struct sde_encoder_hw_resources *hw_res)
+{
+	int i;
+
+	for (i = INTF_0; i < INTF_MAX; i++)
+		if (hw_res->intfs[i - INTF_0] != INTF_MODE_NONE)
+			return i - INTF_0;
+
+	return INTF_MAX;
+}
+
 static int shd_display_init_base_connector(struct drm_device *dev,
 						struct shd_display_base *base)
 {
@@ -98,6 +110,9 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 	struct sde_connector *sde_conn;
 	struct drm_connector_list_iter conn_iter;
 	int rc = 0;
+
+	if (base->connector)
+		goto next;
 
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	drm_for_each_connector_iter(connector, &conn_iter) {
@@ -114,6 +129,7 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 		return -ENOENT;
 	}
 
+next:
 	/* set base connector disconnected*/
 	sde_conn = to_sde_connector(base->connector);
 	base->ops = sde_conn->ops;
@@ -133,6 +149,15 @@ static int shd_display_init_base_encoder(struct drm_device *dev,
 	bool has_mst;
 	int rc = 0;
 
+	if (base->connector) {
+		encoder = drm_atomic_helper_best_encoder(base->connector);
+		sde_encoder_get_hw_resources(encoder,
+				&hw_res, &conn_state.base);
+		base->encoder = encoder;
+		base->intf_idx = shd_display_get_enc_intf(&hw_res);
+		goto next;
+	}
+
 	drm_for_each_encoder(encoder, dev) {
 		sde_encoder_get_hw_resources(encoder,
 				&hw_res, &conn_state.base);
@@ -144,6 +169,7 @@ static int shd_display_init_base_encoder(struct drm_device *dev,
 		}
 	}
 
+next:
 	if (!base->encoder) {
 		SDE_ERROR("can't find base encoder for intf %d\n",
 			base->intf_idx);
@@ -1348,7 +1374,8 @@ error:
 	return rc;
 }
 
-static int shd_parse_base(struct shd_display_base *base)
+static int shd_parse_base(struct drm_device *drm_dev,
+		struct shd_display_base *base)
 {
 	struct device_node *of_node = base->of_node;
 	struct device_node *node;
@@ -1357,18 +1384,39 @@ static int shd_parse_base(struct shd_display_base *base)
 	u32 v_front_porch, v_pulse_width, v_back_porch;
 	bool h_active_high, v_active_high;
 	bool tile_mode;
+	struct drm_connector *connector;
+	struct drm_connector_list_iter conn_iter;
+	const char *name;
 	u32 flags = 0;
 	int rc;
 
 	rc = of_property_read_u32(of_node, "qcom,shared-display-base-intf",
 					&base->intf_idx);
-	if (rc) {
-		SDE_ERROR("failed to read base intf, rc=%d\n", rc);
-		goto fail;
-	}
+	if (!rc) {
+		base->mst_port = of_property_read_bool(of_node,
+				"qcom,shared-display-base-mst");
+	} else {
+		rc = of_property_read_string(of_node,
+				"qcom,shared-display-base-connector", &name);
+		if (rc) {
+			SDE_ERROR("failed to read base connector (%d)\n", rc);
+			goto fail;
+		}
 
-	base->mst_port = of_property_read_bool(of_node,
-					"qcom,shared-display-base-mst");
+		drm_connector_list_iter_begin(drm_dev, &conn_iter);
+		drm_for_each_connector_iter(connector, &conn_iter) {
+			if (!strcmp(connector->name, name)) {
+				base->connector = connector;
+				break;
+			}
+		}
+		drm_connector_list_iter_end(&conn_iter);
+		if (!base->connector) {
+			SDE_ERROR("failed to find base connector %s\n", name);
+			rc = -ENOENT;
+			goto fail;
+		}
+	}
 
 	node = of_get_child_by_name(of_node, "qcom,shared-display-base-mode");
 	if (!node) {
@@ -1511,7 +1559,7 @@ static int shd_display_notifier(struct notifier_block *nb,
 	INIT_LIST_HEAD(&base->disp_list);
 	base->of_node = shd_dev->base_of;
 
-	rc = shd_parse_base(base);
+	rc = shd_parse_base(shd_dev->drm_dev, base);
 	if (rc) {
 		SDE_ERROR("failed to parse shared display base\n");
 		goto error;
