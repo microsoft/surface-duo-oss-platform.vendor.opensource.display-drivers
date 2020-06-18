@@ -2257,6 +2257,10 @@ static int dp_display_usbpd_get(struct dp_display_private *dp)
 	int rc = 0;
 	char const *phandle = "qcom,dp-usbpd-detection";
 
+	/* pd is not needed for gpio hpd */
+	if (of_find_property(dp->pdev->dev.of_node, "qcom,dp-hpd-gpio", NULL))
+		return 0;
+
 	dp->pd = devm_usbpd_get_by_phandle(&dp->pdev->dev, phandle);
 	if (IS_ERR(dp->pd)) {
 		rc = PTR_ERR(dp->pd);
@@ -2268,6 +2272,13 @@ static int dp_display_usbpd_get(struct dp_display_private *dp)
 		 */
 		if (rc == -ENXIO)
 			return 0;
+
+		/*
+		 * If pd module init is not called (if return is -EAGAIN) then
+		 * the driver need to be deferred.
+		 */
+		if (rc == -EAGAIN)
+			return -EPROBE_DEFER;
 
 		pr_err("usbpd phandle failed (%ld)\n", PTR_ERR(dp->pd));
 	}
