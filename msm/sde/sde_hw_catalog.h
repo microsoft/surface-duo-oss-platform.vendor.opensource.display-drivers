@@ -21,7 +21,7 @@
  */
 #define MAX_BLOCKS    12
 
-#define SDE_HW_VER(MAJOR, MINOR, STEP) (((MAJOR & 0xF) << 28)    |\
+#define SDE_HW_VER(MAJOR, MINOR, STEP) ((u32)((MAJOR & 0xF) << 28)    |\
 		((MINOR & 0xFFF) << 16)  |\
 		(STEP & 0xFFFF))
 
@@ -87,7 +87,7 @@
 
 #define SDE_CTL_CFG_VERSION_1_0_0       0x100
 #define MAX_INTF_PER_CTL_V1                 2
-#define MAX_DSC_PER_CTL_V1                  2
+#define MAX_DSC_PER_CTL_V1                  4
 #define MAX_CWB_PER_CTL_V1                  2
 #define MAX_MERGE_3D_PER_CTL_V1             2
 #define MAX_WB_PER_CTL_V1                   1
@@ -1317,6 +1317,7 @@ struct sde_sc_cfg {
  * @cpu_mask:          pm_qos cpu mask value
  * @cpu_mask_perf:     pm_qos cpu silver core mask value
  * @cpu_dma_latency:   pm_qos cpu dma latency value
+ * @cpu_irq_latency:   pm_qos cpu irq latency value
  * @axi_bus_width:     axi bus width value in bytes
  * @num_mnoc_ports:    number of mnoc ports
  */
@@ -1348,6 +1349,7 @@ struct sde_perf_cfg {
 	unsigned long cpu_mask;
 	unsigned long cpu_mask_perf;
 	u32 cpu_dma_latency;
+	u32 cpu_irq_latency;
 	u32 axi_bus_width;
 	u32 num_mnoc_ports;
 };
@@ -1362,13 +1364,14 @@ struct sde_perf_cfg {
  * @vig_sspp_linewidth max vig source pipe line width support.
  * @scaling_linewidth max vig source pipe linewidth for scaling usecases
  * @max_mixer_width    max layer mixer line width support.
+ * @max_dsc_width      max dsc line width support.
  * @max_mixer_blendstages max layer mixer blend stages or
  *                       supported z order
  * @max_wb_linewidth   max writeback line width support.
  * @max_wb_linewidth_linear   max writeback line width for linear formats.
  * @max_display_width   maximum display width support.
  * @max_display_height  maximum display height support.
- * @max_lm_per_display  maximum layer mixer per display
+
  * @min_display_width   minimum display width support.
  * @min_display_height  minimum display height support.
  * @qseed_type         qseed2 or qseed3 support.
@@ -1433,6 +1436,7 @@ struct sde_mdss_cfg {
 	u32 vig_sspp_linewidth;
 	u32 scaling_linewidth;
 	u32 max_mixer_width;
+	u32 max_dsc_width;
 	u32 max_mixer_blendstages;
 	u32 max_wb_linewidth;
 	u32 max_wb_linewidth_linear;
@@ -1441,7 +1445,6 @@ struct sde_mdss_cfg {
 	u32 max_display_height;
 	u32 min_display_width;
 	u32 min_display_height;
-	u32 max_lm_per_display;
 
 	u32 qseed_type;
 	u32 csc_type;

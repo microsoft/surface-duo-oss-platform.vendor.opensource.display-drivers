@@ -364,6 +364,9 @@ struct msm_roi_caps {
  * @det_thresh_flatness:     Flatness threshold.
  * @extra_width:             Extra width required in timing calculations.
  * @pps_delay_ms:            Post PPS command delay in milliseconds.
+ * @dsc_4hsmerge_en:         Using DSC 4HS merge topology
+ * @dsc_4hsmerge_padding     4HS merge DSC pair padding value in bytes
+ * @dsc_4hsmerge_alignment   4HS merge DSC alignment value in bytes
  */
 struct msm_display_dsc_info {
 	struct drm_dsc_config config;
@@ -382,6 +385,9 @@ struct msm_display_dsc_info {
 	int det_thresh_flatness;
 	u32 extra_width;
 	u32 pps_delay_ms;
+	bool dsc_4hsmerge_en;
+	u32 dsc_4hsmerge_padding;
+	u32 dsc_4hsmerge_alignment;
 };
 
 
@@ -723,6 +729,10 @@ struct msm_resource_caps_info {
  * @roi_caps:           Region of interest capability info
  * @qsync_min_fps	Minimum fps supported by Qsync feature
  * @te_source		vsync source pin information
+ * @dsc_count:		max dsc hw blocks used by display (only available
+ *			for dsi display)
+ * @lm_count:		max layer mixer blocks used by display (only available
+ *			for dsi display)
  */
 struct msm_display_info {
 	int intf_type;
@@ -747,6 +757,9 @@ struct msm_display_info {
 
 	uint32_t qsync_min_fps;
 	uint32_t te_source;
+
+	uint32_t dsc_count;
+	uint32_t lm_count;
 };
 
 #define MSM_MAX_ROI	4
@@ -1343,6 +1356,9 @@ static inline unsigned long timeout_to_jiffies(const ktime_t *timeout)
 int msm_get_mixer_count(struct msm_drm_private *priv,
 		const struct drm_display_mode *mode,
 		const struct msm_resource_caps_info *res, u32 *num_lm);
+
+int msm_get_dsc_count(struct msm_drm_private *priv,
+		u32 hdisplay, u32 *num_dsc);
 
 int msm_get_src_bpc(int chroma_format, int bpc);
 

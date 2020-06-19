@@ -2074,11 +2074,13 @@ static struct drm_connector *_sde_rm_get_connector(
 		struct drm_encoder *enc)
 {
 	struct drm_connector *conn = NULL, *conn_search;
+	struct sde_connector *c_conn = NULL;
 	struct drm_connector_list_iter conn_iter;
 
 	drm_connector_list_iter_begin(enc->dev, &conn_iter);
 	drm_for_each_connector_iter(conn_search, &conn_iter) {
-		if (conn_search->encoder == enc) {
+		c_conn = to_sde_connector(conn_search);
+		if (c_conn->encoder == enc) {
 			conn = conn_search;
 			break;
 		}
@@ -2136,6 +2138,63 @@ bool sde_rm_topology_is_quad_pipe(struct sde_rm *rm,
 
 		topology = sde_connector_get_topology_name(conn);
 		if (TOPOLOGY_QUADPIPE_MERGE_MODE(topology))
+			return true;
+	}
+
+	return false;
+}
+
+bool sde_rm_topology_is_dual_pipe(struct sde_rm *rm,
+		struct drm_crtc_state *state)
+{
+	int i;
+	struct sde_crtc_state *cstate;
+	uint64_t topology = SDE_RM_TOPOLOGY_NONE;
+
+	if ((!rm) || (!state)) {
+		pr_err("invalid arguments: rm:%d state:%d\n",
+				rm == NULL, state == NULL);
+		return false;
+	}
+
+	cstate = to_sde_crtc_state(state);
+
+	for (i = 0; i < cstate->num_connectors; i++) {
+		struct drm_connector *conn = cstate->connectors[i];
+
+		topology = sde_connector_get_topology_name(conn);
+		if (TOPOLOGY_DUALPIPE_MERGE_MODE(topology))
+			return true;
+	}
+
+	return false;
+}
+
+bool sde_rm_topology_is_3dmux_dsc(struct sde_rm *rm,
+		struct drm_crtc_state *state)
+{
+	int i;
+	struct sde_crtc_state *cstate;
+	uint64_t topology = SDE_RM_TOPOLOGY_NONE;
+	const struct sde_rm_topology_def *def;
+	int num_lm, num_enc;
+
+	if ((!rm) || (!state)) {
+		pr_err("invalid arguments: rm:%d state:%d\n",
+				rm == NULL, state == NULL);
+		return false;
+	}
+
+	cstate = to_sde_crtc_state(state);
+
+	for (i = 0; i < cstate->num_connectors; i++) {
+		struct drm_connector *conn = cstate->connectors[i];
+
+		topology = sde_connector_get_topology_name(conn);
+		def = sde_rm_topology_get_topology_def(rm, topology);
+		num_lm = def->num_lm;
+		num_enc = def->num_comp_enc;
+		if (num_lm > num_enc && num_enc)
 			return true;
 	}
 
@@ -2229,10 +2288,10 @@ void sde_rm_release(struct sde_rm *rm, struct drm_encoder *enc, bool nxt)
 
 	conn = _sde_rm_get_connector(enc);
 	if (!conn) {
-		SDE_DEBUG("failed to get connector for enc %d, nxt %d",
-				enc->base.id, nxt);
 		SDE_EVT32(enc->base.id, 0x0, 0xffffffff);
 		_sde_rm_release_rsvp(rm, rsvp, conn);
+		SDE_DEBUG("failed to get conn for enc %d nxt %d rsvp[s%de%d]\n",
+				enc->base.id, nxt, rsvp->seq, rsvp->enc_id);
 		goto end;
 	}
 
@@ -2344,7 +2403,7 @@ int sde_rm_reserve(
 	 * comes again after earlier commit gets processed.
 	 */
 
-	if (test_only && rsvp_nxt) {
+	if (test_only && rsvp_cur && rsvp_nxt) {
 		SDE_ERROR("cur %d nxt %d enc %d conn %d\n", rsvp_cur->seq,
 			 rsvp_nxt->seq, enc->base.id,
 			 conn_state->connector->base.id);

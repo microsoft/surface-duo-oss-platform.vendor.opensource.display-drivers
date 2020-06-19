@@ -299,7 +299,12 @@ static int _sde_kms_scm_call(struct sde_kms *sde_kms, int vmid)
 
 		sec_sid = (uint32_t *) shm.vaddr;
 		mem_addr = shm.paddr;
-		mem_size = shm.size;
+		/**
+		 * SMMUSecureModeSwitch requires the size to be number of SID's
+		 * but shm allocates size in pages. Modify the args as per
+		 * client requirement.
+		 */
+		mem_size = sizeof(uint32_t) * num_sids;
 	} else {
 		sec_sid = kcalloc(num_sids, sizeof(uint32_t), GFP_KERNEL);
 		if (!sec_sid)
@@ -1333,6 +1338,8 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 	void *display, *connector;
 	int i, max_encoders;
 	int rc = 0;
+	u32 dsc_count = 0, mixer_count = 0;
+	u32 max_dp_dsc_count, max_dp_mixer_count;
 
 	if (!dev || !priv || !sde_kms) {
 		SDE_ERROR("invalid argument(s)\n");
@@ -1441,7 +1448,15 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 			sde_connector_destroy(connector);
 			sde_encoder_destroy(encoder);
 		}
+
+		dsc_count += info.dsc_count;
+		mixer_count += info.lm_count;
 	}
+
+	max_dp_mixer_count = sde_kms->catalog->mixer_count > mixer_count ?
+				sde_kms->catalog->mixer_count - mixer_count : 0;
+	max_dp_dsc_count = sde_kms->catalog->dsc_count > dsc_count ?
+				sde_kms->catalog->dsc_count - dsc_count : 0;
 
 	/* dp */
 	for (i = 0; i < sde_kms->dp_display_count &&
@@ -1464,7 +1479,8 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 			continue;
 		}
 
-		rc = dp_drm_bridge_init(display, encoder);
+		rc = dp_drm_bridge_init(display, encoder,
+				max_dp_mixer_count, max_dp_dsc_count);
 		if (rc) {
 			SDE_ERROR("dp bridge %d init failed, %d\n", i, rc);
 			sde_encoder_destroy(encoder);
@@ -1489,7 +1505,9 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 
 		/* update display cap to MST_MODE for DP MST encoders */
 		info.capabilities |= MSM_DISPLAY_CAP_MST_MODE;
-		for (idx = 0; idx < sde_kms->dp_stream_count; idx++) {
+
+		for (idx = 0; idx < sde_kms->dp_stream_count &&
+				priv->num_encoders < max_encoders; idx++) {
 			info.h_tile_instance[0] = idx;
 			encoder = sde_encoder_init(dev, &info);
 			if (IS_ERR_OR_NULL(encoder)) {
@@ -2522,6 +2540,34 @@ error:
 	return rc;
 }
 
+static int sde_kms_get_dsc_count(const struct msm_kms *kms,
+		u32 hdisplay, u32 *num_dsc)
+{
+	struct sde_kms *sde_kms;
+	uint32_t max_dsc_width;
+
+	if (!num_dsc) {
+		SDE_ERROR("invalid num_dsc pointer\n");
+		return -EINVAL;
+	}
+
+	*num_dsc = 0;
+	if (!kms || !hdisplay) {
+		SDE_ERROR("invalid input args\n");
+		return -EINVAL;
+	}
+
+	sde_kms = to_sde_kms(kms);
+	max_dsc_width = sde_kms->catalog->max_dsc_width;
+	*num_dsc = DIV_ROUND_UP(hdisplay, max_dsc_width);
+
+	SDE_DEBUG("h=%d, max_dsc_width=%d, num_dsc=%d\n",
+			hdisplay, max_dsc_width,
+			*num_dsc);
+
+	return 0;
+}
+
 static void _sde_kms_null_commit(struct drm_device *dev,
 		struct drm_encoder *enc)
 {
@@ -2874,6 +2920,7 @@ static const struct msm_kms_funcs kms_funcs = {
 	.postopen = _sde_kms_post_open,
 	.check_for_splash = sde_kms_check_for_splash,
 	.get_mixer_count = sde_kms_get_mixer_count,
+	.get_dsc_count = sde_kms_get_dsc_count,
 };
 
 static int _sde_kms_mmu_destroy(struct sde_kms *sde_kms)
@@ -2944,6 +2991,8 @@ static int _sde_kms_mmu_init(struct sde_kms *sde_kms)
 		}
 	}
 
+	sde_kms->base.aspace = sde_kms->aspace[0];
+
 	return 0;
 
 early_map_fail:
@@ -3008,6 +3057,7 @@ static void _sde_kms_update_pm_qos_irq_request(struct sde_kms *sde_kms)
 {
 	struct device *cpu_dev;
 	int cpu = 0;
+	u32 cpu_irq_latency = sde_kms->catalog->perf.cpu_irq_latency;
 
 	if (cpumask_empty(&sde_kms->irq_cpu_mask)) {
 		SDE_DEBUG("%s: irq_cpu_mask is empty\n", __func__);
@@ -3024,12 +3074,12 @@ static void _sde_kms_update_pm_qos_irq_request(struct sde_kms *sde_kms)
 
 		if (dev_pm_qos_request_active(&sde_kms->pm_qos_irq_req[cpu]))
 			dev_pm_qos_update_request(&sde_kms->pm_qos_irq_req[cpu],
-					sde_kms->catalog->perf.cpu_dma_latency);
+					cpu_irq_latency);
 		else
 			dev_pm_qos_add_request(cpu_dev,
 				&sde_kms->pm_qos_irq_req[cpu],
 				DEV_PM_QOS_RESUME_LATENCY,
-				sde_kms->catalog->perf.cpu_dma_latency);
+				cpu_irq_latency);
 	}
 }
 

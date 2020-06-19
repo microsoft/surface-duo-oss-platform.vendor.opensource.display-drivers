@@ -846,11 +846,9 @@ static void _sde_plane_setup_scaler3(struct sde_plane *psde,
 	bool pre_down_supported = (psde->features & BIT(SDE_SSPP_PREDOWNSCALE));
 	bool inline_rotation = (pstate->rotation & DRM_MODE_ROTATE_90);
 
-	if (!psde || !pstate || !fmt ||
-			!chroma_subsmpl_h || !chroma_subsmpl_v) {
-		SDE_ERROR("psde %d pstate %d fmt %d smp_h %d smp_v %d\n",
-				!!psde, !!pstate, !!fmt, chroma_subsmpl_h,
-				chroma_subsmpl_v);
+	if (!fmt || !chroma_subsmpl_h || !chroma_subsmpl_v) {
+		SDE_ERROR("fmt %d smp_h %d smp_v %d\n", !fmt,
+				chroma_subsmpl_h, chroma_subsmpl_v);
 		return;
 	}
 
@@ -1948,83 +1946,18 @@ static int sde_plane_prepare_fb(struct drm_plane *plane,
 	return 0;
 }
 
-/**
- * _sde_plane_fetch_halt - halts vbif transactions for a plane
- * @plane: Pointer to plane
- * Returns: 0 on success
- */
-static int _sde_plane_fetch_halt(struct drm_plane *plane)
-{
-	struct sde_plane *psde;
-	int xin_id;
-	enum sde_clk_ctrl_type clk_ctrl;
-	struct msm_drm_private *priv;
-	struct sde_kms *sde_kms;
-
-	psde = to_sde_plane(plane);
-	if (!plane || !plane->dev || !psde->pipe_hw) {
-		SDE_ERROR("invalid arguments\n");
-		return -EINVAL;
-	}
-
-	priv = plane->dev->dev_private;
-	if (!priv || !priv->kms) {
-		SDE_ERROR("invalid KMS reference\n");
-		return -EINVAL;
-	}
-
-	sde_kms = to_sde_kms(priv->kms);
-	clk_ctrl = psde->pipe_hw->cap->clk_ctrl;
-	xin_id = psde->pipe_hw->cap->xin_id;
-	SDE_DEBUG_PLANE(psde, "pipe:%d xin_id:%d clk_ctrl:%d\n",
-			psde->pipe - SSPP_VIG0, xin_id, clk_ctrl);
-	SDE_EVT32_VERBOSE(psde, psde->pipe - SSPP_VIG0, xin_id, clk_ctrl);
-
-	return sde_vbif_halt_plane_xin(sde_kms, xin_id, clk_ctrl);
-}
-
-
 static void sde_plane_cleanup_fb(struct drm_plane *plane,
 		struct drm_plane_state *old_state)
 {
 	struct sde_plane *psde = to_sde_plane(plane);
 	struct sde_plane_state *old_pstate;
-	int ret;
 
-	if (!old_state || !old_state->fb || !plane || !plane->state)
+	if (!old_state || !old_state->fb || !plane)
 		return;
 
 	old_pstate = to_sde_plane_state(old_state);
 
 	SDE_DEBUG_PLANE(psde, "FB[%u]\n", old_state->fb->base.id);
-
-	/*
-	 * plane->state gets populated for next frame after swap_state. If
-	 * plane->state->crtc pointer is not populated then it is not used in
-	 * the next frame, hence making it an unused plane.
-	 */
-	if ((plane->state->crtc == NULL) && !psde->is_virtual) {
-		SDE_DEBUG_PLANE(psde, "unused pipe:%u\n",
-			       psde->pipe - SSPP_VIG0);
-
-		/* halt this plane now */
-		ret = pm_runtime_get_sync(plane->dev->dev);
-		if (ret < 0) {
-			SDE_ERROR("power resource enable failed with %d", ret);
-			SDE_EVT32(ret, SDE_EVTLOG_ERROR);
-			return;
-		}
-
-		ret = _sde_plane_fetch_halt(plane);
-		if (ret) {
-			SDE_ERROR_PLANE(psde,
-				       "unused pipe %u halt failed\n",
-				       psde->pipe - SSPP_VIG0);
-			SDE_EVT32(DRMID(plane), psde->pipe - SSPP_VIG0,
-				       ret, SDE_EVTLOG_ERROR);
-		}
-		pm_runtime_put_sync(plane->dev->dev);
-	}
 
 	msm_framebuffer_cleanup(old_state->fb, old_pstate->aspace);
 
@@ -2620,6 +2553,10 @@ static int _sde_plane_sspp_atomic_check_helper(struct sde_plane *psde,
 	} else if (dst.w < 0x1 || dst.h < 0x1) {
 		SDE_ERROR_PLANE(psde, "invalid dest rect %u, %u, %ux%u\n",
 				dst.x, dst.y, dst.w, dst.h);
+		ret = -EINVAL;
+	} else if (SDE_FORMAT_IS_UBWC(fmt) &&
+		!psde->catalog->ubwc_version) {
+		SDE_ERROR_PLANE(psde, "ubwc not supported\n");
 		ret = -EINVAL;
 	}
 

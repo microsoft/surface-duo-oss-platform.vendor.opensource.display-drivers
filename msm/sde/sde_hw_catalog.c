@@ -35,7 +35,7 @@
 /* max table size for dts property lists, increase if tables grow larger */
 #define MAX_SDE_DT_TABLE_SIZE 64
 
-/* default line width for sspp, mixer, ds (input), wb */
+/* default line width for sspp, mixer, ds (input), dsc, wb */
 #define DEFAULT_SDE_LINE_WIDTH 2048
 
 /* default output line width for ds */
@@ -101,7 +101,6 @@
 #define MAX_DISPLAY_HEIGHT				5760
 #define MIN_DISPLAY_HEIGHT				0
 #define MIN_DISPLAY_WIDTH				0
-#define MAX_LM_PER_DISPLAY				2
 
 /* maximum XIN halt timeout in usec */
 #define VBIF_XIN_HALT_TIMEOUT		0x4000
@@ -228,6 +227,7 @@ enum {
 	PERF_CPU_MASK,
 	CPU_MASK_PERF,
 	PERF_CPU_DMA_LATENCY,
+	PERF_CPU_IRQ_LATENCY,
 	PERF_PROP_MAX,
 };
 
@@ -324,6 +324,7 @@ enum {
 	DSC_CTL,
 	DSC_CTL_LEN,
 	DSC_422,
+	DSC_LINEWIDTH,
 	DSC_PROP_MAX,
 };
 
@@ -607,6 +608,8 @@ static struct sde_prop_type sde_perf_prop[] = {
 			PROP_TYPE_U32},
 	{PERF_CPU_DMA_LATENCY, "qcom,sde-qos-cpu-dma-latency", false,
 			PROP_TYPE_U32},
+	{PERF_CPU_IRQ_LATENCY, "qcom,sde-qos-cpu-irq-latency", false,
+			PROP_TYPE_U32},
 };
 
 static struct sde_prop_type sde_qos_prop[] = {
@@ -790,7 +793,8 @@ static struct sde_prop_type dsc_prop[] = {
 	{DSC_ENC_LEN, "qcom,sde-dsc-enc-size", false, PROP_TYPE_U32},
 	{DSC_CTL, "qcom,sde-dsc-ctl", false, PROP_TYPE_U32_ARRAY},
 	{DSC_CTL_LEN, "qcom,sde-dsc-ctl-size", false, PROP_TYPE_U32},
-	{DSC_422, "qcom,sde-dsc-native422-supp", false, PROP_TYPE_U32_ARRAY}
+	{DSC_422, "qcom,sde-dsc-native422-supp", false, PROP_TYPE_U32_ARRAY},
+	{DSC_LINEWIDTH, "qcom,sde-dsc-linewidth", false, PROP_TYPE_U32},
 };
 
 static struct sde_prop_type vdc_prop[] = {
@@ -1431,6 +1435,9 @@ static int _sde_sspp_setup_vigs(struct device_node *np,
 			set_bit(SDE_PERF_SSPP_QOS_8LVL, &sspp->perf_features);
 		vig_count++;
 
+		sblk->format_list = sde_cfg->vig_formats;
+		sblk->virt_format_list = sde_cfg->virt_vig_formats;
+
 		if ((sde_cfg->qseed_type == SDE_SSPP_SCALER_QSEED2) ||
 		    (sde_cfg->qseed_type == SDE_SSPP_SCALER_QSEED3) ||
 		    (sde_cfg->qseed_type == SDE_SSPP_SCALER_QSEED3LITE)) {
@@ -1445,9 +1452,6 @@ static int _sde_sspp_setup_vigs(struct device_node *np,
 		}
 
 		_sde_sspp_setup_vigs_pp(props, sde_cfg, sspp);
-
-		sblk->format_list = sde_cfg->vig_formats;
-		sblk->virt_format_list = sde_cfg->virt_vig_formats;
 
 		if (sde_cfg->true_inline_rot_rev > 0) {
 			set_bit(SDE_SSPP_TRUE_INLINE_ROT, &sspp->features);
@@ -2932,6 +2936,10 @@ static int sde_dsc_parse_dt(struct device_node *np,
 	if (rc)
 		goto end;
 
+	sde_cfg->max_dsc_width = prop_exists[DSC_LINEWIDTH] ?
+			PROP_VALUE_ACCESS(prop_value, DSC_LINEWIDTH, 0) :
+			DEFAULT_SDE_LINE_WIDTH;
+
 	for (i = 0; i < off_count; i++) {
 		dsc = sde_cfg->dsc + i;
 
@@ -4162,6 +4170,10 @@ static int _sde_perf_parse_dt_cfg(struct device_node *np,
 			prop_exists[PERF_CPU_DMA_LATENCY] ?
 			PROP_VALUE_ACCESS(prop_value, PERF_CPU_DMA_LATENCY, 0) :
 			DEFAULT_CPU_DMA_LATENCY;
+	cfg->perf.cpu_irq_latency =
+			prop_exists[PERF_CPU_IRQ_LATENCY] ?
+			PROP_VALUE_ACCESS(prop_value, PERF_CPU_IRQ_LATENCY, 0) :
+			PM_QOS_DEFAULT_VALUE;
 
 	return 0;
 }
@@ -4733,9 +4745,6 @@ static int _sde_hardware_post_caps(struct sde_mdss_cfg *sde_cfg,
 			set_bit(SDE_SSPP_BLOCK_SEC_UI,
 					&sde_cfg->sspp[i].features);
 	}
-
-	/* this should be updated based on HW rev in future */
-	sde_cfg->max_lm_per_display = MAX_LM_PER_DISPLAY;
 
 	if (max_horz_deci)
 		sde_cfg->max_display_width = sde_cfg->max_sspp_linewidth *
