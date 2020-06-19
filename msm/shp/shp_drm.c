@@ -169,12 +169,24 @@ int shp_plane_validate(struct shp_plane *splane,
 		}
 	}
 
+	if (WARN_ON(!shp_state->active))
+		return -EINVAL;
+
 	if (shp_state->handoff != splane->state.handoff ||
 			state->crtc != plane->state->crtc) {
 		uint32_t crtc_mask;
 
-		if (splane->detach_handoff && !state->crtc) {
+		if (splane->detach_handoff) {
+			if (!shp_state->handoff)
+				return 0;
+
+			if (state->crtc) {
+				SDE_ERROR("can't handoff when crtc is set\n");
+				return -EINVAL;
+			}
+
 			shp_state->active = false;
+			shp_state->handoff = false;
 			crtc_mask = 0xFFFFFFFF;
 		} else if (!shp_state->handoff) {
 			crtc_mask = 0;
@@ -194,6 +206,8 @@ int shp_plane_validate(struct shp_plane *splane,
 			if (p->master != splane)
 				pstate->possible_crtcs =
 					crtc_mask & p->default_crtcs;
+			else if (!shp_state->active)
+				pstate->possible_crtcs = 0;
 
 			SDE_DEBUG("plane%d: 0x%x h=%d c=%d a=%d\n",
 				p->plane->base.id,
