@@ -26,7 +26,7 @@ struct dp_power {
 	int (*clk_enable)(struct dp_power *power, enum dp_pm_type pm_type,
 				bool enable);
 	int (*set_pixel_clk_parent)(struct dp_power *power, u32 stream_id,
-				enum dp_phy_bond_mode bond_mode);
+				enum dp_phy_bond_mode bond_mode, bool enable);
 	int (*power_client_init)(struct dp_power *power,
 				struct sde_power_handle *phandle);
 	void (*power_client_deinit)(struct dp_power *power);
