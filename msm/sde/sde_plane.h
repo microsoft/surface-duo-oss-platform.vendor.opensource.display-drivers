@@ -162,7 +162,7 @@ struct sde_plane_state {
 	bool defer_prepare_fb;
 	uint32_t pipe_order_flags;
 	int layout_offset;
-	enum sde_layout layout;
+	u32 layout;
 
 	/* scaler configuration */
 	struct sde_hw_scaler3_cfg scaler3_cfg;
