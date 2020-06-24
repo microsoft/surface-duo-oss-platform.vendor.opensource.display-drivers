@@ -25,6 +25,7 @@
 #include "sde_plane.h"
 #include "shd_drm.h"
 #include "shd_hw.h"
+#include "sde_roi_misr_helper.h"
 
 #define SDE_ERROR_PHYS(p, fmt, ...) SDE_ERROR("enc%d intf%d " fmt,\
 		(p) ? (p)->parent->base.id : -1, \
@@ -161,7 +162,7 @@ static void sde_encoder_phys_shd_roi_misr_irq(void *arg, int irq_idx)
 	 * update fence data and check event should be
 	 * sent or not
 	 */
-	event_status = sde_encoder_helper_roi_misr_update_fence(phys_enc,
+	event_status = sde_roi_misr_update_fence(phys_enc,
 			shd_enc->base_drm_enc);
 
 	if (event_status && phys_enc->parent_ops.handle_roi_misr_virt)
@@ -215,7 +216,7 @@ static int sde_encoder_phys_shd_control_roi_misr_irq(
 			+ i * ROI_MISR_MAX_ROIS_PER_MISR;
 
 		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; j++) {
-			ret = sde_encoder_helper_roi_misr_irq_enable(phys_enc,
+			ret = sde_roi_misr_irq_control(phys_enc,
 				base_irq_idx, j, enable);
 			if (ret)
 				return ret;
@@ -424,7 +425,7 @@ static void sde_encoder_phys_shd_mode_set(
 	_sde_encoder_phys_shd_setup_irq_hw_idx(phys_enc);
 
 	if (sde_encoder_phys_shd_is_master(phys_enc))
-		sde_encoder_helper_roi_misr_setup_irq_hw_idx(phys_enc,
+		sde_roi_misr_setup_irq_hw_idx(phys_enc,
 				encoder);
 
 	/* update to base connector's topology name */
@@ -663,7 +664,7 @@ static void sde_encoder_phys_shd_disable(struct sde_encoder_phys *phys_enc)
 
 	shd_enc = to_sde_encoder_phys_shd(phys_enc);
 
-	sde_encoder_helper_roi_misr_reset(phys_enc, shd_enc->base_drm_enc);
+	sde_roi_misr_hw_reset(phys_enc, shd_enc->base_drm_enc);
 
 	sde_encoder_helper_reset_mixers(phys_enc, NULL);
 

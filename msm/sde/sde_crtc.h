@@ -27,10 +27,7 @@
 #include "sde_core_perf.h"
 #include "sde_hw_blk.h"
 #include "sde_hw_ds.h"
-#include "sde_hw_roi_misr.h"
-#include "sde_hw_dspp.h"
-#include "sde_fence_misr.h"
-#include <uapi/drm/sde_drm.h>
+#include "sde_roi_misr.h"
 
 #define SDE_CRTC_NAME_SIZE	12
 
@@ -134,18 +131,6 @@ struct sde_crtc_frame_event {
 };
 
 /**
- * struct sde_crtc_misr_event: stores roi misr event for crtc processing
- * @work:	base work structure
- * @crtc:	Pointer to crtc handling this event
- * @event:	event identifier
- */
-struct sde_crtc_misr_event {
-	struct kthread_work work;
-	struct drm_crtc *crtc;
-	u32 event;
-};
-
-/**
  * struct sde_crtc_event - event callback tracking structure
  * @list:     Linked list tracking node
  * @kt_work:  Kthread worker structure
@@ -245,10 +230,7 @@ struct sde_crtc_fps_info {
  * @rp_lock       : serialization lock for resource pool
  * @rp_head       : list of active resource pool
  * @plane_mask_old: keeps track of the planes used in the previous commit
- * @roi_misr_fence: list of roi_misr_fence for every commit
- * @misr_fence_lock: spinlock around misr fence handling code
- * @misr_event: static allocation of in-flight roi misr events
- * @roi_misr_hw_cfg: the roi misr config should be written to register
+ * @roi_misr_data: roi misr related fence, event and hw config data
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -331,11 +313,7 @@ struct sde_crtc {
 	/* blob for histogram data */
 	struct drm_property_blob *hist_blob;
 
-	/* roi misr fence support */
-	struct list_head roi_misr_fence;
-	spinlock_t misr_fence_lock;
-	struct sde_crtc_misr_event misr_event;
-	struct sde_roi_misr_hw_cfg roi_misr_hw_cfg[ROI_MISR_MAX_MISRS_PER_CRTC];
+	struct sde_misr_crtc_data roi_misr_data;
 };
 
 #define to_sde_crtc(x) container_of(x, struct sde_crtc, base)
@@ -392,20 +370,6 @@ struct sde_crtc_respool {
 	u32 sequence_id;
 	struct list_head res_list;
 	struct sde_crtc_res_ops ops;
-};
-
-/**
- * sde_misr_state - sde misr state of current topology
- * @num_misrs: Number of roi misrs in current topology
- * @mixer_width: width of every mixer in current topology
- * @roi_misr_cfg: roi misr configuration from user space
- * @roi_range: misr roi range table
- */
-struct sde_misr_state {
-	u32 num_misrs;
-	u32 mixer_width;
-	struct sde_roi_misr_usr_cfg roi_misr_cfg;
-	struct drm_clip_rect roi_range[ROI_MISR_MAX_ROIS_PER_CRTC];
 };
 
 /**

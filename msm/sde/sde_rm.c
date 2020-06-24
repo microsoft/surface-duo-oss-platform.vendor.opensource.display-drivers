@@ -19,6 +19,7 @@
 #include "sde_hw_rot.h"
 #include "sde_crtc.h"
 #include "sde_hw_qdss.h"
+#include "sde_hw_roi_misr.h"
 
 #define RESERVED_BY_OTHER(h, r) \
 	((h)->rsvp && ((h)->rsvp->enc_id != (r)->enc_id))
