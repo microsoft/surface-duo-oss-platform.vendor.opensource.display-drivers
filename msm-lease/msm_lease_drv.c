@@ -460,6 +460,9 @@ static int msm_lease_add_connector(struct drm_device *dev, const char *name,
 		goto out;
 	}
 
+	/* unique connector-crtc mapping is required by cont splash */
+	encoder->possible_crtcs = drm_crtc_mask(crtc);
+
 	object_ids[(*object_count)++] = conn_id;
 	object_ids[(*object_count)++] = crtc_id;
 
