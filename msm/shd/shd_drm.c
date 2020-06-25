@@ -811,11 +811,9 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 		return 0;
 	}
 
-	/* update vrefresh and remove preferred flag */
-	list_for_each_entry(m, &disp->base->connector->modes, head) {
+	/* update vrefresh */
+	list_for_each_entry(m, &disp->base->connector->modes, head)
 		m->vrefresh = drm_mode_vrefresh(m);
-		m->type &= ~DRM_MODE_TYPE_PREFERRED;
-	}
 
 	/* sort base mode */
 	drm_mode_sort(&disp->base->connector->modes);
