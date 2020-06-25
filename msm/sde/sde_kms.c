@@ -2593,7 +2593,6 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 	int i, rc = 0;
 	struct drm_display_mode *drm_mode = NULL;
 	struct drm_device *dev;
-	struct msm_drm_private *priv;
 	struct sde_kms *sde_kms;
 	struct drm_connector_list_iter conn_iter;
 	struct drm_connector *connector = NULL;
@@ -2660,9 +2659,20 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 			return -EINVAL;
 		}
 
-		priv = sde_kms->dev->dev_private;
-		encoder->crtc = priv->crtcs[i];
-		crtc = encoder->crtc;
+		rc = -ENOENT;
+		drm_for_each_crtc(crtc, dev) {
+			if ((encoder->possible_crtcs & drm_crtc_mask(crtc)) &&
+					!crtc->state->active) {
+				rc = 0;
+				break;
+			}
+		}
+		if (rc) {
+			SDE_ERROR("failed to find crtc\n");
+			return rc;
+		}
+
+		encoder->crtc = crtc;
 		splash_display->encoder =  encoder;
 
 		SDE_DEBUG("for dsi-display:%d crtc id = %d enc id =%d\n",
