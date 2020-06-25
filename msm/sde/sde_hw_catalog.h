@@ -810,9 +810,11 @@ struct sde_pingpong_cfg  {
  * @base               register offset of this block
  * @len:               length of hardware block
  * @features           bit mask identifying sub-blocks/features
+ * @dsc_pair_mask:     Bitmask of DSCs that can be controlled by same CTL
  */
 struct sde_dsc_cfg {
 	SDE_HW_BLK_INFO;
+	unsigned long dsc_pair_mask;
 };
 
 /**
