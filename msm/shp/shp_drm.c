@@ -506,6 +506,7 @@ static int shp_parse(struct shp_device *shp)
 			parent->is_shared = true;
 			parent->master = parent;
 			parent->state.active = true;
+			parent->detach_handoff = true;
 			parent->default_crtcs =
 				parent->plane->possible_crtcs;
 			sspp = sde_plane_pipe(parent->plane);
