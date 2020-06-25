@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -81,12 +81,14 @@ struct shp_plane {
 };
 
 struct shp_device {
+	struct device *device;
 	struct drm_device *dev;
 	struct shp_pool pools[SSPP_MAX];
 	struct shp_plane *planes;
 	int num_planes;
 
 	struct drm_property *handoff_prop;
+	struct notifier_block notifier;
 
 	struct msm_kms_funcs kms_funcs;
 	const struct msm_kms_funcs *orig_kms_funcs;
@@ -167,12 +169,24 @@ int shp_plane_validate(struct shp_plane *splane,
 		}
 	}
 
+	if (WARN_ON(!shp_state->active))
+		return -EINVAL;
+
 	if (shp_state->handoff != splane->state.handoff ||
 			state->crtc != plane->state->crtc) {
 		uint32_t crtc_mask;
 
-		if (splane->detach_handoff && !state->crtc) {
+		if (splane->detach_handoff) {
+			if (!shp_state->handoff)
+				return 0;
+
+			if (state->crtc) {
+				SDE_ERROR("can't handoff when crtc is set\n");
+				return -EINVAL;
+			}
+
 			shp_state->active = false;
+			shp_state->handoff = false;
 			crtc_mask = 0xFFFFFFFF;
 		} else if (!shp_state->handoff) {
 			crtc_mask = 0;
@@ -192,6 +206,8 @@ int shp_plane_validate(struct shp_plane *splane,
 			if (p->master != splane)
 				pstate->possible_crtcs =
 					crtc_mask & p->default_crtcs;
+			else if (!shp_state->active)
+				pstate->possible_crtcs = 0;
 
 			SDE_DEBUG("plane%d: 0x%x h=%d c=%d a=%d\n",
 				p->plane->base.id,
@@ -395,7 +411,7 @@ static void shp_plane_atomic_update(struct drm_plane *plane,
 	return shp_plane->helper_funcs_orig->atomic_update(plane, old_state);
 }
 
-static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
+static int shp_parse(struct shp_device *shp)
 {
 	struct drm_device *dev = shp->dev;
 	struct msm_drm_private *priv = dev->dev_private;
@@ -409,7 +425,7 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 	int dup_count, system_count, total_count, i, j;
 	int rc = 0;
 
-	parent_node = of_get_child_by_name(pdev->dev.of_node,
+	parent_node = of_get_child_by_name(shp->device->of_node,
 			"qcom,add-planes");
 	if (!parent_node) {
 		SDE_ERROR("no planes defined\n");
@@ -422,13 +438,12 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 		return -EINVAL;
 	}
 
-	mutex_lock(&dev->mode_config.mutex);
 	sde_power_resource_enable(&priv->phandle,
 			sde_kms->core_client, true);
 
 	system_count = priv->num_planes;
 	total_count = dup_count + system_count;
-	shp->planes = devm_kzalloc(&pdev->dev,
+	shp->planes = devm_kzalloc(shp->device,
 			sizeof(*shp_plane) * total_count, GFP_KERNEL);
 	if (!shp->planes) {
 		rc = -ENOMEM;
@@ -581,9 +596,6 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 		list_add_tail(&shp_plane->head, &shp_plane->pool->plane_list);
 		shp_plane->is_shared = true;
 		shp_plane->state.active = p->state.active;
-
-		if (plane->funcs->reset)
-			plane->funcs->reset(plane);
 	}
 
 	/* setup all planes with new atomic check */
@@ -634,7 +646,6 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 out:
 	sde_power_resource_enable(&priv->phandle,
 				sde_kms->core_client, false);
-	mutex_unlock(&dev->mode_config.mutex);
 
 	/* dump all the planes */
 	for (i = 0; i < shp->num_planes; i++) {
@@ -656,54 +667,98 @@ out:
 	return rc;
 }
 
-#ifdef CONFIG_DRM_SDE_SHD
-static int sde_shp_match_unprobed_name(struct device *dev, void *data)
+static int sde_shp_notifier(struct notifier_block *nb,
+			unsigned long action, void *data)
 {
-	struct device_driver *drv = data;
+	struct shp_device *shp_dev;
+	int ret;
 
-	return drv->bus->match(dev, drv) && !dev_get_drvdata(dev);
+	if (action != MSM_COMP_OBJECT_CREATED)
+		return 0;
+
+	shp_dev = container_of(nb, struct shp_device, notifier);
+
+	ret = shp_parse(shp_dev);
+	if (ret) {
+		SDE_ERROR("failed to parse shared plane device\n");
+		return ret;
+	}
+
+	return 0;
 }
 
-static bool sde_shp_has_unprobed_device(const char *drv_name)
+static int sde_shp_bind(struct device *dev, struct device *master,
+		void *data)
 {
-	struct device *dev;
-	struct device_driver *drv;
+	int rc = 0;
+	struct shp_device *shp_dev;
+	struct drm_device *drm;
+	struct platform_device *pdev = to_platform_device(dev);
 
-	drv = driver_find(drv_name, &platform_bus_type);
-	if (!drv)
-		return false;
+	if (!dev || !pdev || !master) {
+		pr_err("invalid param(s), dev %pK, pdev %pK, master %pK\n",
+				dev, pdev, master);
+		rc = -EINVAL;
+		goto end;
+	}
 
-	dev = bus_find_device(&platform_bus_type, NULL,
-			(void *)drv, sde_shp_match_unprobed_name);
+	drm = dev_get_drvdata(master);
+	shp_dev = platform_get_drvdata(pdev);
+	if (!drm || !shp_dev) {
+		pr_err("invalid param(s), drm %pK, shp_dev %pK\n",
+				drm, shp_dev);
+		rc = -EINVAL;
+		goto end;
+	}
 
-	return (dev != NULL);
+	shp_dev->handoff_prop = drm_property_create_range(drm,
+		DRM_MODE_PROP_ATOMIC, "handoff", 0, 1);
+
+	if (!shp_dev->handoff_prop)
+		return -ENOMEM;
+
+	shp_dev->dev = drm;
+	shp_dev->notifier.notifier_call = sde_shp_notifier;
+
+	rc = msm_drm_register_component(drm, &shp_dev->notifier);
+	if (rc) {
+		pr_err("failed to register component notifier\n");
+		goto end;
+	}
+
+end:
+	return rc;
 }
-#else
-static bool sde_shp_has_unprobed_device(const char *drv_name)
+
+static void sde_shp_unbind(struct device *dev, struct device *master,
+		void *data)
 {
-	return false;
+	struct shp_device *shp_dev;
+	struct platform_device *pdev = to_platform_device(dev);
+
+	if (!dev || !pdev) {
+		pr_err("invalid param");
+		return;
+	}
+
+	shp_dev = platform_get_drvdata(pdev);
+	if (!shp_dev) {
+		pr_err("invalid param");
+		return;
+	}
+
+	msm_drm_unregister_component(shp_dev->dev, &shp_dev->notifier);
 }
-#endif
+
+static const struct component_ops sde_shp_comp_ops = {
+	.bind = sde_shp_bind,
+	.unbind = sde_shp_unbind,
+};
 
 static int sde_shp_probe(struct platform_device *pdev)
 {
 	struct shp_device *shp_dev;
-	struct drm_minor *minor;
-	struct drm_device *dev;
 	int ret;
-
-	/* defer until primary drm is created */
-	minor = drm_minor_acquire(0);
-	if (IS_ERR(minor))
-		return -EPROBE_DEFER;
-
-	dev = minor->dev;
-	drm_minor_release(minor);
-	if (!dev)
-		return -EPROBE_DEFER;
-
-	if (sde_shp_has_unprobed_device("sde_shd"))
-		return -EPROBE_DEFER;
 
 	shp_dev = &g_shp_device;
 	if (shp_dev->dev) {
@@ -711,21 +766,14 @@ static int sde_shp_probe(struct platform_device *pdev)
 		return -EEXIST;
 	}
 
-	shp_dev->dev = dev;
-	shp_dev->handoff_prop = drm_property_create_range(dev,
-			DRM_MODE_PROP_ATOMIC, "handoff", 0, 1);
+	shp_dev->device = &pdev->dev;
+	platform_set_drvdata(pdev, shp_dev);
 
-	if (!shp_dev->handoff_prop)
-		return -ENOMEM;
-
-	ret = shp_parse(pdev, shp_dev);
+	ret = component_add(&pdev->dev, &sde_shp_comp_ops);
 	if (ret) {
-		SDE_ERROR("failed to parse shared plane device\n");
-		drm_property_destroy(dev, shp_dev->handoff_prop);
+		pr_err("component add failed, rc=%d\n", ret);
 		return ret;
 	}
-
-	platform_set_drvdata(pdev, shp_dev);
 
 	return 0;
 }

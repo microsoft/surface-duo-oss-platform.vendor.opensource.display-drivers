@@ -612,7 +612,7 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 	struct drm_connector *connector;
 	char name[HPD_STRING_SIZE], status[HPD_STRING_SIZE],
 		bpp[HPD_STRING_SIZE], pattern[HPD_STRING_SIZE];
-	char *envp[5];
+	char *envp[6];
 
 	if (dp->mst.mst_active) {
 		pr_debug("skip notification for mst mode\n");
@@ -644,7 +644,8 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 	envp[1] = status;
 	envp[2] = bpp;
 	envp[3] = pattern;
-	envp[4] = NULL;
+	envp[4] = "HOTPLUG=1";
+	envp[5] = NULL;
 	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE,
 			envp);
 }
@@ -2256,6 +2257,10 @@ static int dp_display_usbpd_get(struct dp_display_private *dp)
 	int rc = 0;
 	char const *phandle = "qcom,dp-usbpd-detection";
 
+	/* pd is not needed for gpio hpd */
+	if (of_find_property(dp->pdev->dev.of_node, "qcom,dp-hpd-gpio", NULL))
+		return 0;
+
 	dp->pd = devm_usbpd_get_by_phandle(&dp->pdev->dev, phandle);
 	if (IS_ERR(dp->pd)) {
 		rc = PTR_ERR(dp->pd);
@@ -2267,6 +2272,13 @@ static int dp_display_usbpd_get(struct dp_display_private *dp)
 		 */
 		if (rc == -ENXIO)
 			return 0;
+
+		/*
+		 * If pd module init is not called (if return is -EAGAIN) then
+		 * the driver need to be deferred.
+		 */
+		if (rc == -EAGAIN)
+			return -EPROBE_DEFER;
 
 		pr_err("usbpd phandle failed (%ld)\n", PTR_ERR(dp->pd));
 	}
@@ -2312,14 +2324,18 @@ end:
 	return rc;
 }
 
-static int dp_display_bridge_mst_attention(void *dev, bool hpd, bool hpd_irq)
+static int dp_display_bridge_internal_hpd(void *dev, bool hpd, bool hpd_irq)
 {
 	struct dp_display_private *dp = dev;
+	struct drm_device *drm_dev = dp->dp_display.drm_dev;
 
-	if (!hpd_irq)
-		return -EINVAL;
+	if (!drm_dev || !drm_dev->mode_config.poll_enabled)
+		return -EBUSY;
 
-	dp_display_mst_attention(dp);
+	if (hpd_irq)
+		dp_display_mst_attention(dp);
+	else
+		dp->hpd->simulate_connect(dp->hpd, hpd);
 
 	return 0;
 }
@@ -2349,10 +2365,9 @@ static int dp_display_init_aux_bridge(struct dp_display_private *dp)
 	}
 
 	if (dp->aux_bridge->register_hpd &&
-			(dp->aux_bridge->flag & MSM_DP_AUX_BRIDGE_MST) &&
 			!(dp->aux_bridge->flag & MSM_DP_AUX_BRIDGE_HPD))
 		dp->aux_bridge->register_hpd(dp->aux_bridge,
-				dp_display_bridge_mst_attention, dp);
+				dp_display_bridge_internal_hpd, dp);
 
 end:
 	return rc;
@@ -2981,6 +2996,7 @@ int dp_display_get_num_of_displays(void)
 int dp_display_get_num_of_streams(void *dp_display)
 {
 	struct dp_display_private *dp;
+	bool has_mst, no_mst_encoder;
 
 	if (!dp_display) {
 		pr_debug("dp display not initialized\n");
@@ -2988,11 +3004,17 @@ int dp_display_get_num_of_streams(void *dp_display)
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
-	if (!dp->parser)
-		return DP_STREAM_MAX;
+	if (!dp->parser) {
+		has_mst = of_property_read_bool(dp->pdev->dev.of_node,
+				"qcom,mst-enable");
+		no_mst_encoder = of_property_read_bool(dp->pdev->dev.of_node,
+				"qcom,no-mst-encoder");
+	} else {
+		has_mst = dp->parser->has_mst;
+		no_mst_encoder = dp->parser->no_mst_encoder;
+	}
 
-	return (dp->parser->has_mst && !dp->parser->no_mst_encoder) ?
-			DP_STREAM_MAX : 0;
+	return (has_mst && !no_mst_encoder) ? DP_STREAM_MAX : 0;
 }
 
 int dp_display_get_num_of_bonds(void *dp_display)
@@ -3006,12 +3028,18 @@ int dp_display_get_num_of_bonds(void *dp_display)
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
-	if (!dp->parser)
-		return dp->cell_idx ? 0 : DP_BOND_MAX;
-
-	for (i = 0; i < DP_BOND_MAX; i++) {
-		if (dp->parser->bond_cfg[i].enable)
+	if (!dp->parser) {
+		if (of_property_count_u32_elems(dp->pdev->dev.of_node,
+				"qcom,bond-dual-ctrl") > 0)
 			cnt++;
+		if (of_property_count_u32_elems(dp->pdev->dev.of_node,
+				"qcom,bond-tri-ctrl") > 0)
+			cnt++;
+	} else {
+		for (i = 0; i < DP_BOND_MAX; i++) {
+			if (dp->parser->bond_cfg[i].enable)
+				cnt++;
+		}
 	}
 
 	return cnt;

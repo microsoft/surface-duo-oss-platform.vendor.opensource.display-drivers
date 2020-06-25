@@ -59,6 +59,12 @@ struct sde_shd_hw_mixer {
 	struct sde_shd_mixer_cfg cfg[SDE_STAGE_MAX];
 };
 
+struct sde_shd_hw_roi_misr {
+	struct sde_hw_roi_misr base;
+	struct shd_roi_range range;
+	struct sde_hw_roi_misr *orig;
+};
+
 void sde_shd_hw_flush(struct sde_hw_ctl *ctl_ctx,
 	struct sde_hw_mixer *lm_ctx[MAX_MIXERS_PER_CRTC], int lm_num);
 

@@ -138,6 +138,17 @@ int dp_connector_atomic_check(
 		struct drm_connector *connector, void *display,
 		struct drm_connector_state *new_conn_state);
 
+/**
+ * dp_connector_get_tile_map - callback to get tile map
+ * @connector: Pointer to drm connector structure
+ * @display: Pointer to private display handle
+ * @num_tile: Number of tiles
+ * @tile_map: Pointer to tile indices
+ * Returns: Zero on success
+ */
+int dp_connector_get_tile_map(struct drm_connector *connector,
+		void *display, int num_tile, int *tile_map);
+
 int dp_drm_bridge_init(void *display,
 	struct drm_encoder *encoder);
 
@@ -198,6 +209,13 @@ int dp_mst_init(struct dp_display *dp_display);
  * @display: Pointer to private display structure
  */
 void dp_mst_deinit(struct dp_display *dp_display);
+
+/**
+ * dp_mst_dump_topology - dump out current mst topology
+ * @display: Pointer to private display structure
+ * @m: Pointer to sequential file
+ */
+void dp_mst_dump_topology(struct dp_display *dp_display, struct seq_file *m);
 
 #endif /* _DP_DRM_H_ */
 

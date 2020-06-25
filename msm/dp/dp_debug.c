@@ -15,6 +15,7 @@
 #include "drm_connector.h"
 #include "sde_connector.h"
 #include "dp_display.h"
+#include "dp_drm.h"
 #include <soc/qcom/msm_dp_mst_sim_helper.h>
 
 #define DEBUG_NAME "drm_dp"
@@ -792,8 +793,11 @@ static ssize_t dp_debug_force_bond_mode_write(struct file *file,
 	if (kstrtoint(buf, 10, &force_bond) != 0)
 		return -EINVAL;
 
+	if (force_bond)
+		(*debug->connector)->tile_h_loc = force_bond - 1;
+
 	debug->dp_debug.force_bond_mode = !!force_bond;
-	pr_debug("force_bond_mode: %d\n", force_bond);
+	pr_info("force_bond_mode: %d\n", force_bond);
 
 	return count;
 }
@@ -1747,6 +1751,21 @@ end:
 	return len;
 }
 
+static int dp_debug_mst_topology_show(struct seq_file *m, void *arg)
+{
+	struct dp_debug_private *debug = (struct dp_debug_private *) m->private;
+	struct sde_connector *conn = to_sde_connector(*debug->connector);
+
+	dp_mst_dump_topology(conn->display, m);
+
+	return 0;
+}
+
+static int dp_debug_mst_topology_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, dp_debug_mst_topology_show, inode->i_private);
+}
+
 static const struct file_operations dp_debug_fops = {
 	.open = simple_open,
 	.read = dp_debug_read_info,
@@ -1865,6 +1884,13 @@ static const struct file_operations hdcp_fops = {
 static const struct file_operations widebus_mode_fops = {
 	.open = simple_open,
 	.write = dp_debug_widebus_mode_write,
+};
+
+static const struct file_operations dp_debug_mst_topology_fops = {
+	.open = dp_debug_mst_topology_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
 };
 
 static int dp_debug_init(struct dp_debug *dp_debug)
@@ -2137,6 +2163,14 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 		       debug_name, rc);
 	}
 
+	file = debugfs_create_file("mst_topology", 0644, dir,
+			debug, &dp_debug_mst_topology_fops);
+	if (IS_ERR_OR_NULL(file)) {
+		rc = PTR_ERR(file);
+		pr_err("[%s] debugfs mst_topology failed, rc=%d\n",
+		       debug_name, rc);
+	}
+
 	return 0;
 
 error_remove_dir:
@@ -2222,6 +2256,8 @@ struct dp_debug *dp_debug_get(struct dp_debug_in *in)
 	dp_debug->abort = dp_debug_abort;
 
 	INIT_LIST_HEAD(&dp_debug->dp_mst_connector_list.list);
+
+	mutex_init(&dp_debug->dp_mst_connector_list.lock);
 
 	/*
 	 * Do not associate the head of the list with any connector in order to
