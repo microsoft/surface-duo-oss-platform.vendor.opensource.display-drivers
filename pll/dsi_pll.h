@@ -34,12 +34,6 @@ struct dsi_pll_vco_clk {
 			(struct mdss_pll_resources *dsi_pll_Res);
 };
 
-static inline struct dsi_pll_vco_clk *to_vco_clk_hw(struct clk_hw *hw)
-{
-	return container_of(hw, struct dsi_pll_vco_clk, hw);
-}
-
-#if IS_ENABLED(CONFIG_QCOM_MDSS_PLL)
 int dsi_pll_clock_register_10nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);
 
@@ -48,28 +42,11 @@ int dsi_pll_clock_register_7nm(struct platform_device *pdev,
 int dsi_pll_clock_register_28lpm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);
 
+static inline struct dsi_pll_vco_clk *to_vco_clk_hw(struct clk_hw *hw)
+{
+	return container_of(hw, struct dsi_pll_vco_clk, hw);
+}
+
 int dsi_pll_clock_register_14nm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);
-#else
-static inline int dsi_pll_clock_register_10nm(struct platform_device *pdev,
-				struct mdss_pll_resources *pll_res);
-{
-	return 0;
-}
-static inline int dsi_pll_clock_register_7nm(struct platform_device *pdev,
-				struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int dsi_pll_clock_register_28lpm(struct platform_device *pdev,
-				struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int dsi_pll_clock_register_14nm(struct platform_device *pdev,
-				struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-#endif /* CONFIG_QCOM_MDSS_PLL*/
 #endif

@@ -9,11 +9,11 @@
 #include <linux/err.h>
 #include <linux/iopoll.h>
 #include <linux/delay.h>
+#include <linux/usb/usbpd.h>
 
 #include "pll_drv.h"
 #include "dp_pll.h"
 #include "edp_pll_7nm.h"
-#include "dp_hpd.h"
 
 #define ENABLE_SSC
 #define HIGHER_CLK_FOR_5940MHZ

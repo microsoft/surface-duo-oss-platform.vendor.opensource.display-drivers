@@ -559,7 +559,7 @@ int sde_vbif_halt_xin_mask(struct sde_kms *sde_kms, u32 xin_id_mask,
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DEBUG_FS
 void sde_debugfs_vbif_destroy(struct sde_kms *sde_kms)
 {
 	debugfs_remove_recursive(sde_kms->debugfs_vbif);
@@ -629,4 +629,4 @@ int sde_debugfs_vbif_init(struct sde_kms *sde_kms, struct dentry *debugfs_root)
 
 	return 0;
 }
-#endif /* CONFIG_DEBUG_FS */
+#endif

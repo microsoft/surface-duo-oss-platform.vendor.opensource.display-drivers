@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_ROTATOR_INLINE_H__
@@ -96,7 +96,7 @@ struct sde_rotator_inline_cmd {
 	void *priv_handle;
 };
 
-#if IS_ENABLED(CONFIG_MSM_SDE_ROTATOR)
+#if defined(CONFIG_MSM_SDE_ROTATOR)
 
 void *sde_rotator_inline_open(struct platform_device *pdev);
 int sde_rotator_inline_get_dst_pixfmt(struct platform_device *pdev,
@@ -156,6 +156,6 @@ void sde_rotator_inline_reg_dump(struct platform_device *pdev)
 {
 }
 
-#endif /* CONFIG_MSM_SDE_ROTATOR */
+#endif
 
 #endif /* __SDE_ROTATOR_INLINE_H__ */

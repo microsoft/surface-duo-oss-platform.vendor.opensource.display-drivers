@@ -285,8 +285,8 @@ static void dsi_bridge_post_disable(struct drm_bridge *bridge)
 }
 
 static void dsi_bridge_mode_set(struct drm_bridge *bridge,
-				const struct drm_display_mode *mode,
-				const struct drm_display_mode *adjusted_mode)
+				struct drm_display_mode *mode,
+				struct drm_display_mode *adjusted_mode)
 {
 	struct dsi_bridge *c_bridge = to_dsi_bridge(bridge);
 
@@ -851,7 +851,7 @@ int dsi_connector_get_modes(struct drm_connector *connector, void *data)
 
 	dsi_drm_update_dtd(&edid, modes, count);
 	dsi_drm_update_checksum(&edid);
-	rc = drm_connector_update_edid_property(connector, &edid);
+	rc = drm_mode_connector_update_edid_property(connector, &edid);
 	if (rc)
 		count = 0;
 end:

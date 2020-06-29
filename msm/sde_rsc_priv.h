@@ -202,7 +202,7 @@ struct sde_rsc_priv {
 	bool sw_fs_enabled;
 	bool need_hwinit;
 
-	struct device *rpmh_dev;
+	struct rpmh_client *disp_rsc;
 	struct dss_io_data drv_io;
 	struct dss_io_data wrapper_io;
 

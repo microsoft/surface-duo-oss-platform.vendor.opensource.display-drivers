@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note
-
-header-y += msm_hdcp.h
-header-y += sde_io_util.h
-header-y += sde_rsc.h
-header-y += msm_dp_aux_bridge.h
-header-y += msm_dp_mst_sim_helper.h

@@ -8,7 +8,7 @@
 
 #include "dp_catalog.h"
 #include "drm_dp_helper.h"
-#include <linux/msm_dp_aux_bridge.h>
+#include <soc/qcom/msm_dp_aux_bridge.h>
 
 #define DP_STATE_NOTIFICATION_SENT          BIT(0)
 #define DP_STATE_TRAIN_1_STARTED            BIT(1)

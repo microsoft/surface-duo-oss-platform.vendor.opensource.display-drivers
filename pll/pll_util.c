@@ -356,7 +356,7 @@ static int mdss_pll_util_parse_dt_dfps_sub(struct platform_device *pdev,
 	offsets[0] = (u32) of_read_ulong(addr, 2);
 	offsets[1] = (u32) size;
 
-	area = __get_vm_area(offsets[1], VM_IOREMAP, VMALLOC_START, VMALLOC_END);
+	area = get_vm_area(offsets[1], VM_IOREMAP);
 	if (!area) {
 		rc = -ENOMEM;
 		goto dfps_mem_err;
@@ -388,11 +388,13 @@ ioremap_err:
 		vfree(area->addr);
 dfps_mem_err:
 	/* free the dfps memory here */
+	memblock_free(offsets[0], offsets[1]);
 	mdss_pll_free_bootmem(offsets[0], offsets[1]);
 pnode_err:
 	if (pnode)
 		of_node_put(pnode);
 
+	dma_release_declared_memory(&pdev->dev);
 	return rc;
 }
 

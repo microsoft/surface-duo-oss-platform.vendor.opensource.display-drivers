@@ -23,13 +23,14 @@
 #include <linux/of_graph.h>
 #include <linux/of_device.h>
 #include <linux/debugfs.h>
+#include <asm/sizes.h>
 #include <drm/drm_of.h>
 #include <drm/drmP.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_ioctl.h>
-#include <drm_internal.h>
+#include <../drivers/gpu/drm/drm_internal.h>
 
 #define MAX_LEASE_OBJECT_COUNT 64
 
@@ -310,7 +311,7 @@ static long msm_lease_ioctl(struct file *filp,
 		name_len = v.name_len;
 
 		err = drm_ioctl_kernel(filp, drm_version, &v,
-			DRM_UNLOCKED|DRM_RENDER_ALLOW);
+			DRM_UNLOCKED|DRM_RENDER_ALLOW|DRM_CONTROL_ALLOW);
 		if (err)
 			return err;
 
@@ -359,7 +360,7 @@ static long msm_lease_compat_ioctl(struct file *filp,
 		name_len = v.name_len;
 
 		err = drm_ioctl_kernel(filp, drm_version, &v,
-			DRM_UNLOCKED);
+			DRM_UNLOCKED|DRM_RENDER_ALLOW|DRM_CONTROL_ALLOW);
 		if (err)
 			return err;
 
@@ -528,6 +529,7 @@ static void msm_lease_fixup_crtc_primary(struct drm_device *dev,
 				}
 			}
 			planes[i]->type = DRM_PLANE_TYPE_OVERLAY;
+			dev->mode_config.num_overlay_plane++;
 		}
 	}
 
@@ -535,10 +537,12 @@ static void msm_lease_fixup_crtc_primary(struct drm_device *dev,
 	for (i = 0; i < crtc_count; i++) {
 		if (crtcs[i]->primary) {
 			crtcs[i]->primary->type = DRM_PLANE_TYPE_OVERLAY;
+			dev->mode_config.num_overlay_plane++;
 		}
 		crtcs[i]->primary = planes[i];
 		planes[i]->crtc = crtcs[i];
 		planes[i]->type = DRM_PLANE_TYPE_PRIMARY;
+		dev->mode_config.num_overlay_plane--;
 	}
 
 	/* assign primary planes for reset crtcs */
@@ -551,6 +555,7 @@ static void msm_lease_fixup_crtc_primary(struct drm_device *dev,
 				crtc->primary = plane;
 				plane->type = DRM_PLANE_TYPE_PRIMARY;
 				plane->crtc = crtc;
+				dev->mode_config.num_overlay_plane--;
 				break;
 			}
 		}
@@ -682,7 +687,7 @@ static int msm_lease_probe(struct platform_device *pdev)
 	ret = drm_dev_register(ddev, 0);
 	if (ret) {
 		dev_err(dev, "failed to register drm device\n");
-		drm_dev_put(ddev);
+		drm_dev_unref(ddev);
 		goto fail;
 	}
 
@@ -694,7 +699,7 @@ static int msm_lease_probe(struct platform_device *pdev)
 
 	/* unregister temporary driver */
 	drm_dev_unregister(ddev);
-	drm_dev_put(ddev);
+	drm_dev_unref(ddev);
 
 	/* update ids list */
 	lease_drv->minor = minor;

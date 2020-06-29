@@ -310,8 +310,8 @@ static void dp_bridge_post_disable(struct drm_bridge *drm_bridge)
 }
 
 static void dp_bridge_mode_set(struct drm_bridge *drm_bridge,
-				const struct drm_display_mode *mode,
-				const struct drm_display_mode *adjusted_mode)
+				struct drm_display_mode *mode,
+				struct drm_display_mode *adjusted_mode)
 {
 	struct dp_bridge *bridge;
 	struct dp_display *dp;
@@ -538,8 +538,8 @@ static void dp_bond_bridge_post_disable(struct drm_bridge *drm_bridge)
 }
 
 static void dp_bond_bridge_mode_set(struct drm_bridge *drm_bridge,
-				const struct drm_display_mode *mode,
-				const struct drm_display_mode *adjusted_mode)
+				struct drm_display_mode *mode,
+				struct drm_display_mode *adjusted_mode)
 {
 	struct dp_bond_bridge *bridge;
 	struct drm_display_mode tmp;
@@ -1329,8 +1329,7 @@ int dp_drm_bond_bridge_init(void *display,
 		if (state == NULL)
 			return -ENOMEM;
 
-		drm_atomic_private_obj_init(dp_display->drm_dev,
-					    &mgr->obj,
+		drm_atomic_private_obj_init(&mgr->obj,
 					    &state->base,
 					    &dp_bond_mgr_state_funcs);
 		sde_kms->dp_bond_mgr = mgr;
@@ -1471,10 +1470,10 @@ struct drm_encoder *dp_connector_atomic_best_encoder(
 }
 
 int dp_connector_atomic_check(struct drm_connector *connector,
-		void *display, struct drm_atomic_state *state)
+		void *display, struct drm_connector_state *new_conn_state)
 {
+	struct drm_atomic_state *state;
 	struct drm_connector_state *old_conn_state;
-	struct drm_connector_state *new_conn_state;
 	struct drm_crtc *old_crtc;
 	struct drm_crtc_state *crtc_state;
 	struct dp_display *dp_display = display;
@@ -1486,13 +1485,13 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 	if (!dp_display->dp_bond_prv_info)
 		return 0;
 
-	if (!state)
+	if (!new_conn_state)
 		return 0;
 
-	new_conn_state = drm_atomic_get_new_connector_state(state, connector);
+	state = new_conn_state->state;
 
 	old_conn_state = drm_atomic_get_old_connector_state(state, connector);
-	if (!old_conn_state || !new_conn_state)
+	if (!old_conn_state)
 		return 0;
 
 	old_crtc = old_conn_state->crtc;

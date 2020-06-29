@@ -5,7 +5,6 @@
 
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
-#include <linux/usb/usbpd.h>
 #include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/delay.h>
@@ -515,7 +514,8 @@ static void dp_usbpd_wakeup_phy(struct dp_hpd *dp_hpd, bool wakeup)
 	usbpd_vdm_in_suspend(usbpd->pd, wakeup);
 }
 
-struct dp_hpd *dp_usbpd_init(struct device *dev, struct dp_hpd_cb *cb)
+struct dp_hpd *dp_usbpd_init(struct device *dev, struct usbpd *pd,
+		struct dp_hpd_cb *cb)
 {
 	int rc = 0;
 	struct dp_usbpd_private *usbpd;
@@ -528,16 +528,9 @@ struct dp_hpd *dp_usbpd_init(struct device *dev, struct dp_hpd_cb *cb)
 		.disconnect	= &dp_usbpd_disconnect_cb,
 	};
 
-	if (!cb) {
+	if (IS_ERR(pd) || !cb) {
 		pr_err("invalid data\n");
 		rc = -EINVAL;
-		goto error;
-	}
-
-	pd = devm_usbpd_get_by_phandle(dev, pd_phandle);
-	if (IS_ERR(pd)) {
-		pr_err("usbpd phandle failed (%ld)\n", PTR_ERR(pd));
-		rc = PTR_ERR(pd);
 		goto error;
 	}
 

@@ -9,6 +9,7 @@
 #include <linux/types.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_crtc_helper.h>
 
 #include "msm_drv.h"
 #include "dp_display.h"
@@ -23,7 +24,6 @@ struct dp_bridge {
 	void *dp_panel;
 };
 
-#if IS_ENABLED(CONFIG_DRM_MSM_DP)
 /**
  * dp_connector_config_hdr - callback to configure HDR
  * @connector: Pointer to drm connector structure
@@ -136,7 +136,7 @@ struct drm_encoder *dp_connector_atomic_best_encoder(
  */
 int dp_connector_atomic_check(
 		struct drm_connector *connector, void *display,
-		struct drm_atomic_state *state);
+		struct drm_connector_state *new_conn_state);
 
 int dp_drm_bridge_init(void *display,
 	struct drm_encoder *encoder);
@@ -205,113 +205,6 @@ void dp_mst_deinit(struct dp_display *dp_display);
  * @m: Pointer to sequential file
  */
 void dp_mst_dump_topology(struct dp_display *dp_display, struct seq_file *m);
-#else
-static inline int dp_connector_config_hdr(struct drm_connector *connector,
-	void *display,
-	struct sde_connector_state *c_state)
-{
-	return 0;
-}
-static inline int dp_connector_post_init(struct drm_connector *connector, void *display);
-{
-	return 0;
-}
-static inline enum drm_connector_status dp_connector_detect(struct drm_connector *conn,
-	bool force,
-	void *display)
-{
-	return 0;
-}
-static inline int dp_connector_get_modes(struct drm_connector *connector,
-	void *display)
-{
-	return 0;
-}
-static inline enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
-	struct drm_display_mode *mode,
-	void *display);
-{
-	return 0;
-}
-static inline int dp_connector_get_mode_info(struct drm_connector *connector,
-	const struct drm_display_mode *drm_mode,
-	struct msm_mode_info *mode_info,
-	u32 max_mixer_width, void *display)
-{
-	return 0;
-}
-static inline int dp_connector_get_info(struct drm_connector *connector,
-	struct msm_display_info *info, void *display)
-{
-	return 0;
-}
-static inline void dp_connector_post_open(struct drm_connector *connector, void *display)
-{
-}
-static inline int dp_connnector_set_info_blob(struct drm_connector *connector,
-	void *info, void *display, struct msm_mode_info *mode_info)
-{
-	return 0;
-}
-static inline struct drm_encoder *dp_connector_atomic_best_encoder(
-	struct drm_connector *connector, void *display,
-	struct drm_connector_state *state)
-{
-	return NULL;
-}
-static inline int dp_connector_atomic_check(
-	struct drm_connector *connector, void *display,
-	struct drm_atomic_state *state)
-{
-	return 0;
-}
-static inline int dp_drm_bridge_init(void *display,
-	struct drm_encoder *encoder)
-{
-	return 0;
-}
-static inline void dp_drm_bridge_deinit(void *display);
-{
-}
-static inline int dp_drm_bond_bridge_init(void *display,
-	struct drm_encoder *encoder,
-	enum dp_bond_type type,
-	struct dp_display_bond_displays *bond_displays)
-{
-	return 0;
-}
-static inline void convert_to_drm_mode(const struct dp_display_mode *dp_mode,
-	struct drm_display_mode *drm_mode)
-{
-}
-static inline int dp_connector_update_pps(struct drm_connector *connector,
-	char *pps_cmd, void *display)
-{
-	return 0;
-}
-static inline int dp_mst_drm_bridge_init(void *display,
-	struct drm_encoder *encoder)
-{
-	return 0;
-}
-static inline int dp_mst_drm_super_bridge_init(void *display,
-	struct drm_encoder *encoder)
-{
-	return 0;
-}
-static inline void dp_mst_drm_bridge_deinit(void *display)
-{
-}
-static inline int dp_mst_init(struct dp_display *dp_display)
-{
-	return 0;
-}
-static inline void dp_mst_deinit(struct dp_display *dp_display)
-{
-}
-static inline void dp_mst_dump_topology(struct dp_display *dp_display, struct seq_file *m)
-{
-}
-#endif /* CONFIG_DRM_MSM_DP */
+
 #endif /* _DP_DRM_H_ */
 

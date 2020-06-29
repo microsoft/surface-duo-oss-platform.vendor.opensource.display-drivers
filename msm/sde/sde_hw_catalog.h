@@ -10,6 +10,7 @@
 #include <linux/bug.h>
 #include <linux/bitmap.h>
 #include <linux/err.h>
+#include <linux/msm-bus.h>
 #include <drm/drmP.h>
 
 /**

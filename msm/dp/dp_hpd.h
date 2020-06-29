@@ -6,26 +6,15 @@
 #ifndef _DP_HPD_H_
 #define _DP_HPD_H_
 
+#include <linux/usb/usbpd.h>
 #include <linux/types.h>
 #include <linux/device.h>
 #include "dp_parser.h"
 #include "dp_catalog.h"
-#include <linux/msm_dp_aux_bridge.h>
+#include <soc/qcom/msm_dp_aux_bridge.h>
 
 /**
- * enum dp_hpd_plug_orientation - plug orientation
- * @ORIENTATION_NONE:	Undefined or unspecified
- * @ORIENTATION_CC1:	CC1
- * @ORIENTATION_CC2:	CC2
- */
-enum dp_hpd_plug_orientation {
-	ORIENTATION_NONE,
-	ORIENTATION_CC1,
-	ORIENTATION_CC2,
-};
-/**
  * enum dp_hpd_type - dp hpd type
- * @DP_HPD_ALTMODE: AltMode over G-Link based HPD
  * @DP_HPD_USBPD:   USB type-c based HPD
  * @DP_HPD_GPIO:    GPIO based HPD
  * @DP_HPD_LPHW:    LPHW based HPD
@@ -33,7 +22,6 @@ enum dp_hpd_plug_orientation {
  */
 
 enum dp_hpd_type {
-	DP_HPD_ALTMODE,
 	DP_HPD_USBPD,
 	DP_HPD_GPIO,
 	DP_HPD_LPHW,
@@ -62,8 +50,6 @@ struct dp_hpd_cb {
  * @hpd_irq: Change in the status since last message
  * @alt_mode_cfg_done: bool to specify alt mode status
  * @multi_func: multi-function preferred, USBPD type only
- * @peer_usb_com: downstream supports usb data communication
- * @force_multi_func: force multi-function preferred
  * @isr: event interrupt, BUILTIN and LPHW type only
  * @register_hpd: register hardware callback
  * @host_init: source or host side setup for hpd
@@ -74,13 +60,12 @@ struct dp_hpd_cb {
  */
 struct dp_hpd {
 	enum dp_hpd_type type;
-	u32 orientation;
+	enum plug_orientation orientation;
 	bool hpd_high;
 	bool hpd_irq;
 	bool alt_mode_cfg_done;
 	bool multi_func;
 	bool peer_usb_comm;
-	bool force_multi_func;
 
 	void (*isr)(struct dp_hpd *dp_hpd);
 	int (*register_hpd)(struct dp_hpd *dp_hpd);
@@ -97,6 +82,7 @@ struct dp_hpd {
  * @dev: device instance of the caller
  * @parser: pointer to DP parser module
  * @catalog: pointer to DP catalog module
+ * @pd: handle for the ubspd driver data
  * @bridge: handle for bridge driver data
  * @cb: callback function for HPD response
  * return: pointer to allocated hpd module data
@@ -104,7 +90,7 @@ struct dp_hpd {
  * This function sets up the hpd module
  */
 struct dp_hpd *dp_hpd_get(struct device *dev, struct dp_parser *parser,
-		struct dp_catalog_hpd *catalog,
+		struct dp_catalog_hpd *catalog, struct usbpd *pd,
 		struct msm_dp_aux_bridge *aux_bridge,
 		struct dp_hpd_cb *cb);
 

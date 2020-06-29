@@ -35,7 +35,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include <linux/msm_dp_aux_bridge.h>
+#include <soc/qcom/msm_dp_aux_bridge.h>
 
 static DEFINE_MUTEX(dp_aux_bridge_lock);
 static LIST_HEAD(du_aux_bridge_list);

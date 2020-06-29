@@ -9,6 +9,7 @@
 #include <linux/err.h>
 #include <linux/regulator/consumer.h>
 #include <linux/clk.h>
+#include <linux/msm-bus.h>
 #include <linux/of_irq.h>
 #include <video/mipi_display.h>
 
@@ -721,6 +722,47 @@ error_digital:
 	ctrl->pwr_info.digital.vregs = NULL;
 	ctrl->pwr_info.digital.count = 0;
 	return rc;
+}
+
+static int dsi_ctrl_axi_bus_client_init(struct platform_device *pdev,
+					struct dsi_ctrl *ctrl)
+{
+	int rc = 0;
+	struct dsi_ctrl_bus_scale_info *bus = &ctrl->axi_bus_info;
+
+	if (!of_find_property(pdev->dev.of_node, "qcom,msm-bus,name", NULL)) {
+		pr_debug("no bus name defined, skip axi bus init\n");
+		return 0;
+	}
+
+	bus->bus_scale_table = msm_bus_cl_get_pdata(pdev);
+	if (IS_ERR_OR_NULL(bus->bus_scale_table)) {
+		rc = PTR_ERR(bus->bus_scale_table);
+		pr_debug("msm_bus_cl_get_pdata() failed, rc = %d\n", rc);
+		bus->bus_scale_table = NULL;
+		return rc;
+	}
+
+	bus->bus_handle = msm_bus_scale_register_client(bus->bus_scale_table);
+	if (!bus->bus_handle) {
+		rc = -EINVAL;
+		pr_err("failed to register axi bus client\n");
+	}
+
+	return rc;
+}
+
+static int dsi_ctrl_axi_bus_client_deinit(struct dsi_ctrl *ctrl)
+{
+	struct dsi_ctrl_bus_scale_info *bus = &ctrl->axi_bus_info;
+
+	if (bus->bus_handle) {
+		msm_bus_scale_unregister_client(bus->bus_handle);
+
+		bus->bus_handle = 0;
+	}
+
+	return 0;
 }
 
 static int dsi_ctrl_validate_panel_info(struct dsi_ctrl *dsi_ctrl,
@@ -1779,6 +1821,10 @@ static int dsi_ctrl_dev_probe(struct platform_device *pdev)
 		goto fail_supplies;
 	}
 
+	rc = dsi_ctrl_axi_bus_client_init(pdev, dsi_ctrl);
+	if (rc)
+		pr_debug("failed to init axi bus client, rc = %d\n", rc);
+
 	item->ctrl = dsi_ctrl;
 
 	mutex_lock(&dsi_ctrl_list_lock);
@@ -1823,6 +1869,9 @@ static int dsi_ctrl_dev_remove(struct platform_device *pdev)
 	mutex_unlock(&dsi_ctrl_list_lock);
 
 	mutex_lock(&dsi_ctrl->ctrl_lock);
+	rc = dsi_ctrl_axi_bus_client_deinit(dsi_ctrl);
+	if (rc)
+		pr_err("failed to deinitialize axi bus client, rc = %d\n", rc);
 
 	rc = dsi_ctrl_supplies_deinit(dsi_ctrl);
 	if (rc)

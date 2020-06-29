@@ -24,8 +24,8 @@
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
 #include <linux/dma-buf.h>
-#include <drm/drm_atomic_uapi.h>
-#include <drm/drm_probe_helper.h>
+#include <linux/memblock.h>
+#include <linux/bootmem.h>
 
 #include "msm_drv.h"
 #include "msm_mmu.h"
@@ -47,7 +47,7 @@
 #include "sde_crtc.h"
 #include "sde_reg_dma.h"
 
-#include <linux/qcom_scm.h>
+#include <soc/qcom/scm.h>
 #include "soc/qcom/secure_buffer.h"
 
 #define CREATE_TRACE_POINTS
@@ -106,7 +106,7 @@ bool sde_is_custom_client(void)
 	return sdecustom;
 }
 
-#if IS_ENABLED(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DEBUG_FS
 static int _sde_danger_signal_status(struct seq_file *s,
 		bool danger_status)
 {
@@ -362,7 +362,7 @@ static int _sde_debugfs_init(struct sde_kms *sde_kms)
 static void _sde_debugfs_destroy(struct sde_kms *sde_kms)
 {
 }
-#endif /* CONFIG_DEBUG_FS */
+#endif
 
 static int sde_kms_enable_vblank(struct msm_kms *kms, struct drm_crtc *crtc)
 {
@@ -462,15 +462,12 @@ static int _sde_kms_secure_ctrl_xin_clients(struct sde_kms *sde_kms,
  */
 static int _sde_kms_scm_call(struct sde_kms *sde_kms, int vmid)
 {
-	struct drm_device *dev;
+	struct scm_desc desc = {0};
 	uint32_t num_sids;
 	uint32_t *sec_sid;
+	uint32_t mem_protect_sd_ctrl_id = MEM_PROTECT_SD_CTRL_SWITCH;
 	struct sde_mdss_cfg *sde_cfg = sde_kms->catalog;
 	int ret = 0, i;
-	phys_addr_t mem_addr;
-	u64 mem_size;
-
-	dev = sde_kms->dev;
 
 	num_sids = sde_cfg->sec_sid_mask_count;
 	if (!num_sids) {
@@ -482,26 +479,28 @@ static int _sde_kms_scm_call(struct sde_kms *sde_kms, int vmid)
 	if (!sec_sid)
 		return -ENOMEM;
 
-	mem_addr = virt_to_phys(sec_sid);
-	mem_size = sizeof(uint32_t) * num_sids;
-
 	for (i = 0; i < num_sids; i++) {
 		sec_sid[i] = sde_cfg->sec_sid_mask[i];
 		SDE_DEBUG("sid_mask[%d]: %d\n", i, sec_sid[i]);
 	}
-	dma_map_single(dev->dev, sec_sid, num_sids *sizeof(uint32_t),
-			DMA_TO_DEVICE);
+	dmac_flush_range(sec_sid, sec_sid + num_sids);
 
 	SDE_DEBUG("calling scm_call for vmid 0x%x, num_sids %d",
 				vmid, num_sids);
 
-	ret = qcom_scm_mem_protect_sd_ctrl(MDP_DEVICE_ID, mem_addr,
-				mem_size, vmid);
+	desc.arginfo = SCM_ARGS(4, SCM_VAL, SCM_RW, SCM_VAL, SCM_VAL);
+	desc.args[0] = MDP_DEVICE_ID;
+	desc.args[1] = SCM_BUFFER_PHYS(sec_sid);
+	desc.args[2] = sizeof(uint32_t) * num_sids;
+	desc.args[3] =  vmid;
+
+	ret = scm_call2(SCM_SIP_FNID(SCM_SVC_MP,
+				mem_protect_sd_ctrl_id), &desc);
 	if (ret)
 		SDE_ERROR("Error:scm_call2, vmid %lld, ret%d\n",
-				vmid, ret);
-	SDE_EVT32(MEM_PROTECT_SD_CTRL_SWITCH, MDP_DEVICE_ID, mem_size,
-			vmid, num_sids, ret);
+				desc.args[3], ret);
+	SDE_EVT32(mem_protect_sd_ctrl_id,
+			desc.args[0], desc.args[3], num_sids, ret);
 
 	kfree(sec_sid);
 	return ret;
@@ -734,7 +733,7 @@ static int sde_kms_prepare_secure_transition(struct msm_kms *kms,
 	int i, ops = 0, ret = 0;
 	bool old_valid_fb = false;
 
-	for_each_old_crtc_in_state(state, crtc, old_crtc_state, i) {
+	for_each_crtc_in_state(state, crtc, old_crtc_state, i) {
 		if (!crtc->state || !crtc->state->active)
 			continue;
 		/*
@@ -749,7 +748,7 @@ static int sde_kms_prepare_secure_transition(struct msm_kms *kms,
 		 * 1. Check if old state on the CRTC has planes
 		 * staged with valid fbs
 		 */
-		for_each_old_plane_in_state(state, plane, plane_state, i) {
+		for_each_plane_in_state(state, plane, plane_state, i) {
 			if (!plane_state->crtc)
 				continue;
 			if (plane_state->fb) {
@@ -844,6 +843,7 @@ static int _sde_kms_release_splash_buffer(unsigned int mem_addr,
 	pfn_start = mem_addr >> PAGE_SHIFT;
 	pfn_end = (mem_addr + splash_buffer_size) >> PAGE_SHIFT;
 
+	ret = memblock_free(mem_addr, splash_buffer_size);
 	if (ret) {
 		SDE_ERROR("continuous splash memory free failed:%d\n", ret);
 		return ret;
@@ -1007,7 +1007,7 @@ static void sde_kms_prepare_commit(struct msm_kms *kms,
 		sde_kms->first_kickoff = false;
 	}
 
-	for_each_old_crtc_in_state(state, crtc, crtc_state, i) {
+	for_each_crtc_in_state(state, crtc, crtc_state, i) {
 		list_for_each_entry(encoder, &dev->mode_config.encoder_list,
 				head) {
 			if (encoder->crtc != crtc)
@@ -1045,7 +1045,7 @@ static void sde_kms_commit(struct msm_kms *kms,
 	}
 
 	SDE_ATRACE_BEGIN("sde_kms_commit");
-	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i) {
+	for_each_crtc_in_state(old_state, crtc, old_crtc_state, i) {
 		if (crtc->state->active) {
 			SDE_EVT32(DRMID(crtc));
 			sde_crtc_commit_kickoff(crtc, old_crtc_state);
@@ -1137,7 +1137,7 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 
 	SDE_ATRACE_BEGIN("sde_kms_complete_commit");
 
-	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i) {
+	for_each_crtc_in_state(old_state, crtc, old_crtc_state, i) {
 		sde_crtc_complete_commit(crtc, old_crtc_state);
 
 		/* complete secure transitions if any */
@@ -1145,7 +1145,7 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 			_sde_kms_secure_ctrl(sde_kms, crtc, true);
 	}
 
-	for_each_old_connector_in_state(old_state, connector, old_conn_state, i) {
+	for_each_connector_in_state(old_state, connector, old_conn_state, i) {
 		struct sde_connector *c_conn;
 
 		c_conn = to_sde_connector(connector);
@@ -1171,7 +1171,7 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 
 	sde_power_resource_enable(&priv->phandle, sde_kms->core_client, false);
 
-	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i)
+	for_each_crtc_in_state(old_state, crtc, old_crtc_state, i)
 		sde_kms_release_splash_resource(sde_kms, crtc);
 
 	SDE_EVT32_VERBOSE(SDE_EVTLOG_FUNC_EXIT);
@@ -1244,7 +1244,7 @@ static void sde_kms_prepare_fence(struct msm_kms *kms,
 	SDE_ATRACE_BEGIN("sde_kms_prepare_fence");
 
 	/* old_state actually contains updated crtc pointers */
-	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i) {
+	for_each_crtc_in_state(old_state, crtc, old_crtc_state, i) {
 		if (crtc->state->active)
 			sde_crtc_prepare_commit(crtc, old_crtc_state);
 	}
@@ -2099,6 +2099,146 @@ static void sde_kms_destroy(struct msm_kms *kms)
 	kfree(sde_kms);
 }
 
+static void _sde_kms_plane_force_remove(struct drm_plane *plane,
+			struct drm_atomic_state *state)
+{
+	struct drm_plane_state *plane_state;
+	int ret = 0;
+
+	if (!plane->crtc)
+		return;
+
+	plane_state = drm_atomic_get_plane_state(state, plane);
+	if (IS_ERR(plane_state)) {
+		ret = PTR_ERR(plane_state);
+		SDE_ERROR("error %d getting plane %d state\n",
+				ret, plane->base.id);
+		return;
+	}
+
+	plane->old_fb = plane->fb;
+
+	SDE_DEBUG("disabling plane %d\n", plane->base.id);
+
+	ret = __drm_atomic_helper_disable_plane(plane, plane_state);
+	if (ret != 0)
+		SDE_ERROR("error %d disabling plane %d\n", ret,
+				plane->base.id);
+}
+
+static int _sde_kms_remove_fbs(struct sde_kms *sde_kms, struct drm_file *file,
+		struct drm_atomic_state *state)
+{
+	struct drm_device *dev = sde_kms->dev;
+	struct drm_framebuffer *fb, *tfb;
+	struct list_head fbs;
+	struct drm_plane *plane;
+	int ret = 0;
+	u32 plane_mask = 0;
+
+	INIT_LIST_HEAD(&fbs);
+
+	list_for_each_entry_safe(fb, tfb, &file->fbs, filp_head) {
+		if (drm_framebuffer_read_refcount(fb) > 1) {
+			list_move_tail(&fb->filp_head, &fbs);
+
+			drm_for_each_plane(plane, dev) {
+				if (plane->fb == fb) {
+					plane_mask |=
+						1 << drm_plane_index(plane);
+					 _sde_kms_plane_force_remove(
+								plane, state);
+				}
+			}
+		} else {
+			list_del_init(&fb->filp_head);
+			drm_framebuffer_put(fb);
+		}
+	}
+
+	if (list_empty(&fbs)) {
+		SDE_DEBUG("skip commit as no fb(s)\n");
+		drm_atomic_state_put(state);
+		return 0;
+	}
+
+	SDE_DEBUG("committing after removing all the pipes\n");
+	ret = drm_atomic_commit(state);
+
+	if (ret) {
+		/*
+		 * move the fbs back to original list, so it would be
+		 * handled during drm_release
+		 */
+		list_for_each_entry_safe(fb, tfb, &fbs, filp_head)
+			list_move_tail(&fb->filp_head, &file->fbs);
+
+		SDE_ERROR("atomic commit failed in preclose, ret:%d\n", ret);
+		goto end;
+	}
+
+	while (!list_empty(&fbs)) {
+		fb = list_first_entry(&fbs, typeof(*fb), filp_head);
+
+		list_del_init(&fb->filp_head);
+		drm_framebuffer_put(fb);
+	}
+
+end:
+	drm_atomic_clean_old_fb(dev, plane_mask, ret);
+
+	return ret;
+}
+
+static void sde_kms_preclose(struct msm_kms *kms, struct drm_file *file)
+{
+	struct sde_kms *sde_kms = to_sde_kms(kms);
+	struct drm_device *dev = sde_kms->dev;
+	struct msm_drm_private *priv = dev->dev_private;
+	unsigned int i;
+	struct drm_atomic_state *state = NULL;
+	struct drm_modeset_acquire_ctx ctx;
+	int ret = 0;
+
+	/* cancel pending flip event */
+	for (i = 0; i < priv->num_crtcs; i++)
+		sde_crtc_complete_flip(priv->crtcs[i], file);
+
+	drm_modeset_acquire_init(&ctx, 0);
+retry:
+	ret = drm_modeset_lock_all_ctx(dev, &ctx);
+	if (ret == -EDEADLK) {
+		drm_modeset_backoff(&ctx);
+		goto retry;
+	} else if (WARN_ON(ret)) {
+		goto end;
+	}
+
+	state = drm_atomic_state_alloc(dev);
+	if (!state) {
+		ret = -ENOMEM;
+		goto end;
+	}
+
+	state->acquire_ctx = &ctx;
+
+	for (i = 0; i < TEARDOWN_DEADLOCK_RETRY_MAX; i++) {
+		ret = _sde_kms_remove_fbs(sde_kms, file, state);
+		if (ret != -EDEADLK)
+			break;
+		drm_atomic_state_clear(state);
+		drm_modeset_backoff(&ctx);
+	}
+
+end:
+	if (state)
+		drm_atomic_state_put(state);
+
+	SDE_DEBUG("sde preclose done, ret:%d\n", ret);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+}
+
 static int _sde_kms_helper_reset_custom_properties(struct sde_kms *sde_kms,
 		struct drm_atomic_state *state)
 {
@@ -2169,13 +2309,13 @@ static int _sde_kms_helper_reset_custom_properties(struct sde_kms *sde_kms,
 	return ret;
 }
 
-static void sde_kms_lastclose(struct msm_kms *kms)
+static void sde_kms_lastclose(struct msm_kms *kms,
+		struct drm_modeset_acquire_ctx *ctx)
 {
 	struct sde_kms *sde_kms;
 	struct drm_device *dev;
 	struct drm_atomic_state *state;
-	struct drm_modeset_acquire_ctx ctx;
-	int ret;
+	int ret, i;
 
 	if (!kms) {
 		SDE_ERROR("invalid argument\n");
@@ -2184,45 +2324,32 @@ static void sde_kms_lastclose(struct msm_kms *kms)
 
 	sde_kms = to_sde_kms(kms);
 	dev = sde_kms->dev;
-	drm_modeset_acquire_init(&ctx, 0);
 
 	state = drm_atomic_state_alloc(dev);
-	if (!state) {
-		ret = -ENOMEM;
-		goto out_ctx;
+	if (!state)
+		return;
+
+	state->acquire_ctx = ctx;
+
+	for (i = 0; i < TEARDOWN_DEADLOCK_RETRY_MAX; i++) {
+		/* add reset of custom properties to the state */
+		ret = _sde_kms_helper_reset_custom_properties(sde_kms, state);
+		if (ret)
+			break;
+
+		ret = drm_atomic_commit(state);
+		if (ret != -EDEADLK)
+			break;
+
+		drm_atomic_state_clear(state);
+		drm_modeset_backoff(ctx);
+		SDE_DEBUG("deadlock backoff on attempt %d\n", i);
 	}
 
-	state->acquire_ctx = &ctx;
-
-retry:
-	ret = drm_modeset_lock_all_ctx(dev, &ctx);
 	if (ret)
-		goto out_state;
-
-	ret = _sde_kms_helper_reset_custom_properties(sde_kms, state);
-	if (ret)
-		goto out_state;
-
-	ret = drm_atomic_commit(state);
-out_state:
-	if (ret == -EDEADLK)
-		goto backoff;
+		SDE_ERROR("failed to run last close: %d\n", ret);
 
 	drm_atomic_state_put(state);
-out_ctx:
-	drm_modeset_drop_locks(&ctx);
-	drm_modeset_acquire_fini(&ctx);
-
-	if (ret)
-		SDE_ERROR("kms lastclose failed: %d\n", ret);
-
-	return;
-
-backoff:
-	drm_atomic_state_clear(state);
-	drm_modeset_backoff(&ctx);
-
-	goto retry;
 }
 
 static int sde_kms_check_secure_transition(struct msm_kms *kms,
@@ -2247,7 +2374,7 @@ static int sde_kms_check_secure_transition(struct msm_kms *kms,
 	dev = sde_kms->dev;
 
 	/* iterate state object for active secure/non-secure crtc */
-	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
+	for_each_crtc_in_state(state, crtc, crtc_state, i) {
 		if (!crtc_state->active)
 			continue;
 
@@ -2576,8 +2703,9 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 		/* currently consider modes[0] as the preferred mode */
 		drm_mode = list_first_entry(&connector->modes,
 				struct drm_display_mode, head);
-		SDE_DEBUG("drm_mode->name = %s, type=0x%x, flags=0x%x\n",
-				drm_mode->name, drm_mode->type, drm_mode->flags);
+		SDE_DEBUG("drm_mode->name = %s, id=%d, type=0x%x, flags=0x%x\n",
+				drm_mode->name, drm_mode->base.id,
+				drm_mode->type, drm_mode->flags);
 
 		/* Update CRTC drm structure */
 		crtc->state->active = true;
@@ -2968,6 +3096,7 @@ static const struct msm_kms_funcs kms_funcs = {
 	.irq_postinstall = sde_irq_postinstall,
 	.irq_uninstall   = sde_irq_uninstall,
 	.irq             = sde_irq,
+	.preclose        = sde_kms_preclose,
 	.lastclose       = sde_kms_lastclose,
 	.prepare_fence   = sde_kms_prepare_fence,
 	.prepare_commit  = sde_kms_prepare_commit,

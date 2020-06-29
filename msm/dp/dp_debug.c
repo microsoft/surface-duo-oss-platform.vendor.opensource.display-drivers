@@ -16,7 +16,7 @@
 #include "sde_connector.h"
 #include "dp_display.h"
 #include "dp_drm.h"
-#include <linux/msm_dp_mst_sim_helper.h>
+#include <soc/qcom/msm_dp_mst_sim_helper.h>
 
 #define DEBUG_NAME "drm_dp"
 
@@ -2166,15 +2166,6 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 		rc = PTR_ERR(file);
 		pr_err("[%s] debugfs mst_topology failed, rc=%d\n",
 		       DEBUG_NAME, rc);
-	}
-
-	file = debugfs_create_bool("force_multi_func", 0644, dir,
-				&debug->hpd->force_multi_func);
-	if (IS_ERR_OR_NULL(file)) {
-		rc = PTR_ERR(file);
-		pr_err("[%s] debugfs force_multi_func failed, rc=%d\n",
-			DEBUG_NAME, rc);
-		return rc;
 	}
 
 	return 0;

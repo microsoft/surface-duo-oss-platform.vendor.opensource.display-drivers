@@ -31,7 +31,6 @@ static inline struct hdmi_pll_vco_clk *to_hdmi_vco_clk_hw(struct clk_hw *hw)
 	return container_of(hw, struct hdmi_pll_vco_clk, hw);
 }
 
-#if IS_ENABLED(CONFIG_QCOM_MDSS_PLL)
 int hdmi_pll_clock_register_28lpm(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res);
 
@@ -55,46 +54,4 @@ int hdmi_8996_v3_1p8_pll_clock_register(struct platform_device *pdev,
 
 int hdmi_8998_pll_clock_register(struct platform_device *pdev,
 				   struct mdss_pll_resources *pll_res);
-#else
-static inline int hdmi_pll_clock_register_28lpm(struct platform_device *pdev,
-				struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int hdmi_pll_clock_register(struct platform_device *pdev,
-				struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int hdmi_20nm_pll_clock_register(struct platform_device *pdev,
-				struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int hdmi_8996_v1_pll_clock_register(struct platform_device *pdev,
-				 struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int hdmi_8996_v2_pll_clock_register(struct platform_device *pdev,
-				 struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int hdmi_8996_v3_pll_clock_register(struct platform_device *pdev,
-				 struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int hdmi_8996_v3_1p8_pll_clock_register(struct platform_device *pdev,
-				 struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-static inline int hdmi_8998_pll_clock_register(struct platform_device *pdev,
-				   struct mdss_pll_resources *pll_res)
-{
-	return 0;
-}
-#endif /* CONFIG_QCOM_MDSS_PLL */
 #endif

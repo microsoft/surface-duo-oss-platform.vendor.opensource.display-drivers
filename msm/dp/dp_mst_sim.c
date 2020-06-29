@@ -19,8 +19,8 @@
 #include <linux/uaccess.h>
 #include <linux/debugfs.h>
 #include <drm/drm_edid.h>
-#include <linux/msm_dp_aux_bridge.h>
-#include <linux/msm_dp_mst_sim_helper.h>
+#include <soc/qcom/msm_dp_aux_bridge.h>
+#include <soc/qcom/msm_dp_mst_sim_helper.h>
 
 struct dp_sim_dpcd_reg {
 	struct list_head head;

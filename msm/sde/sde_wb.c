@@ -5,8 +5,7 @@
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
 
-#include <drm/sde_drm.h>
-#include <drm/drm_probe_helper.h>
+#include <uapi/drm/sde_drm.h>
 
 #include "msm_kms.h"
 #include "sde_kms.h"
@@ -85,7 +84,7 @@ int sde_wb_connector_get_modes(struct drm_connector *connector, void *display)
 				SDE_ERROR("failed to create mode\n");
 				break;
 			}
-			ret = drm_mode_convert_umode(wb_dev->drm_dev, mode,
+			ret = drm_mode_convert_umode(mode,
 					&wb_dev->modes[i]);
 			if (ret) {
 				SDE_ERROR("failed to convert mode %d\n", ret);
@@ -199,8 +198,8 @@ int sde_wb_connector_set_modes(struct sde_wb_device *wb_dev,
 			struct drm_display_mode dispmode;
 
 			memset(&dispmode, 0, sizeof(dispmode));
-			ret = drm_mode_convert_umode(wb_dev->drm_dev,
-					&dispmode, &modeinfo[i]);
+			ret = drm_mode_convert_umode(&dispmode,
+						&modeinfo[i]);
 			if (ret) {
 				SDE_ERROR(
 					"failed to convert mode %d:\"%s\" %d %d %d %d %d %d %d %d %d %d 0x%x 0x%x status:%d rc:%d\n",

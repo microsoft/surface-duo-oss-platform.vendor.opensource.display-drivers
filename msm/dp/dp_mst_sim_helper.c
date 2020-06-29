@@ -40,7 +40,7 @@
 #include <drm/drm_fixed.h>
 #include <drm/drm_edid.h>
 #include <drm_dp_mst_helper.h>
-#include <linux/msm_dp_mst_sim_helper.h>
+#include <soc/qcom/msm_dp_mst_sim_helper.h>
 
 #define DDC_SEGMENT_ADDR 0x30
 

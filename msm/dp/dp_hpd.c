@@ -10,7 +10,6 @@
 #include <linux/err.h>
 
 #include "dp_hpd.h"
-#include "dp_altmode.h"
 #include "dp_usbpd.h"
 #include "dp_gpio_hpd.h"
 #include "dp_lphw_hpd.h"
@@ -41,7 +40,7 @@ static void dp_hpd_isr(struct dp_hpd *dp_hpd)
 }
 
 struct dp_hpd *dp_hpd_get(struct device *dev, struct dp_parser *parser,
-		struct dp_catalog_hpd *catalog,
+		struct dp_catalog_hpd *catalog, struct usbpd *pd,
 		struct msm_dp_aux_bridge *aux_bridge,
 		struct dp_hpd_cb *cb)
 {
@@ -69,15 +68,7 @@ struct dp_hpd *dp_hpd_get(struct device *dev, struct dp_parser *parser,
 		}
 		dp_hpd->type = DP_HPD_GPIO;
 	} else {
-		dp_hpd = dp_altmode_get(dev, cb);
-		if (!IS_ERR(dp_hpd)) {
-			dp_hpd->type = DP_HPD_ALTMODE;
-			goto config;
-		}
-		pr_warn("dp_altmode failed (%ld), falling back to dp_usbpd\n",
-				PTR_ERR(dp_hpd));
-
-		dp_hpd = dp_usbpd_init(dev, cb);
+		dp_hpd = dp_usbpd_init(dev, pd, cb);
 		if (IS_ERR(dp_hpd)) {
 			pr_err("failed to get usbpd\n");
 			goto out;
@@ -85,7 +76,6 @@ struct dp_hpd *dp_hpd_get(struct device *dev, struct dp_parser *parser,
 		dp_hpd->type = DP_HPD_USBPD;
 	}
 
-config:
 	if (!dp_hpd->host_init)
 		dp_hpd->host_init	= dp_hpd_host_init;
 	if (!dp_hpd->host_deinit)
@@ -105,9 +95,6 @@ void dp_hpd_put(struct dp_hpd *dp_hpd)
 	switch (dp_hpd->type) {
 	case DP_HPD_USBPD:
 		dp_usbpd_deinit(dp_hpd);
-		break;
-	case DP_HPD_ALTMODE:
-		dp_altmode_put(dp_hpd);
 		break;
 	case DP_HPD_GPIO:
 		dp_gpio_hpd_put(dp_hpd);

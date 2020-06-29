@@ -73,7 +73,7 @@ struct dp_drm_mst_fw_helper_ops {
 		bool mst_state);
 	int (*atomic_release_vcpi_slots)(struct drm_atomic_state *state,
 				     struct drm_dp_mst_topology_mgr *mgr,
-				     struct drm_dp_mst_port *port);
+				     int slots);
 	void (*get_vcpi_info)(struct drm_dp_mst_topology_mgr *mgr,
 		int vcpi, int *start_slot, int *num_slots);
 	void (*reset_vcpi_slots)(struct drm_dp_mst_topology_mgr *mgr,
@@ -677,8 +677,8 @@ static void dp_mst_bridge_post_disable(struct drm_bridge *drm_bridge)
 }
 
 static void dp_mst_bridge_mode_set(struct drm_bridge *drm_bridge,
-				const struct drm_display_mode *mode,
-				const struct drm_display_mode *adjusted_mode)
+				struct drm_display_mode *mode,
+				struct drm_display_mode *adjusted_mode)
 {
 	struct dp_mst_bridge *bridge;
 	struct dp_mst_bridge_state *dp_bridge_state;
@@ -863,8 +863,8 @@ static void dp_mst_super_bridge_post_disable(struct drm_bridge *drm_bridge)
 }
 
 static void dp_mst_super_bridge_mode_set(struct drm_bridge *drm_bridge,
-				const struct drm_display_mode *mode,
-				const struct drm_display_mode *adjusted_mode)
+				struct drm_display_mode *mode,
+				struct drm_display_mode *adjusted_mode)
 {
 	struct dp_mst_bridge *bridge;
 	struct dp_mst_private *mst;
@@ -988,8 +988,7 @@ int dp_mst_drm_bridge_init(void *data, struct drm_encoder *encoder)
 		goto end;
 	}
 
-	drm_atomic_private_obj_init(dev,
-				    &bridge->obj,
+	drm_atomic_private_obj_init(&bridge->obj,
 				    &state->base,
 				    &dp_mst_bridge_state_funcs);
 
@@ -1053,8 +1052,7 @@ int dp_mst_drm_super_bridge_init(void *data, struct drm_encoder *encoder)
 		goto end;
 	}
 
-	drm_atomic_private_obj_init(dev,
-				    &bridge->obj,
+	drm_atomic_private_obj_init(&bridge->obj,
 				    &state->base,
 				    &dp_mst_bridge_state_funcs);
 
@@ -1565,11 +1563,11 @@ end:
 }
 
 static int dp_mst_connector_atomic_check(struct drm_connector *connector,
-		void *display, struct drm_atomic_state *state)
+		void *display, struct drm_connector_state *new_conn_state)
 {
 	int rc = 0, slots, i;
+	struct drm_atomic_state *state;
 	struct drm_connector_state *old_conn_state;
-	struct drm_connector_state *new_conn_state;
 	struct drm_crtc *old_crtc;
 	struct drm_crtc_state *crtc_state;
 	struct dp_mst_bridge *bridge;
@@ -1581,13 +1579,13 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 
 	DP_MST_DEBUG("enter:\n");
 
-	if (!state)
+	if (!new_conn_state)
 		return rc;
 
-	new_conn_state = drm_atomic_get_new_connector_state(state, connector);
+	state = new_conn_state->state;
 
 	old_conn_state = drm_atomic_get_old_connector_state(state, connector);
-	if (!old_conn_state || !new_conn_state)
+	if (!old_conn_state)
 		goto mode_set;
 
 	old_crtc = old_conn_state->crtc;
@@ -1623,11 +1621,10 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 			goto end;
 		}
 
-		c_conn = to_sde_connector(connector);
 		slots = bridge_state->num_slots;
 		if (slots > 0) {
 			rc = mst->mst_fw_cbs->atomic_release_vcpi_slots(state,
-				&mst->mst_mgr, c_conn->mst_port);
+				&mst->mst_mgr, slots);
 			if (rc) {
 				pr_err("failed releasing %d vcpi slots %d\n",
 						slots, rc);
@@ -1857,7 +1854,7 @@ dp_mst_add_connector(struct drm_dp_mst_topology_mgr *mgr,
 		connector->funcs->reset(connector);
 
 	for (i = 1; i < MAX_DP_MST_DRM_BRIDGES; i++) {
-		drm_connector_attach_encoder(connector,
+		drm_mode_connector_attach_encoder(connector,
 				dp_mst->mst_bridge[i].encoder);
 	}
 
@@ -1893,7 +1890,7 @@ static void dp_mst_destroy_connector(struct drm_dp_mst_topology_mgr *mgr,
 	DP_MST_INFO_LOG("destroy mst connector id:%d\n", connector->base.id);
 
 	drm_connector_unregister(connector);
-	drm_connector_put(connector);
+	drm_connector_unreference(connector);
 }
 
 static enum drm_connector_status
@@ -2077,7 +2074,7 @@ dp_mst_add_fixed_connector(struct drm_dp_mst_topology_mgr *mgr,
 
 	/* re-attach encoders from first available encoders */
 	for (i = enc_idx; i < MAX_DP_MST_DRM_BRIDGES; i++)
-		drm_connector_attach_encoder(connector,
+		drm_mode_connector_attach_encoder(connector,
 				dp_mst->mst_bridge[i].encoder);
 
 	drm_modeset_unlock_all(dev);
@@ -2211,6 +2208,23 @@ dp_mst_drm_fixed_connector_init(struct dp_display *dp_display,
 	return connector;
 }
 
+static void dp_mst_hotplug(struct drm_dp_mst_topology_mgr *mgr)
+{
+	struct dp_mst_private *mst = container_of(mgr, struct dp_mst_private,
+							mst_mgr);
+	struct drm_device *dev = mst->dp_display->drm_dev;
+	char event_string[] = "MST_HOTPLUG=1";
+	char *envp[3];
+
+	envp[0] = event_string;
+	envp[1] = "HOTPLUG=1";
+	envp[2] = NULL;
+
+	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
+
+	DP_MST_INFO_LOG("mst hot plug event\n");
+}
+
 static void dp_mst_hpd_event_notify(struct dp_mst_private *mst, bool hpd_status)
 {
 	struct drm_device *dev = mst->dp_display->drm_dev;
@@ -2322,12 +2336,14 @@ static const struct drm_dp_mst_topology_cbs dp_mst_drm_cbs = {
 	.add_connector = dp_mst_add_connector,
 	.register_connector = dp_mst_register_connector,
 	.destroy_connector = dp_mst_destroy_connector,
+	.hotplug = dp_mst_hotplug,
 };
 
 static const struct drm_dp_mst_topology_cbs dp_mst_fixed_drm_cbs = {
 	.add_connector = dp_mst_add_fixed_connector,
 	.register_connector = dp_mst_register_fixed_connector,
 	.destroy_connector = dp_mst_destroy_fixed_connector,
+	.hotplug = dp_mst_hotplug,
 };
 
 int dp_mst_init(struct dp_display *dp_display)

@@ -9,6 +9,7 @@
 #include <linux/types.h>
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_crtc_helper.h>
 
 #include "msm_drv.h"
 

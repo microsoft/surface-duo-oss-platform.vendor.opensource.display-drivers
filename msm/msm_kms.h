@@ -95,8 +95,10 @@ struct msm_kms_funcs {
 			struct drm_encoder *slave_encoder,
 			bool is_cmd_mode);
 	void (*postopen)(struct msm_kms *kms, struct drm_file *file);
+	void (*preclose)(struct msm_kms *kms, struct drm_file *file);
 	void (*postclose)(struct msm_kms *kms, struct drm_file *file);
-	void (*lastclose)(struct msm_kms *kms);
+	void (*lastclose)(struct msm_kms *kms,
+			struct drm_modeset_acquire_ctx *ctx);
 	int (*register_events)(struct msm_kms *kms,
 			struct drm_mode_object *obj, u32 event, bool en);
 	void (*set_encoder_mode)(struct msm_kms *kms,
@@ -111,10 +113,10 @@ struct msm_kms_funcs {
 	struct msm_gem_address_space *(*get_address_space)(
 			struct msm_kms *kms,
 			unsigned int domain);
-#if IS_ENABLED(CONFIG_DEBUG_FS)
+#ifdef CONFIG_DEBUG_FS
 	/* debugfs: */
 	int (*debugfs_init)(struct msm_kms *kms, struct drm_minor *minor);
-#endif /* CONFIG_DEBUG_FS */
+#endif
 	/* handle continuous splash  */
 	int (*cont_splash_config)(struct msm_kms *kms);
 	/* check for continuous splash status */
@@ -133,9 +135,6 @@ struct msm_kms {
 
 	/* mapper-id used to request GEM buffer mapped for scanout: */
 	struct msm_gem_address_space *aspace;
-
-	/* DRM client used for lastclose cleanup */
-	struct drm_client_dev client;
 };
 
 /**
@@ -156,14 +155,14 @@ static inline void msm_kms_init(struct msm_kms *kms,
 	kms->funcs = funcs;
 }
 
-#if IS_ENABLED(CONFIG_DRM_MSM_MDP4)
+#ifdef CONFIG_DRM_MSM_MDP4
 struct msm_kms *mdp4_kms_init(struct drm_device *dev);
 #else
 static inline
 struct msm_kms *mdp4_kms_init(struct drm_device *dev) { return NULL; };
-#endif /* CONFIG_DRM_MSM_MDP4 */
+#endif
 
-#if IS_ENABLED(CONFIG_DRM_MSM_MDP5)
+#ifdef CONFIG_DRM_MSM_MDP5
 int msm_mdss_init(struct drm_device *dev);
 void msm_mdss_destroy(struct drm_device *dev);
 struct msm_kms *mdp5_kms_init(struct drm_device *dev);
