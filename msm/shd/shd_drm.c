@@ -107,7 +107,6 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 {
 	struct drm_encoder *encoder;
 	struct drm_connector *connector;
-	struct sde_connector *sde_conn;
 	struct drm_connector_list_iter conn_iter;
 	int rc = 0;
 
@@ -130,11 +129,6 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 	}
 
 next:
-	/* set base connector disconnected*/
-	sde_conn = to_sde_connector(base->connector);
-	base->ops = sde_conn->ops;
-	sde_conn->ops.detect = shd_display_base_detect;
-
 	SDE_DEBUG("found base connector %d\n", base->connector->base.id);
 
 	return rc;
@@ -1219,6 +1213,21 @@ end:
 	return rc;
 }
 
+static int shd_drm_postinit(struct msm_kms *kms)
+{
+	struct shd_display_base *base;
+	struct sde_connector *sde_conn;
+
+	/* set base connector disconnected*/
+	list_for_each_entry(base, &g_base_list, head) {
+		sde_conn = to_sde_connector(base->connector);
+		base->ops = sde_conn->ops;
+		sde_conn->ops.detect = shd_display_base_detect;
+	}
+
+	return g_shd_kms->orig_funcs->postinit(kms);
+}
+
 static int shd_drm_base_init(struct drm_device *ddev,
 		struct shd_display_base *base)
 {
@@ -1249,6 +1258,7 @@ static int shd_drm_base_init(struct drm_device *ddev,
 		g_shd_kms->funcs = *priv->kms->funcs;
 		g_shd_kms->orig_funcs = priv->kms->funcs;
 		g_shd_kms->funcs.atomic_check = shd_display_atomic_check;
+		g_shd_kms->funcs.postinit = shd_drm_postinit;
 		priv->kms->funcs = &g_shd_kms->funcs;
 	}
 
