@@ -246,6 +246,9 @@ static int shd_display_init_base_crtc(struct drm_device *dev,
 	base->crtc = crtc;
 	SDE_DEBUG("found base crtc %d\n", crtc->base.id);
 
+	/* limit base encoder to base crtc */
+	base->encoder->possible_crtcs = (1 << crtc_idx);
+
 	return 0;
 }
 
