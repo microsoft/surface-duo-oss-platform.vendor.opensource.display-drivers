@@ -248,6 +248,7 @@ static inline char *dp_phy_aux_config_type_to_string(u32 cfg_type)
  * @pinctrl: pin-control related data
  * @disp_data: controller's display related data
  * @l_pnswap: P/N swap status on each lane
+ * @max_lane_count: maximum number of physical main link lanes could be used
  * @max_pclk_khz: maximum pixel clock supported for the platform
  * @max_lclk_khz: maximum link clock supported for the platform
  * @max_hdisplay: maximum supported horizontal display by the platform for dp
@@ -284,6 +285,7 @@ struct dp_parser {
 
 	u8 l_map[4];
 	u8 l_pnswap;
+	u32 max_lane_count;
 	struct dp_aux_cfg aux_cfg[AUX_CFG_LEN];
 	u32 max_pclk_khz;
 	u32 max_lclk_khz;
