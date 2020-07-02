@@ -591,7 +591,10 @@ static int shd_display_atomic_check(struct msm_kms *kms,
 		active = !!active_mask;
 
 		/* skip if there is no change */
-		if (base->crtc->state->active == active)
+		if (base->crtc->state->active == active && (!active ||
+				(base->crtc->state->connector_mask &
+				(1 << drm_connector_index(
+				base->connector)))))
 			continue;
 
 		new_crtc_state = drm_atomic_get_crtc_state(state,
