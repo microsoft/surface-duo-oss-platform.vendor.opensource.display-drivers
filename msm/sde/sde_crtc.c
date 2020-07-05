@@ -1320,6 +1320,17 @@ static bool _sde_crtc_setup_is_3dmux_dsc(struct drm_crtc_state *state)
 			SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC);
 }
 
+static bool _sde_crtc_setup_is_triple_pipe(struct drm_crtc_state *state)
+{
+	struct sde_crtc_state *cstate;
+
+	cstate = to_sde_crtc_state(state);
+
+	return (cstate->topology_name == SDE_RM_TOPOLOGY_TRIPLEPIPE ||
+			cstate->topology_name ==
+			SDE_RM_TOPOLOGY_TRIPLEPIPE_DSC);
+}
+
 static bool _sde_crtc_setup_is_quad_pipe(struct drm_crtc_state *state)
 {
 	struct sde_crtc_state *cstate;
@@ -5929,7 +5940,9 @@ static int _sde_crtc_check_plane_layout(struct drm_crtc *crtc,
 	struct sde_plane_state *pstate;
 	int layout_split;
 
-	if (_sde_crtc_setup_is_quad_pipe(crtc_state))
+	if (_sde_crtc_setup_is_triple_pipe(crtc_state))
+		layout_split = crtc_state->mode.hdisplay * 2 / 3;
+	else if (_sde_crtc_setup_is_quad_pipe(crtc_state))
 		layout_split = crtc_state->mode.hdisplay / 2;
 	else if (_sde_crtc_setup_is_six_pipe(crtc_state))
 		layout_split = crtc_state->mode.hdisplay / 3;

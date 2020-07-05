@@ -933,6 +933,10 @@ static inline void sde_crtc_state_set_topology_name(
 	case SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE:
 		cstate->num_mixers = 2;
 		break;
+	case SDE_RM_TOPOLOGY_TRIPLEPIPE:
+	case SDE_RM_TOPOLOGY_TRIPLEPIPE_DSC:
+		cstate->num_mixers = 3;
+		break;
 	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE:
 	case SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE:
 	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC:

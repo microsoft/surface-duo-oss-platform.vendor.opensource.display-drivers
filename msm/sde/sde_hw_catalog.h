@@ -68,6 +68,7 @@
 #define MAX_IMG_HEIGHT 0x3fff
 
 #define CRTC_DUAL_MIXERS	2
+#define CRTC_TRIPLE_MIXERS	3
 #define CRTC_QUAD_MIXERS	4
 #define CRTC_SIX_MIXERS		6
 #define MAX_MIXERS_PER_CRTC	6
