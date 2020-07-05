@@ -5814,6 +5814,9 @@ static int sde_encoder_setup_display(struct sde_encoder_virt *sde_enc,
 	phys_params.parent_ops = parent_ops;
 	phys_params.enc_spinlock = &sde_enc->enc_spinlock;
 	phys_params.vblank_ctl_lock = &sde_enc->vblank_ctl_lock;
+	phys_params.num_of_splits =
+			disp_info->capabilities & MSM_DISPLAY_SPLIT_LINK ?
+			2 : disp_info->num_of_h_tiles;
 
 	SDE_DEBUG("\n");
 
@@ -5858,16 +5861,19 @@ static int sde_encoder_setup_display(struct sde_encoder_virt *sde_enc,
 		u32 controller_id = disp_info->h_tile_instance[i];
 
 		if (disp_info->num_of_h_tiles > 1) {
-			if (i == 0)
+			if (i == 0) {
 				phys_params.split_role = ENC_ROLE_MASTER;
-			else
+			} else {
 				phys_params.split_role = ENC_ROLE_SLAVE;
+				phys_params.slave_idx  = i - 1;
+			}
 		} else {
 			phys_params.split_role = ENC_ROLE_SOLO;
 		}
 
-		SDE_DEBUG("h_tile_instance %d = %d, split_role %d\n",
-				i, controller_id, phys_params.split_role);
+		SDE_DEBUG("h_tile_instance %d=%d, split_role %d slave_idx %d\n",
+				i, controller_id, phys_params.split_role,
+				phys_params.slave_idx);
 
 		if (sde_enc->ops.phys_init) {
 			struct sde_encoder_phys *enc;
