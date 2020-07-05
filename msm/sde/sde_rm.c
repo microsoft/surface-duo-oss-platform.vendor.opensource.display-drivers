@@ -768,11 +768,9 @@ static bool _sde_rm_check_lm_and_get_connected_blks(
 		if (RM_RQ_DSPP(reqs) && RM_RQ_DS(reqs))
 			ret = (is_valid_dspp && is_valid_ds);
 		else if (RM_RQ_DSPP(reqs))
-			ret = is_valid_dspp;
+			ret = is_valid_dspp && !is_valid_ds;
 		else if (RM_RQ_DS(reqs))
-			ret = is_valid_ds;
-		else if (reqs->topology->num_lm == CRTC_QUAD_MIXERS)
-			ret = !is_valid_ds;
+			ret = !is_valid_dspp && is_valid_ds;
 		else
 			ret = !(is_valid_dspp || is_valid_ds);
 
@@ -970,6 +968,7 @@ static int _sde_rm_reserve_lms(
 	u32 lm_mask = 0;
 	int lm_count = 0;
 	int i, rc = 0;
+	uint64_t org_top_ctrl = reqs->top_ctrl;
 
 	if (!reqs->topology->num_lm) {
 		SDE_DEBUG("invalid number of lm: %d\n", reqs->topology->num_lm);
@@ -978,8 +977,28 @@ static int _sde_rm_reserve_lms(
 
 	/* Find a primary mixer */
 	sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_LM);
-	while (lm_count != reqs->topology->num_lm &&
-			_sde_rm_get_hw_locked(rm, &iter_i)) {
+	while (lm_count != reqs->topology->num_lm) {
+		if (!_sde_rm_get_hw_locked(rm, &iter_i)) {
+			/*
+			 * Prefer to give away low-resource mixers first:
+			 * - Firstly check mixers without DSPPs and DSs
+			 * - If failed, check mixers with DSPPs without DSs
+			 * - If failed, check mixers with DSPPs and DSs
+			 */
+			if (!RM_RQ_DSPP(reqs)) {
+				SDE_DEBUG("Try enable DSPP\n");
+				reqs->top_ctrl |= BIT(SDE_RM_TOPCTL_DSPP);
+				sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_LM);
+				continue;
+			} else if (!RM_RQ_DS(reqs)) {
+				SDE_DEBUG("Try enable DS\n");
+				reqs->top_ctrl |= BIT(SDE_RM_TOPCTL_DS);
+				sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_LM);
+				continue;
+			}
+			break;
+		}
+
 		if (lm_mask & (1 << iter_i.blk->id))
 			continue;
 
@@ -1051,6 +1070,9 @@ static int _sde_rm_reserve_lms(
 			--lm_count;
 		}
 	}
+
+	/* Restore the DSPP/DS request */
+	reqs->top_ctrl = org_top_ctrl;
 
 	if (lm_count != reqs->topology->num_lm) {
 		SDE_DEBUG("unable to find appropriate mixers\n");
@@ -1481,16 +1503,8 @@ static int _sde_rm_make_next_rsvp(
 
 	/*
 	 * Assign LMs and blocks whose usage is tied to them: DSPP & Pingpong.
-	 * Do assignment preferring to give away low-resource mixers first:
-	 * - Check mixers without DSPPs
-	 * - Only then allow to grab from mixers with DSPP capability
 	 */
 	ret = _sde_rm_reserve_lms(rm, rsvp, reqs, NULL);
-	if (ret && !RM_RQ_DSPP(reqs)) {
-		reqs->top_ctrl |= BIT(SDE_RM_TOPCTL_DSPP);
-		ret = _sde_rm_reserve_lms(rm, rsvp, reqs, NULL);
-	}
-
 	if (ret) {
 		SDE_ERROR("unable to find appropriate mixers\n");
 		return ret;
