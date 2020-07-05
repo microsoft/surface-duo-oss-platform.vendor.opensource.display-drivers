@@ -287,6 +287,7 @@ enum {
 enum {
 	DSC_OFF,
 	DSC_LEN,
+	DSC_PAIR_MASK,
 	DSC_PROP_MAX,
 };
 
@@ -677,6 +678,8 @@ static struct sde_prop_type pp_prop[] = {
 static struct sde_prop_type dsc_prop[] = {
 	{DSC_OFF, "qcom,sde-dsc-off", false, PROP_TYPE_U32_ARRAY},
 	{DSC_LEN, "qcom,sde-dsc-size", false, PROP_TYPE_U32},
+	{DSC_PAIR_MASK, "qcom,sde-dsc-pair-mask", false,
+		PROP_TYPE_U32_ARRAY},
 };
 
 static struct sde_prop_type roi_misr_prop[] = {
@@ -2555,9 +2558,10 @@ end:
 static int sde_dsc_parse_dt(struct device_node *np,
 			struct sde_mdss_cfg *sde_cfg)
 {
-	int rc, prop_count[MAX_BLOCKS], i;
+	int rc, prop_count[DSC_PROP_MAX], i;
 	struct sde_prop_value *prop_value = NULL;
 	bool prop_exists[DSC_PROP_MAX];
+	u32 dsc_pair_mask;
 	u32 off_count;
 	struct sde_dsc_cfg *dsc;
 
@@ -2593,6 +2597,13 @@ static int sde_dsc_parse_dt(struct device_node *np,
 		dsc->len = PROP_VALUE_ACCESS(prop_value, DSC_LEN, 0);
 		snprintf(dsc->name, SDE_HW_BLK_NAME_LEN, "dsc_%u",
 				dsc->id - DSC_0);
+		if (prop_count[DSC_PAIR_MASK])
+			dsc_pair_mask = PROP_VALUE_ACCESS(prop_value,
+					DSC_PAIR_MASK, i);
+		else
+			dsc_pair_mask = (i ^ 1) + 1;
+		if (dsc_pair_mask)
+			dsc->dsc_pair_mask = 1 << dsc_pair_mask;
 
 		if (!prop_exists[DSC_LEN])
 			dsc->len = DEFAULT_SDE_HW_BLOCK_LEN;
