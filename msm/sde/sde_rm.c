@@ -65,6 +65,8 @@ static const struct sde_rm_topology_def g_ctl_ver_1_top_table[] = {
 	{   SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE,     4, 0, 2, 1, false },
 	{   SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC, 4, 3, 2, 1, false },
 	{   SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE,    4, 4, 2, 1, false },
+	{   SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE,      6, 0, 3, 1, false },
+	{   SDE_RM_TOPOLOGY_SIXPIPE_DSCMERGE,     6, 6, 3, 1, false },
 };
 
 
@@ -211,7 +213,8 @@ int sde_rm_get_topology_num_encoders(struct sde_rm *rm,
 static bool sde_rm_is_dscmerge_case(enum sde_rm_topology_name top_name)
 {
 	return (top_name == SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE
-			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE);
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE
+			|| top_name == SDE_RM_TOPOLOGY_SIXPIPE_DSCMERGE);
 }
 
 int sde_rm_get_roi_misr_num(struct sde_rm *rm,
@@ -237,7 +240,8 @@ static bool sde_rm_is_3dmux_case(enum sde_rm_topology_name top_name)
 	return (top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE
 			|| top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC
 			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE
-			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC);
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC
+			|| top_name == SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE);
 }
 
 static bool _sde_rm_get_hw_locked(struct sde_rm *rm, struct sde_rm_hw_iter *i)

@@ -69,7 +69,8 @@
 
 #define CRTC_DUAL_MIXERS	2
 #define CRTC_QUAD_MIXERS	4
-#define MAX_MIXERS_PER_CRTC	4
+#define CRTC_SIX_MIXERS		6
+#define MAX_MIXERS_PER_CRTC	6
 #define MAX_MIXERS_PER_LAYOUT	2
 #define MAX_LAYOUTS_PER_CRTC	(MAX_MIXERS_PER_CRTC / MAX_MIXERS_PER_LAYOUT)
 
@@ -83,10 +84,10 @@
 #define LIMIT_SUBBLK_COUNT_MAX 10
 
 #define SDE_CTL_CFG_VERSION_1_0_0       0x100
-#define MAX_INTF_PER_CTL_V1                 2
-#define MAX_DSC_PER_CTL_V1                  4
+#define MAX_INTF_PER_CTL_V1                 3
+#define MAX_DSC_PER_CTL_V1                  6
 #define MAX_CWB_PER_CTL_V1                  2
-#define MAX_MERGE_3D_PER_CTL_V1             2
+#define MAX_MERGE_3D_PER_CTL_V1             3
 #define MAX_WB_PER_CTL_V1                   1
 #define MAX_CDM_PER_CTL_V1                  1
 #define IS_SDE_CTL_REV_100(rev) \
