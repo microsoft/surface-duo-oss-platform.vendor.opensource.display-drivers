@@ -5644,7 +5644,7 @@ static int dsi_display_ext_get_info(struct drm_connector *connector,
 
 	info->is_connected = connector->status != connector_status_disconnected;
 
-	if (!strcmp(display->dsi_type, "primary"))
+	if (!strcmp(display->display_type, "primary"))
 		info->is_primary = true;
 	else
 		info->is_primary = false;
@@ -6030,7 +6030,7 @@ int dsi_display_get_info(struct drm_connector *connector,
 	info->is_connected = true;
 	info->is_primary = false;
 
-	if (!strcmp(display->dsi_type, "primary"))
+	if (!strcmp(display->display_type, "primary"))
 		info->is_primary = true;
 
 	info->width_mm = phy_props.panel_width_mm;
