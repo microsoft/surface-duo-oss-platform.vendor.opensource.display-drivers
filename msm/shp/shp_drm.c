@@ -134,6 +134,9 @@ int shp_plane_validate(struct shp_plane *splane,
 				pstate->active = true;
 				SDE_DEBUG("plane%d set to active",
 					p->plane->base.id);
+				SDE_EVT32(DRMID(p->plane),
+					DRMID(plane_state->crtc),
+					pstate->possible_crtcs);
 				continue;
 			}
 
@@ -166,6 +169,12 @@ int shp_plane_validate(struct shp_plane *splane,
 				plane_state->crtc ?
 					plane_state->crtc->base.id : 0,
 				pstate->active);
+
+			SDE_EVT32(DRMID(p->plane),
+				DRMID(p->plane->state->crtc),
+				DRMID(plane_state->crtc),
+				p->state.possible_crtcs,
+				p->state.active);
 		}
 	}
 
@@ -215,6 +224,14 @@ int shp_plane_validate(struct shp_plane *splane,
 				pstate->handoff,
 				plane_state->crtc ?
 					plane_state->crtc->base.id : 0,
+				pstate->active);
+
+			SDE_EVT32(DRMID(p->plane),
+				DRMID(p->plane->state->crtc),
+				DRMID(plane_state->crtc),
+				p->state.possible_crtcs,
+				p->state.active,
+				pstate->possible_crtcs,
 				pstate->active);
 		}
 	}
@@ -304,6 +321,11 @@ static void shp_kms_post_swap(struct msm_kms *kms,
 				new_state->possible_crtcs);
 			plane->possible_crtcs = new_state->possible_crtcs;
 			update = true;
+			SDE_EVT32(DRMID(plane),
+				DRMID(old_plane_state->crtc),
+				DRMID(new_plane_state->crtc),
+				shp_plane->state.possible_crtcs,
+				new_state->possible_crtcs);
 		}
 
 		shp_plane->state.handoff = new_state->handoff;
@@ -312,6 +334,12 @@ static void shp_kms_post_swap(struct msm_kms *kms,
 			SDE_DEBUG("plane%d active %d\n",
 				plane->base.id,
 				new_state->active);
+			SDE_EVT32(DRMID(plane),
+				DRMID(old_plane_state->crtc),
+				DRMID(new_plane_state->crtc),
+				shp_plane->state.active,
+				new_state->active,
+				new_state->skip_update);
 			shp_plane->state.active = new_state->active;
 			if (new_state->skip_update) {
 				shd_skip_shared_plane_update(plane,
