@@ -1250,6 +1250,9 @@ static int shd_drm_postinit(struct msm_kms *kms)
 		sde_conn = to_sde_connector(base->connector);
 		base->ops = sde_conn->ops;
 		sde_conn->ops.detect = shd_display_base_detect;
+		sde_conn->ops.set_info_blob = NULL;
+		sde_connector_set_blob_data(&sde_conn->base, NULL,
+				CONNECTOR_PROP_SDE_INFO);
 	}
 
 	return g_shd_kms->orig_funcs->postinit(kms);
