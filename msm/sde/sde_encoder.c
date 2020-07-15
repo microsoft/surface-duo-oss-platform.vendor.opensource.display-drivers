@@ -3443,6 +3443,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 
 	sde_rm_init_hw_iter(&roi_misr_iter, drm_enc->base.id,
 			SDE_HW_BLK_ROI_MISR);
+	sde_enc->misr_data.num_roi_misrs = 0;
 	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
 		sde_enc->misr_data.hw_roi_misr[i] = NULL;
 		if (!sde_rm_get_hw(&sde_kms->rm, &roi_misr_iter))
