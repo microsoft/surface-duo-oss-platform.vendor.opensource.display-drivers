@@ -1165,7 +1165,7 @@ static void dp_display_attention_work(struct work_struct *work)
 
 	mutex_lock(&dp->session_lock);
 
-	if (dp->debug->mst_hpd_sim || !dp->core_initialized) {
+	if (!dp->core_initialized) {
 		mutex_unlock(&dp->session_lock);
 		goto mst_attention;
 	}
@@ -1246,8 +1246,7 @@ static int dp_display_usbpd_attention_cb(struct device *dev)
 
 	if (!dp->hpd->hpd_high)
 		dp_display_disconnect_sync(dp);
-	else if ((dp->hpd->hpd_irq && dp->core_initialized) ||
-			dp->debug->mst_hpd_sim)
+	else if (dp->hpd->hpd_irq && dp->core_initialized)
 		queue_work(dp->wq, &dp->attention_work);
 	else if (dp->process_hpd_connect || !dp->is_connected)
 		queue_work(dp->wq, &dp->connect_work);
@@ -2016,11 +2015,8 @@ static enum drm_mode_status dp_display_validate_mode(
 	struct drm_dp_link *link_info;
 	u32 mode_rate_khz = 0, supported_rate_khz = 0, mode_bpp = 0;
 	struct dp_panel *dp_panel;
-	struct dp_debug *debug;
 	enum drm_mode_status mode_status = MODE_BAD;
-	bool in_list = false;
-	struct dp_mst_connector *mst_connector;
-	int hdis, vdis, vref, ar, _hdis, _vdis, _vref, _ar, rate;
+	int rate;
 	struct dp_display_mode dp_mode;
 	bool dsc_en;
 	u32 pclk_khz;
@@ -2045,10 +2041,6 @@ static enum drm_mode_status dp_display_validate_mode(
 	}
 
 	link_info = &dp->panel->link_info;
-
-	debug = dp->debug;
-	if (!debug)
-		goto end;
 
 	dp_display->convert_to_dp_mode(dp_display, panel, mode, &dp_mode);
 
@@ -2094,64 +2086,6 @@ static enum drm_mode_status dp_display_validate_mode(
 			mode->vdisplay, dp_display->max_vdisplay);
 		goto end;
 	}
-
-	/*
-	 * If the connector exists in the mst connector list and if debug is
-	 * enabled for that connector, use the mst connector settings from the
-	 * list for validation. Otherwise, use non-mst default settings.
-	 */
-	mutex_lock(&debug->dp_mst_connector_list.lock);
-
-	if (list_empty(&debug->dp_mst_connector_list.list)) {
-		mutex_unlock(&debug->dp_mst_connector_list.lock);
-		goto verify_default;
-	}
-
-	list_for_each_entry(mst_connector, &debug->dp_mst_connector_list.list,
-			list) {
-		if (mst_connector->con_id == dp_panel->connector->base.id) {
-			in_list = true;
-
-			if (!mst_connector->debug_en) {
-				mode_status = MODE_OK;
-				mutex_unlock(
-				&debug->dp_mst_connector_list.lock);
-				goto end;
-			}
-
-			hdis = mst_connector->hdisplay;
-			vdis = mst_connector->vdisplay;
-			vref = mst_connector->vrefresh;
-			ar = mst_connector->aspect_ratio;
-
-			_hdis = mode->hdisplay;
-			_vdis = mode->vdisplay;
-			_vref = mode->vrefresh;
-			_ar = mode->picture_aspect_ratio;
-
-			if (hdis == _hdis && vdis == _vdis && vref == _vref &&
-					ar == _ar) {
-				mode_status = MODE_OK;
-				mutex_unlock(
-				&debug->dp_mst_connector_list.lock);
-				goto end;
-			}
-
-			break;
-		}
-	}
-
-	mutex_unlock(&debug->dp_mst_connector_list.lock);
-
-	if (in_list)
-		goto end;
-
-verify_default:
-	if (debug->debug_en && (mode->hdisplay != debug->hdisplay ||
-			mode->vdisplay != debug->vdisplay ||
-			mode->vrefresh != debug->vrefresh ||
-			mode->picture_aspect_ratio != debug->aspect_ratio))
-		goto end;
 
 	mode_status = MODE_OK;
 end:
@@ -2444,7 +2378,6 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 	struct dp_panel_in panel_in;
 	struct dp_panel *dp_panel;
 	struct dp_display_private *dp;
-	struct dp_mst_connector *mst_connector;
 
 	if (!dp_display || !connector) {
 		pr_err("invalid input\n");
@@ -2489,26 +2422,6 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 	DP_MST_DEBUG("dp mst connector installed. conn:%d\n",
 			connector->base.id);
 
-	mutex_lock(&dp->debug->dp_mst_connector_list.lock);
-
-	mst_connector = kmalloc(sizeof(struct dp_mst_connector),
-			GFP_KERNEL);
-	if (!mst_connector) {
-		mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
-		mutex_unlock(&dp->session_lock);
-		return -ENOMEM;
-	}
-
-	mst_connector->debug_en = false;
-	mst_connector->conn = connector;
-	mst_connector->con_id = connector->base.id;
-	mst_connector->state = connector_status_unknown;
-	INIT_LIST_HEAD(&mst_connector->list);
-
-	list_add(&mst_connector->list,
-			&dp->debug->dp_mst_connector_list.list);
-
-	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
 	mutex_unlock(&dp->session_lock);
 
 	return 0;
@@ -2521,7 +2434,6 @@ static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
 	struct sde_connector *sde_conn;
 	struct dp_panel *dp_panel;
 	struct dp_display_private *dp;
-	struct dp_mst_connector *con_to_remove, *temp_con;
 
 	if (!dp_display || !connector) {
 		pr_err("invalid input\n");
@@ -2552,52 +2464,9 @@ static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
 	DP_MST_DEBUG("dp mst connector uninstalled. conn:%d\n",
 			connector->base.id);
 
-	mutex_lock(&dp->debug->dp_mst_connector_list.lock);
-
-	list_for_each_entry_safe(con_to_remove, temp_con,
-			&dp->debug->dp_mst_connector_list.list, list) {
-		if (con_to_remove->conn == connector) {
-			list_del(&con_to_remove->list);
-			kfree(con_to_remove);
-		}
-	}
-
-	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
 	mutex_unlock(&dp->session_lock);
 
 	return rc;
-}
-
-static int dp_display_mst_get_connector_info(struct dp_display *dp_display,
-			struct drm_connector *connector,
-			struct dp_mst_connector *mst_conn)
-{
-	struct dp_display_private *dp;
-	struct dp_mst_connector *conn, *temp_conn;
-
-	if (!connector || !mst_conn) {
-		pr_err("invalid input\n");
-		return -EINVAL;
-	}
-
-	dp = container_of(dp_display, struct dp_display_private, dp_display);
-
-	mutex_lock(&dp->session_lock);
-	if (!dp->mst.drm_registered) {
-		pr_debug("drm mst not registered\n");
-		mutex_unlock(&dp->session_lock);
-		return -EPERM;
-	}
-
-	mutex_lock(&dp->debug->dp_mst_connector_list.lock);
-	list_for_each_entry_safe(conn, temp_conn,
-			&dp->debug->dp_mst_connector_list.list, list) {
-		if (conn->con_id == connector->base.id)
-			memcpy(mst_conn, conn, sizeof(*mst_conn));
-	}
-	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
-	mutex_unlock(&dp->session_lock);
-	return 0;
 }
 
 static int dp_display_mst_connector_update_edid(struct dp_display *dp_display,
@@ -2941,8 +2810,6 @@ static int dp_display_probe(struct platform_device *pdev)
 	dp_display->set_stream_info = dp_display_set_stream_info;
 	dp_display->update_pps = dp_display_update_pps;
 	dp_display->convert_to_dp_mode = dp_display_convert_to_dp_mode;
-	dp_display->mst_get_connector_info =
-					dp_display_mst_get_connector_info;
 	dp_display->mst_get_fixed_topology_port =
 					dp_display_mst_get_fixed_topology_port;
 	dp_display->wakeup_phy_layer =
