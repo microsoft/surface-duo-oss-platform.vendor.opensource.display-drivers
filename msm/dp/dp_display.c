@@ -75,7 +75,6 @@ struct dp_display_private {
 	struct device_node *aux_switch_node;
 	struct msm_dp_aux_bridge *aux_bridge;
 	struct dentry *root;
-	struct completion notification_comp;
 
 	struct dp_hpd     *hpd;
 	struct dp_parser  *parser;
@@ -650,9 +649,8 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 			envp);
 }
 
-static int dp_display_send_hpd_notification(struct dp_display_private *dp)
+static void dp_display_send_hpd_notification(struct dp_display_private *dp)
 {
-	int ret = 0;
 	bool hpd = dp->is_connected;
 
 	dp->aux->state |= DP_STATE_NOTIFICATION_SENT;
@@ -662,27 +660,7 @@ static int dp_display_send_hpd_notification(struct dp_display_private *dp)
 	else
 		dp->dp_display.is_sst_connected = false;
 
-	reinit_completion(&dp->notification_comp);
 	dp_display_send_hpd_event(dp);
-
-	if (dp->suspended) {
-		pr_debug("DP in suspend state. Skip wait for notification\n");
-		goto skip_wait;
-	}
-
-	if (hpd && dp->mst.mst_active)
-		goto skip_wait;
-
-	if (!dp->mst.mst_active && (dp->power_on == hpd))
-		goto skip_wait;
-
-	if (!wait_for_completion_timeout(&dp->notification_comp,
-						HZ * 5)) {
-		pr_warn("%s timeout\n", hpd ? "connect" : "disconnect");
-		ret = -EINVAL;
-	}
-skip_wait:
-	return ret;
 }
 
 static void dp_display_update_mst_state(struct dp_display_private *dp,
@@ -883,9 +861,8 @@ static void dp_display_process_mst_hpd_low(struct dp_display_private *dp)
 	DP_MST_DEBUG("mst_hpd_low. mst_active:%d\n", dp->mst.mst_active);
 }
 
-static int dp_display_process_hpd_low(struct dp_display_private *dp)
+static void dp_display_process_hpd_low(struct dp_display_private *dp)
 {
-	int rc = 0;
 	struct dp_link_hdcp_status *status;
 
 	mutex_lock(&dp->session_lock);
@@ -909,21 +886,9 @@ static int dp_display_process_hpd_low(struct dp_display_private *dp)
 
 	dp_display_process_mst_hpd_low(dp);
 
-	rc = dp_display_send_hpd_notification(dp);
-
-	mutex_lock(&dp->session_lock);
-	/*
-	 * Can't disable the clock for the bond PLL here.
-	 * The clock tear down sequence need to be guaranteed.
-	 * Will be handled in dp_display_unprepare via bond bridge.
-	 */
-	if (!dp->active_stream_cnt && !IS_BOND_MODE(dp->phy_bond_mode))
-		dp->ctrl->off(dp->ctrl);
-	mutex_unlock(&dp->session_lock);
+	dp_display_send_hpd_notification(dp);
 
 	dp->panel->video_test = false;
-
-	return rc;
 }
 
 static int dp_display_usbpd_configure_cb(struct device *dev)
@@ -1049,37 +1014,20 @@ static void dp_display_clean(struct dp_display_private *dp)
 	dp->ctrl->off(dp->ctrl);
 }
 
-static int dp_display_handle_disconnect(struct dp_display_private *dp)
+static void dp_display_handle_disconnect(struct dp_display_private *dp)
 {
-	int rc;
+	dp_display_process_hpd_low(dp);
 
-	rc = dp_display_process_hpd_low(dp);
-	if (rc) {
-		/* cancel any pending request */
-		dp->ctrl->abort(dp->ctrl, false);
-		dp->aux->abort(dp->aux, false);
-	}
-
-	/*
-	 * For PLL master, defer the cleanup and deinit.
-	 * The clock tear down sequence need to be guaranteed.
-	 * Will be handled in dp_display_unprepare via bond bridge.
-	 */
-	if (IS_BOND_MODE(dp->phy_bond_mode))
-		goto done;
+	/* cancel any pending request */
+	dp->ctrl->abort(dp->ctrl, false);
+	dp->aux->abort(dp->aux, false);
 
 	mutex_lock(&dp->session_lock);
-	if (dp->power_on)
+	if (!dp->active_stream_cnt && !IS_BOND_MODE(dp->phy_bond_mode)) {
 		dp_display_clean(dp);
-
-	dp->is_connected = false;
-
-	dp_display_host_deinit(dp);
-
+		dp_display_host_deinit(dp);
+	}
 	mutex_unlock(&dp->session_lock);
-
-done:
-	return rc;
 }
 
 static void dp_display_disconnect_sync(struct dp_display_private *dp)
@@ -1262,6 +1210,7 @@ static void dp_display_connect_work(struct work_struct *work)
 	int rc = 0;
 	struct dp_display_private *dp = container_of(work,
 			struct dp_display_private, connect_work);
+	struct drm_connector *reset_connector = NULL;
 
 	if (atomic_read(&dp->aborted)) {
 		pr_warn("HPD off requested\n");
@@ -1273,10 +1222,34 @@ static void dp_display_connect_work(struct work_struct *work)
 		return;
 	}
 
+	mutex_lock(&dp->session_lock);
+
+	/*
+	 * Reset panel as link param may change during link training.
+	 * MST panel or SST panel in video test mode will reset immediately.
+	 * SST panel in normal mode will reset by the mode change commit.
+	 */
+	if (dp->active_stream_cnt) {
+		if (dp->active_panels[DP_STREAM_0] == dp->panel &&
+				!dp->panel->video_test) {
+			dp->aux->abort(dp->aux, true);
+			dp->ctrl->abort(dp->ctrl, true);
+			reset_connector = dp->dp_display.base_connector;
+		} else {
+			dp_display_clean(dp);
+			dp_display_host_deinit(dp);
+		}
+	}
+
+	mutex_unlock(&dp->session_lock);
+
 	rc = dp_display_process_hpd_high(dp);
 
 	if (!rc && dp->panel->video_test)
 		dp->link->send_test_response(dp->link);
+
+	if (reset_connector)
+		sde_connector_helper_mode_change_commit(reset_connector);
 }
 
 static int dp_display_usb_notifier(struct notifier_block *nb,
@@ -1788,7 +1761,6 @@ static int dp_display_post_enable(struct dp_display *dp_display, void *panel)
 end:
 	dp->aux->state |= DP_STATE_CTRL_POWERED_ON;
 
-	complete_all(&dp->notification_comp);
 	mutex_unlock(&dp->session_lock);
 	return 0;
 }
@@ -1962,36 +1934,27 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	 * Check if the power off sequence was triggered
 	 * by a source initialated action like framework
 	 * reboot or suspend-resume but not from normal
-	 * hot plug. If connector is in MST mode, skip
+	 * hot plug.
+	 */
+	if (dp_display_is_ready(dp))
+		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
+
+	/*
+	 * If connector is in MST mode, skip
 	 * powering down host as aux need keep alive
 	 * to handle hot-plug sideband message.
 	 */
-	if (dp_display_is_ready(dp) && (dp->suspended || !dp->mst.mst_active))
-		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
-
-	if (dp->active_stream_cnt)
+	if (dp->active_stream_cnt || dp->mst.mst_active)
 		goto end;
 
-	if (flags & DP_PANEL_SRC_INITIATED_POWER_DOWN) {
-		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
-		dp->debug->psm_enabled = true;
+	dp->link->psm_config(dp->link, &dp->panel->link_info, true);
+	dp->debug->psm_enabled = true;
 
-		dp->ctrl->off(dp->ctrl);
-		dp_display_host_deinit(dp);
-	} else if (IS_BOND_MODE(dp->phy_bond_mode)) {
-		/*
-		 * For bond mode, the is_connected will be cleared
-		 * when the cable is disconnected, but the power
-		 * off sequence is skipped. So force run it here.
-		 */
-		dp->ctrl->off(dp->ctrl);
-		dp_display_host_deinit(dp);
-	}
+	dp->ctrl->off(dp->ctrl);
+	dp_display_host_deinit(dp);
 
 	dp->power_on = false;
 	dp->aux->state = DP_STATE_CTRL_POWERED_OFF;
-
-	complete_all(&dp->notification_comp);
 
 	/* log this as it results from user action of cable dis-connection */
 	pr_info("DP%d [OK]", dp->cell_idx);
@@ -2879,8 +2842,6 @@ static int dp_display_probe(struct platform_device *pdev)
 		rc = -ENOMEM;
 		goto bail;
 	}
-
-	init_completion(&dp->notification_comp);
 
 	dp->pdev = pdev;
 	snprintf(dp->name, MAX_DP_NAME_SIZE,
