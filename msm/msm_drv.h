@@ -129,7 +129,6 @@ enum msm_mdp_plane_property {
 	PLANE_PROP_SRC_CONFIG,
 	PLANE_PROP_FB_TRANSLATION_MODE,
 	PLANE_PROP_MULTIRECT_MODE,
-	PLANE_PROP_LAYOUT,
 
 	/* total # of properties */
 	PLANE_PROP_COUNT
@@ -163,6 +162,7 @@ enum msm_mdp_crtc_property {
 	CRTC_PROP_IDLE_TIMEOUT,
 	CRTC_PROP_DEST_SCALER,
 	CRTC_PROP_CAPTURE_OUTPUT,
+	CRTC_PROP_ROI_MISR,
 
 	CRTC_PROP_IDLE_PC_STATE,
 
@@ -262,6 +262,14 @@ enum msm_event_wait {
 	MSM_ENC_TX_COMPLETE,
 	MSM_ENC_VBLANK,
 	MSM_ENC_ACTIVE_REGION,
+};
+
+/**
+ * enum msm_component_event - type of component events
+ * @MSM_COMP_OBJECT_CREATED - notify when all builtin objects are created
+ */
+enum msm_component_event {
+	MSM_COMP_OBJECT_CREATED = 0,
 };
 
 /**
@@ -675,6 +683,9 @@ struct msm_drm_private {
 
 	/* update the flag when msm driver receives shutdown notification */
 	bool shutdown_in_progress;
+
+	/* list of component registered for notification */
+	struct blocking_notifier_head component_notifier_list;
 };
 
 /* get struct msm_kms * from drm_device * */
@@ -990,4 +1001,35 @@ static inline unsigned long timeout_to_jiffies(const ktime_t *timeout)
 int msm_get_mixer_count(struct msm_drm_private *priv,
 		const struct drm_display_mode *mode,
 		u32 max_mixer_width, u32 *num_lm);
+
+/**
+ * msm_drm_register_component - register a component notifier
+ * @dev: drm device
+ * @nb: notifier block to callback on events
+ *
+ * This function registers a notifier callback function
+ * to msm_drm_component_list, which would be called during probe.
+ */
+int msm_drm_register_component(struct drm_device *dev,
+		struct notifier_block *nb);
+
+
+/**
+ * msm_drm_unregister_component - unregister a component notifier
+ * @dev: drm device
+ * @nb: notifier block to callback on events
+ *
+ * This function registers a notifier callback function
+ * to msm_drm_component_list, which would be called during probe.
+ */
+int msm_drm_unregister_component(struct drm_device *dev,
+		struct notifier_block *nb);
+
+/**
+ * msm_drm_notify_components - notify components of msm_component_event
+ * @event: defined in msm_component_event
+ */
+int msm_drm_notify_components(struct drm_device *dev,
+		enum msm_component_event event);
+
 #endif /* __MSM_DRV_H__ */

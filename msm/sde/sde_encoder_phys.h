@@ -18,6 +18,8 @@
 #include "sde_hw_cdm.h"
 #include "sde_encoder.h"
 #include "sde_connector.h"
+#include "sde_fence_misr.h"
+#include "sde_hw_roi_misr.h"
 
 #define SDE_ENCODER_NAME_MAX	16
 
@@ -69,6 +71,8 @@ struct sde_encoder_phys;
  *			Note: This is called from IRQ handler context.
  * @handle_underrun_virt: Notify virtual encoder of underrun IRQ reception
  *			Note: This is called from IRQ handler context.
+ * @handle_roi_misr_virt: Notify virtual encoder of ROI MISR IRQ reception
+ *			Note: This is called from IRQ handler context.
  * @handle_frame_done:	Notify virtual encoder that this phys encoder
  *			completes last request frame.
  * @get_qsync_fps:	Returns the min fps for the qsync feature.
@@ -78,6 +82,8 @@ struct sde_encoder_virt_ops {
 			struct sde_encoder_phys *phys);
 	void (*handle_underrun_virt)(struct drm_encoder *,
 			struct sde_encoder_phys *phys);
+	void (*handle_roi_misr_virt)(struct drm_encoder *,
+			u32 event);
 	void (*handle_frame_done)(struct drm_encoder *,
 			struct sde_encoder_phys *phys, u32 event);
 	void (*get_qsync_fps)(struct drm_encoder *,
@@ -199,6 +205,22 @@ struct sde_encoder_phys_ops {
  * @INTR_IDX_PP5_OVFL: Pingpong overflow interrupt on PP5 for Concurrent WB
  * @INTR_IDX_AUTOREFRESH_DONE:  Autorefresh done for cmd mode panel meaning
  *                              autorefresh has triggered a double buffer flip
+ * @INTR_IDX_MISR_ROI0_MISMATCH: mismatch interrupt for MISR ROI 0
+ * @INTR_IDX_MISR_ROI1_MISMATCH: mismatch interrupt for MISR ROI 1
+ * @INTR_IDX_MISR_ROI2_MISMATCH: mismatch interrupt for MISR ROI 2
+ * @INTR_IDX_MISR_ROI3_MISMATCH: mismatch interrupt for MISR ROI 3
+ * @INTR_IDX_MISR_ROI4_MISMATCH: mismatch interrupt for MISR ROI 4
+ * @INTR_IDX_MISR_ROI5_MISMATCH: mismatch interrupt for MISR ROI 5
+ * @INTR_IDX_MISR_ROI6_MISMATCH: mismatch interrupt for MISR ROI 6
+ * @INTR_IDX_MISR_ROI7_MISMATCH: mismatch interrupt for MISR ROI 7
+ * @INTR_IDX_MISR_ROI8_MISMATCH: mismatch interrupt for MISR ROI 8
+ * @INTR_IDX_MISR_ROI9_MISMATCH: mismatch interrupt for MISR ROI 9
+ * @INTR_IDX_MISR_ROI10_MISMATCH: mismatch interrupt for MISR ROI 10
+ * @INTR_IDX_MISR_ROI11_MISMATCH: mismatch interrupt for MISR ROI 11
+ * @INTR_IDX_MISR_ROI12_MISMATCH: mismatch interrupt for MISR ROI 12
+ * @INTR_IDX_MISR_ROI13_MISMATCH: mismatch interrupt for MISR ROI 13
+ * @INTR_IDX_MISR_ROI14_MISMATCH: mismatch interrupt for MISR ROI 14
+ * @INTR_IDX_MISR_ROI15_MISMATCH: mismatch interrupt for MISR ROI 15
  */
 enum sde_intr_idx {
 	INTR_IDX_VSYNC,
@@ -213,8 +235,30 @@ enum sde_intr_idx {
 	INTR_IDX_PP3_OVFL,
 	INTR_IDX_PP4_OVFL,
 	INTR_IDX_PP5_OVFL,
+	INTR_IDX_MISR_ROI0_MISMATCH,
+	INTR_IDX_MISR_ROI1_MISMATCH,
+	INTR_IDX_MISR_ROI2_MISMATCH,
+	INTR_IDX_MISR_ROI3_MISMATCH,
+	INTR_IDX_MISR_ROI4_MISMATCH,
+	INTR_IDX_MISR_ROI5_MISMATCH,
+	INTR_IDX_MISR_ROI6_MISMATCH,
+	INTR_IDX_MISR_ROI7_MISMATCH,
+	INTR_IDX_MISR_ROI8_MISMATCH,
+	INTR_IDX_MISR_ROI9_MISMATCH,
+	INTR_IDX_MISR_ROI10_MISMATCH,
+	INTR_IDX_MISR_ROI11_MISMATCH,
+	INTR_IDX_MISR_ROI12_MISMATCH,
+	INTR_IDX_MISR_ROI13_MISMATCH,
+	INTR_IDX_MISR_ROI14_MISMATCH,
+	INTR_IDX_MISR_ROI15_MISMATCH,
 	INTR_IDX_MAX,
 };
+
+/**
+ * define base index for getting the real misr roi mismatch
+ * index in multiple roi misrs case
+ */
+#define MISR_ROI_MISMATCH_BASE_IDX INTR_IDX_MISR_ROI0_MISMATCH
 
 /**
  * sde_encoder_irq - tracking structure for interrupts
@@ -254,6 +298,7 @@ struct sde_encoder_irq {
  * @cached_mode:	DRM mode cached at mode_set time, acted on in enable
  * @enabled:		Whether the encoder has enabled and running a mode
  * @split_role:		Role to play in a split-panel configuration
+ * @slave_idx:		Index of slave in a split-panel configuration
  * @intf_mode:		Interface mode
  * @intf_idx:		Interface index on sde hardware
  * @intf_cfg:		Interface hardware configuration
@@ -287,6 +332,7 @@ struct sde_encoder_irq {
  * @in_clone_mode		Indicates if encoder is in clone mode ref@CWB
  * @vfp_cached:			cached vertical front porch to be used for
  *				programming ROT and MDP fetch start
+ * @num_of_splits:	Number of horizontal splits in a split-panel config
  */
 struct sde_encoder_phys {
 	struct drm_encoder *parent;
@@ -303,6 +349,7 @@ struct sde_encoder_phys {
 	struct sde_kms *sde_kms;
 	struct drm_display_mode cached_mode;
 	enum sde_enc_split_role split_role;
+	int slave_idx;
 	enum sde_intf_mode intf_mode;
 	enum sde_intf intf_idx;
 	struct sde_hw_intf_cfg intf_cfg;
@@ -330,6 +377,7 @@ struct sde_encoder_phys {
 	bool cont_splash_enabled;
 	bool in_clone_mode;
 	int vfp_cached;
+	int num_of_splits;
 };
 
 static inline int sde_encoder_phys_inc_pending(struct sde_encoder_phys *phys)
@@ -453,21 +501,25 @@ struct sde_encoder_phys_wb {
  * @parent:		Pointer to the containing virtual encoder
  * @parent_ops:		Callbacks exposed by the parent to the phys_enc
  * @split_role:		Role to play in a split-panel configuration
+ * @slave_idx:		Index of the slave in a split-panel configuration
  * @intf_idx:		Interface index this phys_enc will control
  * @wb_idx:		Writeback index this phys_enc will control
  * @comp_type:      Type of compression supported
  * @enc_spinlock:	Virtual-Encoder-Wide Spin Lock for IRQ purposes
+ * @num_of_splits:	Number of horizontal splits in a split-panel config
  */
 struct sde_enc_phys_init_params {
 	struct sde_kms *sde_kms;
 	struct drm_encoder *parent;
 	struct sde_encoder_virt_ops parent_ops;
 	enum sde_enc_split_role split_role;
+	int slave_idx;
 	enum sde_intf intf_idx;
 	enum sde_wb wb_idx;
 	enum msm_display_compression_type comp_type;
 	spinlock_t *enc_spinlock;
 	struct mutex *vblank_ctl_lock;
+	int num_of_splits;
 };
 
 /**
@@ -584,7 +636,8 @@ static inline enum sde_3d_blend_mode sde_encoder_helper_get_3d_blend_mode(
 	if (((phys_enc->split_role == ENC_ROLE_MASTER) ||
 			(phys_enc->split_role == ENC_ROLE_SLAVE)) &&
 			((topology == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE) ||
-			(topology == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC)))
+			(topology == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC) ||
+			(topology == SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE)))
 		return BLEND_3D_H_ROW_INT;
 
 	return BLEND_3D_NONE;
@@ -648,6 +701,55 @@ int sde_encoder_helper_register_irq(struct sde_encoder_phys *phys_enc,
  */
 int sde_encoder_helper_unregister_irq(struct sde_encoder_phys *phys_enc,
 		enum sde_intr_idx intr_idx);
+
+/**
+ * sde_encoder_get_roi_misr_num - get roi misr number
+ * @drm_enc: Pointer to drm encoder structure
+ */
+unsigned int sde_encoder_get_roi_misr_num(
+		struct drm_encoder *drm_enc);
+
+/**
+ * sde_encoder_helper_roi_misr_reset - reset roi misr register values
+ * @phys_enc: Pointer to physical encoder structure
+ * @base_drm_enc: Pointer to base drm encoder structure
+ */
+void sde_encoder_helper_roi_misr_reset(
+		struct sde_encoder_phys *phys_enc,
+		struct drm_encoder *base_drm_enc);
+
+/**
+ * sde_encoder_helper_roi_misr_setup_irq_hw_idx - setup irq hardware
+ *		index for master physical encoder
+ * @phys_enc: Pointer to physical encoder structure
+ * @base_drm_enc: Pointer to base drm encoder structure
+ */
+void sde_encoder_helper_roi_misr_setup_irq_hw_idx(
+		struct sde_encoder_phys *phys_enc,
+		struct drm_encoder *base_drm_enc);
+
+/**
+ * sde_encoder_helper_roi_misr_irq_enable - enable or disable all irqs
+ *		of one misr block
+ * @phys_enc: Pointer to physical encoder structure
+ * @base_irq_idx: one roi misr's base irq table index
+ * @roi_idx: the roi index of one misr
+ * @enable: control to enable or disable one misr block irqs
+ * @Return: 0 or -ERROR
+ */
+int sde_encoder_helper_roi_misr_irq_enable(struct sde_encoder_phys *phys_enc,
+		int base_irq_idx, int roi_idx, bool enable);
+
+/**
+ * sde_encoder_helper_roi_misr_update_fence - update fence data
+ * @phys_enc: Pointer to physical encoder structure
+ * @base_drm_enc: Pointer to base drm encoder structure
+ * @Return: true for all signature are ready
+ *          false for all signature are not ready
+ */
+bool sde_encoder_helper_roi_misr_update_fence(
+		struct sde_encoder_phys *phys_enc,
+		struct drm_encoder *base_drm_enc);
 
 /**
  * sde_encoder_helper_update_intf_cfg - update interface configuration for

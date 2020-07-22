@@ -450,6 +450,7 @@ struct dsi_split_link_config {
  * @ext_bridge_num:      Connected external bridge count.
  * @ext_bridge_map:      External bridge config reg needs to match with the port
  *                       reg config.
+ * @builtin_bridge_pos:  Attach built-in DSI bridge at pos in the bridge chain.
  * @force_hs_clk_lane:   Send continuous clock to the panel.
  * @phy_type:            DPHY/CPHY is enabled for this panel.
  * @dsi_split_link_config:  Split Link Configuration.
@@ -473,6 +474,7 @@ struct dsi_host_common_cfg {
 	bool append_tx_eot;
 	u32 ext_bridge_num;
 	u32 ext_bridge_map[MAX_DSI_CTRLS_PER_DISPLAY];
+	u32 builtin_bridge_pos;
 	bool force_hs_clk_lane;
 	enum dsi_phy_type phy_type;
 	struct dsi_split_link_config split_link;
@@ -597,6 +599,7 @@ struct dsi_host_config {
  * @dsc:                  DSC compression info
  * @dsc_enabled:          DSC compression enabled
  * @roi_caps:		  Panel ROI capabilities
+ * @swap_intf:		  Swap left/right intfs
  */
 struct dsi_display_mode_priv_info {
 	struct dsi_panel_cmd_set cmd_sets[DSI_CMD_SET_MAX];
@@ -615,6 +618,7 @@ struct dsi_display_mode_priv_info {
 	struct msm_display_dsc_info dsc;
 	bool dsc_enabled;
 	struct msm_roi_caps roi_caps;
+	bool swap_intf;
 };
 
 /**
