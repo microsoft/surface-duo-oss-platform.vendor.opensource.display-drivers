@@ -19,7 +19,7 @@
 #include <linux/component.h>
 #include <linux/of_irq.h>
 #include <linux/kthread.h>
-#include <uapi/linux/sched/types.h>
+#include <linux/sched/types.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_crtc.h>

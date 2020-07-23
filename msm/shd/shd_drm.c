@@ -21,9 +21,10 @@
 #include <linux/component.h>
 #include <linux/of_irq.h>
 #include <linux/kthread.h>
-#include <uapi/linux/sched/types.h>
+#include <linux/sched/types.h>
 #include "sde_connector.h"
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_uapi.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_vblank.h>
@@ -107,6 +108,7 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 {
 	struct drm_encoder *encoder;
 	struct drm_connector *connector;
+	struct sde_connector *sde_conn;
 	struct drm_connector_list_iter conn_iter;
 	int rc = 0;
 
@@ -115,7 +117,8 @@ static int shd_display_init_base_connector(struct drm_device *dev,
 
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	drm_for_each_connector_iter(connector, &conn_iter) {
-		encoder = drm_atomic_helper_best_encoder(connector);
+		sde_conn = to_sde_connector(connector);
+		encoder = sde_conn->encoder;
 		if (encoder == base->encoder) {
 			base->connector = connector;
 			break;
@@ -138,13 +141,15 @@ static int shd_display_init_base_encoder(struct drm_device *dev,
 						struct shd_display_base *base)
 {
 	struct drm_encoder *encoder;
+	struct sde_connector *sde_conn;
 	struct sde_encoder_hw_resources hw_res;
 	struct sde_connector_state conn_state = {};
 	bool has_mst;
 	int rc = 0;
 
 	if (base->connector) {
-		encoder = drm_atomic_helper_best_encoder(base->connector);
+		sde_conn = to_sde_connector(base->connector);
+		encoder = sde_conn->encoder;
 		sde_encoder_get_hw_resources(encoder,
 				&hw_res, &conn_state.base);
 		base->encoder = encoder;
@@ -223,7 +228,6 @@ static int shd_display_init_base_crtc(struct drm_device *dev,
 			DRMID(primary), DRMID(crtc->primary));
 
 	crtc->primary = primary;
-	primary->crtc = crtc;
 
 	/* disable crtc from other connectors */
 	drm_connector_list_iter_begin(dev, &conn_iter);
@@ -813,7 +817,7 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 		m->status = MODE_STALE;
 
 	/* update base modes */
-	drm_mode_connector_list_update(disp->base->connector);
+	drm_connector_list_update(disp->base->connector);
 
 	/* validate modes */
 	list_for_each_entry(m, &disp->base->connector->modes, head) {
@@ -893,8 +897,7 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 		return 0;
 
 	shd_drm_update_checksum(&edid);
-
-	rc = drm_mode_connector_update_edid_property(connector, &edid);
+	rc = drm_connector_update_edid_property(connector, &edid);
 	if (rc)
 		return 0;
 
@@ -1012,8 +1015,8 @@ void shd_bridge_post_disable(struct drm_bridge *drm_bridge)
 
 static inline
 void shd_bridge_mode_set(struct drm_bridge *drm_bridge,
-				struct drm_display_mode *mode,
-				struct drm_display_mode *adjusted_mode)
+				const struct drm_display_mode *mode,
+				const struct drm_display_mode *adjusted_mode)
 {
 }
 
@@ -1138,8 +1141,6 @@ static int shd_drm_obj_init(struct shd_display *display)
 
 		if (!found) {
 			primary = priv->planes[i];
-			if (primary->type == DRM_PLANE_TYPE_OVERLAY)
-				dev->mode_config.num_overlay_plane--;
 			primary->type = DRM_PLANE_TYPE_PRIMARY;
 			break;
 		}

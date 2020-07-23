@@ -13,7 +13,7 @@
 #define pr_fmt(fmt)	"[drm-shd:%s:%d] " fmt, __func__, __LINE__
 
 #include <linux/debugfs.h>
-#include <uapi/drm/sde_drm.h>
+#include <drm/sde_drm.h>
 
 #include "sde_encoder_phys.h"
 #include "sde_formats.h"
