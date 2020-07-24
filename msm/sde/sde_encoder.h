@@ -159,6 +159,7 @@ struct sde_encoder_ops {
  * @rsc_state_init:		boolean to indicate rsc config init
  * @disp_info:			local copy of msm_display_info struct
  * @misr_enable:		misr enable/disable status
+ * @misr_reconfigure:		boolean entry indicates misr reconfigure status
  * @misr_frame_count:		misr frame count before start capturing the data
  * @idle_pc_enabled:		indicate if idle power collapse is enabled
  *				currently. This can be controlled by user-mode
@@ -226,6 +227,7 @@ struct sde_encoder_virt {
 	bool rsc_state_init;
 	struct msm_display_info disp_info;
 	bool misr_enable;
+	bool misr_reconfigure;
 	u32 misr_frame_count;
 
 	bool idle_pc_enabled;
@@ -524,6 +526,13 @@ void sde_encoder_needs_hw_reset(struct drm_encoder *enc);
  * @enable:	enable/disable flag
  */
 void sde_encoder_uidle_enable(struct drm_encoder *drm_enc, bool enable);
+
+/**
+ * sde_encoder_irq_control - control enable/disable of IRQ's
+ * @drm_enc:	Pointer to drm encoder structure
+ * @enable: enable/disable flag
+ */
+void sde_encoder_irq_control(struct drm_encoder *drm_enc, bool enable);
 
 /**
  * sde_encoder_get_kms - retrieve the kms from encoder

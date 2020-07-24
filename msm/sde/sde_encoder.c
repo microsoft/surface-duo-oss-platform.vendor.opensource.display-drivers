@@ -1094,7 +1094,8 @@ static void _sde_encoder_update_vsync_source(struct sde_encoder_virt *sde_enc,
 			vsync_source = SDE_VSYNC_SOURCE_WD_TIMER_0 -
 					sde_enc->te_source;
 		else if (disp_info->is_te_using_watchdog_timer)
-			vsync_source = SDE_VSYNC_SOURCE_WD_TIMER_4;
+			vsync_source = SDE_VSYNC_SOURCE_WD_TIMER_4 +
+					sde_enc->te_source;
 		else
 			vsync_source = sde_enc->te_source;
 
@@ -1341,7 +1342,7 @@ static int _sde_encoder_update_rsc_client(
 	return ret;
 }
 
-static void _sde_encoder_irq_control(struct drm_encoder *drm_enc, bool enable)
+void sde_encoder_irq_control(struct drm_encoder *drm_enc, bool enable)
 {
 	struct sde_encoder_virt *sde_enc;
 	int i;
@@ -1360,6 +1361,7 @@ static void _sde_encoder_irq_control(struct drm_encoder *drm_enc, bool enable)
 		if (phys && phys->ops.irq_control)
 			phys->ops.irq_control(phys, enable);
 	}
+	sde_kms_cpu_vote_for_irq(sde_encoder_get_kms(drm_enc), enable);
 
 }
 
@@ -1451,7 +1453,7 @@ static int _sde_encoder_resource_control_helper(struct drm_encoder *drm_enc,
 		}
 
 		/* enable all the irq */
-		_sde_encoder_irq_control(drm_enc, true);
+		sde_encoder_irq_control(drm_enc, true);
 
 		_sde_encoder_pm_qos_add_request(drm_enc);
 
@@ -1459,7 +1461,7 @@ static int _sde_encoder_resource_control_helper(struct drm_encoder *drm_enc,
 		_sde_encoder_pm_qos_remove_request(drm_enc);
 
 		/* disable all the irq */
-		_sde_encoder_irq_control(drm_enc, false);
+		sde_encoder_irq_control(drm_enc, false);
 
 		/* disable DSI clks */
 		sde_connector_clk_ctrl(sde_enc->cur_master->connector, false);
@@ -1483,6 +1485,9 @@ static void sde_encoder_misr_configure(struct drm_encoder *drm_enc,
 	}
 	sde_enc = to_sde_encoder_virt(drm_enc);
 
+	if (!sde_enc->misr_reconfigure)
+		return;
+
 	for (i = 0; i < sde_enc->num_phys_encs; i++) {
 		struct sde_encoder_phys *phys = sde_enc->phys_encs[i];
 
@@ -1491,6 +1496,7 @@ static void sde_encoder_misr_configure(struct drm_encoder *drm_enc,
 
 		phys->ops.setup_misr(phys, enable, frame_count);
 	}
+	sde_enc->misr_reconfigure = false;
 }
 
 static void sde_encoder_input_event_handler(struct input_handle *handle,
@@ -1626,7 +1632,7 @@ static int _sde_encoder_rc_kickoff(struct drm_encoder *drm_enc,
 	}
 
 	if (is_vid_mode && sde_enc->rc_state == SDE_ENC_RC_STATE_IDLE) {
-		_sde_encoder_irq_control(drm_enc, true);
+		sde_encoder_irq_control(drm_enc, true);
 	} else {
 		/* enable all the clks and resources */
 		ret = _sde_encoder_resource_control_helper(drm_enc,
@@ -1663,7 +1669,7 @@ static int _sde_encoder_rc_pre_stop(struct drm_encoder *drm_enc,
 
 	if (is_vid_mode &&
 		  sde_enc->rc_state == SDE_ENC_RC_STATE_IDLE) {
-		_sde_encoder_irq_control(drm_enc, true);
+		sde_encoder_irq_control(drm_enc, true);
 	}
 	/* skip if is already OFF or IDLE, resources are off already */
 	else if (sde_enc->rc_state == SDE_ENC_RC_STATE_OFF ||
@@ -1780,7 +1786,7 @@ static int _sde_encoder_rc_pre_modeset(struct drm_encoder *drm_enc,
 		goto end;
 	}
 
-	_sde_encoder_irq_control(drm_enc, false);
+	sde_encoder_irq_control(drm_enc, false);
 	_sde_encoder_modeset_helper_locked(drm_enc, sw_event);
 
 	SDE_EVT32(DRMID(drm_enc), sw_event, sde_enc->rc_state,
@@ -1818,7 +1824,7 @@ static int _sde_encoder_rc_post_modeset(struct drm_encoder *drm_enc,
 	}
 
 	_sde_encoder_modeset_helper_locked(drm_enc, sw_event);
-	_sde_encoder_irq_control(drm_enc, true);
+	sde_encoder_irq_control(drm_enc, true);
 
 	_sde_encoder_update_rsc_client(drm_enc, true);
 
@@ -1862,7 +1868,7 @@ static int _sde_encoder_rc_idle(struct drm_encoder *drm_enc,
 	}
 
 	if (is_vid_mode) {
-		_sde_encoder_irq_control(drm_enc, false);
+		sde_encoder_irq_control(drm_enc, false);
 	} else {
 		/* disable all the clks and resources */
 		_sde_encoder_update_rsc_client(drm_enc, false);
@@ -2617,7 +2623,7 @@ static void sde_encoder_virt_enable(struct drm_encoder *drm_enc)
 	struct drm_display_mode *cur_mode = NULL;
 	struct msm_display_info *disp_info;
 
-	if (!drm_enc) {
+	if (!drm_enc || !drm_enc->crtc) {
 		SDE_ERROR("invalid encoder\n");
 		return;
 	}
@@ -2629,7 +2635,7 @@ static void sde_encoder_virt_enable(struct drm_encoder *drm_enc)
 		return;
 	}
 
-	if (drm_enc->crtc && !sde_enc->crtc)
+	if (!sde_enc->crtc)
 		sde_enc->crtc = drm_enc->crtc;
 
 	comp_info = &sde_enc->mode_info.comp_info;
@@ -2802,7 +2808,8 @@ static void sde_encoder_virt_disable(struct drm_encoder *drm_enc)
 	 * and after physical encoder is disabled, to make sure timing
 	 * engine is already disabled (for video mode).
 	 */
-	sde_encoder_dce_disable(sde_enc);
+	if (!sde_in_trusted_vm(sde_kms))
+		sde_encoder_dce_disable(sde_enc);
 
 	sde_encoder_resource_control(drm_enc, SDE_ENC_RC_EVENT_STOP);
 
@@ -4042,6 +4049,24 @@ void sde_encoder_helper_get_pp_line_count(struct drm_encoder *drm_enc,
 	}
 }
 
+void sde_encoder_helper_get_transfer_time(struct drm_encoder *drm_enc,
+			u32 *transfer_time_us)
+{
+	struct sde_encoder_virt *sde_enc;
+	struct msm_mode_info *info;
+
+	if (!drm_enc || !transfer_time_us) {
+		SDE_ERROR("bad arg: encoder:%d transfer_time:%d\n", !drm_enc,
+				!transfer_time_us);
+		return;
+	}
+
+	sde_enc = to_sde_encoder_virt(drm_enc);
+	info = &sde_enc->mode_info;
+
+	*transfer_time_us = info->mdp_transfer_time_us;
+}
+
 int sde_encoder_helper_reset_mixers(struct sde_encoder_phys *phys_enc,
 		struct drm_framebuffer *fb)
 {
@@ -4271,6 +4296,7 @@ static ssize_t _sde_encoder_misr_setup(struct file *file,
 		return rc;
 
 	sde_enc->misr_enable = enable;
+	sde_enc->misr_reconfigure = true;
 	sde_enc->misr_frame_count = frame_count;
 	sde_encoder_misr_configure(&sde_enc->base, enable, frame_count);
 	pm_runtime_put_sync(drm_enc->dev->dev);

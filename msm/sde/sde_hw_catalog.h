@@ -43,6 +43,8 @@
 #define SDE_HW_VER_610	SDE_HW_VER(6, 1, 0) /* sm7250 */
 #define SDE_HW_VER_630	SDE_HW_VER(6, 3, 0) /* bengal */
 #define SDE_HW_VER_700	SDE_HW_VER(7, 0, 0) /* lahaina */
+#define SDE_HW_VER_660	SDE_HW_VER(6, 6, 0) /* holi */
+#define SDE_HW_VER_670	SDE_HW_VER(6, 7, 0) /* shima */
 
 /* Avoid using below IS_XXX macros outside catalog, use feature bit instead */
 #define IS_SDE_MAJOR_SAME(rev1, rev2)   \
@@ -63,6 +65,8 @@
 #define IS_SAIPAN_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_610)
 #define IS_BENGAL_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_630)
 #define IS_LAHAINA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_700)
+#define IS_HOLI_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_660)
+#define IS_SHIMA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_670)
 
 #define SDE_HW_BLK_NAME_LEN	16
 
@@ -868,6 +872,7 @@ struct sde_clk_ctrl_reg {
  * @has_dest_scaler:   indicates support of destination scaler
  * @smart_panel_align_mode: split display smart panel align modes
  * @clk_ctrls          clock control register definition
+ * @clk_status         clock status register definition
  */
 struct sde_mdp_cfg {
 	SDE_HW_BLK_INFO;
@@ -877,6 +882,7 @@ struct sde_mdp_cfg {
 	bool has_dest_scaler;
 	u32 smart_panel_align_mode;
 	struct sde_clk_ctrl_reg clk_ctrls[SDE_CLK_CTRL_MAX];
+	struct sde_clk_ctrl_reg clk_status[SDE_CLK_CTRL_MAX];
 };
 
 /* struct sde_uidle_cfg : MDP TOP-BLK instance info
@@ -1360,6 +1366,10 @@ struct sde_perf_cfg {
  * this HW version. Contains number of instances,
  * register offsets, capabilities of the all MDSS HW sub-blocks.
  *
+ * @trusted_vm_env	set to true, if the driver is executing in
+ *			the trusted VM. false, otherwise.
+ * @max_trusted_vm_displays	maximum number of concurrent trusted
+ *				vm displays supported.
  * @max_sspp_linewidth max source pipe line width support.
  * @vig_sspp_linewidth max vig source pipe line width support.
  * @scaling_linewidth max vig source pipe linewidth for scaling usecases
@@ -1402,6 +1412,7 @@ struct sde_perf_cfg {
  * @has_qsync	       Supports qsync feature
  * @has_3d_merge_reset Supports 3D merge reset
  * @has_decimation     Supports decimation
+ * @has_trusted_vm_support	     Supported HW sharing with trusted VM
  * @has_mixer_combined_alpha     Mixer has single register for FG & BG alpha
  * @vbif_disable_inner_outer_shareable     VBIF requires disabling shareables
  * @inline_disable_const_clr     Disable constant color during inline rotate
@@ -1411,6 +1422,7 @@ struct sde_perf_cfg {
  * @qseed_sw_lib_rev	qseed sw library type supporting the qseed hw
  * @qseed_hw_version   qseed hw version of the target
  * @sc_cfg: system cache configuration
+ * @syscache_supported  Flag to indicate if sys cache support is enabled
  * @uidle_cfg		Settings for uidle feature
  * @sui_misr_supported  indicate if secure-ui-misr is supported
  * @sui_block_xin_mask  mask of all the xin-clients to be blocked during
@@ -1432,6 +1444,8 @@ struct sde_perf_cfg {
  */
 struct sde_mdss_cfg {
 	u32 hwversion;
+	bool trusted_vm_env;
+	u32 max_trusted_vm_displays;
 
 	u32 max_sspp_linewidth;
 	u32 vig_sspp_linewidth;
@@ -1475,11 +1489,13 @@ struct sde_mdss_cfg {
 	bool dither_luma_mode_support;
 	bool has_base_layer;
 	bool has_demura;
+	bool has_trusted_vm_support;
 	u32 demura_supported[SSPP_MAX][2];
 	u32 qseed_sw_lib_rev;
 	u32 qseed_hw_version;
 
 	struct sde_sc_cfg sc_cfg[SDE_SYS_CACHE_MAX];
+	bool syscache_supported;
 
 	bool sui_misr_supported;
 	u32 sui_block_xin_mask;

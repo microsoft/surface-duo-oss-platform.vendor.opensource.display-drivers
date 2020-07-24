@@ -581,13 +581,14 @@ static void dp_display_notify_hdcp_status_cb(void *ptr,
 		enum sde_hdcp_state state)
 {
 	struct dp_display_private *dp = ptr;
-	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY,
-					dp->link->hdcp_status.hdcp_state);
 
 	if (!dp) {
 		DP_ERR("invalid input\n");
 		return;
 	}
+
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY,
+					dp->link->hdcp_status.hdcp_state);
 
 	dp->link->hdcp_status.hdcp_state = state;
 
@@ -732,6 +733,7 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 	char name[HPD_STRING_SIZE], status[HPD_STRING_SIZE],
 		bpp[HPD_STRING_SIZE], pattern[HPD_STRING_SIZE];
 	char *envp[5];
+	int rc = 0;
 
 	if (dp->mst.mst_active) {
 		DP_DEBUG("skip notification for mst mode\n");
@@ -757,6 +759,11 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 
 	dev = connector->dev;
 
+	if (dp->debug->skip_uevent) {
+		DP_INFO("skipping uevent\n");
+		goto update_state;
+	}
+
 	snprintf(name, HPD_STRING_SIZE, "name=%s", connector->name);
 	snprintf(status, HPD_STRING_SIZE, "status=%s",
 		drm_get_connector_status_name(connector->status));
@@ -766,16 +773,17 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 	snprintf(pattern, HPD_STRING_SIZE, "pattern=%d",
 		dp->link->test_video.test_video_pattern);
 
-	DP_DEBUG("[%s]:[%s] [%s] [%s]\n", name, status, bpp, pattern);
+	DP_INFO("[%s]:[%s] [%s] [%s]\n", name, status, bpp, pattern);
 	envp[0] = name;
 	envp[1] = status;
 	envp[2] = bpp;
 	envp[3] = pattern;
 	envp[4] = NULL;
-	if (!dp->debug->skip_uevent)
-		kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE,
-				envp);
 
+	rc = kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
+	DP_INFO("uevent %s: %d\n", rc ? "failure" : "success", rc);
+
+update_state:
 	if (connector->status == connector_status_connected) {
 		dp_display_state_add(DP_STATE_CONNECT_NOTIFIED);
 		dp_display_state_remove(DP_STATE_DISCONNECT_NOTIFIED);
@@ -916,8 +924,7 @@ static void dp_display_host_init(struct dp_display_private *dp)
 	if (dp->hpd->orientation == ORIENTATION_CC2)
 		flip = true;
 
-	reset = dp->debug->sim_mode ? false :
-		(!dp->hpd->multi_func || !dp->hpd->peer_usb_comm);
+	reset = dp->debug->sim_mode ? false : !dp->hpd->multi_func;
 
 	dp->power->init(dp->power, flip);
 	dp->hpd->host_init(dp->hpd, &dp->catalog->hpd);
@@ -1589,7 +1596,8 @@ static void dp_display_deinit_sub_modules(struct dp_display_private *dp)
 {
 	dp_debug_put(dp->debug);
 	dp_hpd_put(dp->hpd);
-	dp_audio_put(dp->panel->audio);
+	if (dp->panel)
+		dp_audio_put(dp->panel->audio);
 	dp_ctrl_put(dp->ctrl);
 	dp_panel_put(dp->panel);
 	dp_link_put(dp->link);

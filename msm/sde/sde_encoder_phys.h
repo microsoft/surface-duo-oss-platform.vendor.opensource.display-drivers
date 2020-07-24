@@ -52,13 +52,16 @@ enum sde_enc_split_role {
  * @SDE_ENC_ENABLED:	Encoder is enabled
  * @SDE_ENC_ERR_NEEDS_HW_RESET:	Encoder is enabled, but requires a hw_reset
  *				to recover from a previous error
+ * @SDE_ENC_TIMING_ENGINE_RECONFIG: Encoder is enabled and timing engine
+ *				parameters are updated
  */
 enum sde_enc_enable_state {
 	SDE_ENC_DISABLING,
 	SDE_ENC_DISABLED,
 	SDE_ENC_ENABLING,
 	SDE_ENC_ENABLED,
-	SDE_ENC_ERR_NEEDS_HW_RESET
+	SDE_ENC_ERR_NEEDS_HW_RESET,
+	SDE_ENC_TIMING_ENGINE_RECONFIG,
 };
 
 struct sde_encoder_phys;
@@ -275,6 +278,7 @@ struct sde_encoder_irq {
  * @enc_spinlock:	Virtual-Encoder-Wide Spin Lock for IRQ purposes
  * @enable_state:	Enable state tracking
  * @vblank_refcount:	Reference count of vblank request
+ * @vblank_cached_refcount:	Reference count of vblank cached request
  * @wbirq_refcount:	Reference count of wb irq request
  * @vsync_cnt:		Vsync count for the physical encoder
  * @underrun_cnt:	Underrun count for the physical encoder
@@ -324,6 +328,7 @@ struct sde_encoder_phys {
 	enum sde_enc_enable_state enable_state;
 	struct mutex *vblank_ctl_lock;
 	atomic_t vblank_refcount;
+	atomic_t vblank_cached_refcount;
 	atomic_t wbirq_refcount;
 	atomic_t vsync_cnt;
 	atomic_t underrun_cnt;
@@ -536,6 +541,14 @@ void sde_encoder_phys_setup_cdm(struct sde_encoder_phys *phys_enc,
  */
 void sde_encoder_helper_get_pp_line_count(struct drm_encoder *drm_enc,
 		struct sde_hw_pp_vsync_info *info);
+
+/**
+ * sde_encoder_helper_get_transfer_time - get the mdp transfer time in usecs
+ * @drm_enc: Pointer to drm encoder structure
+ * @transfer_time_us: Pointer to store the output value
+ */
+void sde_encoder_helper_get_transfer_time(struct drm_encoder *drm_enc,
+		u32 *transfer_time_us);
 
 /**
  * sde_encoder_helper_trigger_flush - control flush helper function

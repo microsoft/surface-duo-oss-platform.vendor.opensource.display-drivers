@@ -149,7 +149,7 @@
 #define SDE_UIDLE_FAL10_EXIT_DANGER 4
 #define SDE_UIDLE_FAL10_DANGER 6
 #define SDE_UIDLE_FAL10_TARGET_IDLE 50
-#define SDE_UIDLE_FAL1_TARGET_IDLE 10
+#define SDE_UIDLE_FAL1_TARGET_IDLE 40
 #define SDE_UIDLE_FAL10_THRESHOLD_60 12
 #define SDE_UIDLE_FAL10_THRESHOLD_90 13
 #define SDE_UIDLE_MAX_DWNSCALE 1500
@@ -201,6 +201,8 @@ enum sde_prop {
 	PIPE_ORDER_VERSION,
 	SEC_SID_MASK,
 	BASE_LAYER,
+	TRUSTED_VM_ENV,
+	MAX_TRUSTED_VM_DISPLAYS,
 	SDE_PROP_MAX,
 };
 
@@ -441,6 +443,7 @@ enum {
 	WB_ID,
 	WB_XIN_ID,
 	WB_CLK_CTRL,
+	WB_CLK_STATUS,
 	WB_PROP_MAX,
 };
 
@@ -465,11 +468,6 @@ enum {
 	UIDLE_OFF,
 	UIDLE_LEN,
 	UIDLE_PROP_MAX,
-};
-
-enum {
-	CACHE_CONTROLLER,
-	CACHE_CONTROLLER_PROP_MAX,
 };
 
 enum {
@@ -547,7 +545,8 @@ static struct sde_prop_type sde_prop[] = {
 	{WB_LINEWIDTH, "qcom,sde-wb-linewidth", false, PROP_TYPE_U32},
 	{WB_LINEWIDTH_LINEAR, "qcom,sde-wb-linewidth-linear",
 			false, PROP_TYPE_U32},
-	{BANK_BIT, "qcom,sde-highest-bank-bit", false, PROP_TYPE_U32},
+	{BANK_BIT, "qcom,sde-highest-bank-bit", false,
+			PROP_TYPE_BIT_OFFSET_ARRAY},
 	{UBWC_VERSION, "qcom,sde-ubwc-version", false, PROP_TYPE_U32},
 	{UBWC_STATIC, "qcom,sde-ubwc-static", false, PROP_TYPE_U32},
 	{UBWC_SWIZZLE, "qcom,sde-ubwc-swizzle", false, PROP_TYPE_U32},
@@ -571,6 +570,9 @@ static struct sde_prop_type sde_prop[] = {
 			PROP_TYPE_U32},
 	{SEC_SID_MASK, "qcom,sde-secure-sid-mask", false, PROP_TYPE_U32_ARRAY},
 	{BASE_LAYER, "qcom,sde-mixer-stage-base-layer", false, PROP_TYPE_BOOL},
+	{TRUSTED_VM_ENV, "qcom,sde-trusted-vm-env", false, PROP_TYPE_BOOL},
+	{MAX_TRUSTED_VM_DISPLAYS, "qcom,sde-max-trusted-vm-displays", false,
+			PROP_TYPE_U32},
 };
 
 static struct sde_prop_type sde_perf_prop[] = {
@@ -832,6 +834,8 @@ static struct sde_prop_type wb_prop[] = {
 	{WB_XIN_ID, "qcom,sde-wb-xin-id", false, PROP_TYPE_U32_ARRAY},
 	{WB_CLK_CTRL, "qcom,sde-wb-clk-ctrl", false,
 		PROP_TYPE_BIT_OFFSET_ARRAY},
+	{WB_CLK_STATUS, "qcom,sde-wb-clk-status", false,
+		PROP_TYPE_BIT_OFFSET_ARRAY},
 };
 
 static struct sde_prop_type vbif_prop[] = {
@@ -863,10 +867,6 @@ static struct sde_prop_type uidle_prop[] = {
 	{UIDLE_LEN, "qcom,sde-uidle-size", false, PROP_TYPE_U32},
 };
 
-static struct sde_prop_type cache_prop[] = {
-	{CACHE_CONTROLLER, "qcom,llcc-v2", false, PROP_TYPE_NODE},
-};
-
 static struct sde_prop_type reg_dma_prop[REG_DMA_PROP_MAX] = {
 	[REG_DMA_OFF] =  {REG_DMA_OFF, "qcom,sde-reg-dma-off", false,
 		PROP_TYPE_U32_ARRAY},
@@ -881,7 +881,7 @@ static struct sde_prop_type reg_dma_prop[REG_DMA_PROP_MAX] = {
 		"qcom,sde-reg-dma-broadcast-disabled", false, PROP_TYPE_BOOL},
 	[REG_DMA_XIN_ID] = {REG_DMA_XIN_ID,
 		"qcom,sde-reg-dma-xin-id", false, PROP_TYPE_U32},
-	[REG_DMA_CLK_CTRL] = {REG_DMA_XIN_ID,
+	[REG_DMA_CLK_CTRL] = {REG_DMA_CLK_CTRL,
 		"qcom,sde-reg-dma-clk-ctrl", false, PROP_TYPE_BIT_OFFSET_ARRAY},
 };
 
@@ -1070,7 +1070,6 @@ static int _validate_dt_entry(struct device_node *np,
 				sde_prop[i].prop_name,
 				prop_count[i], *off_count);
 			rc = 0;
-			prop_count[i] = 0;
 		}
 		if (prop_count[i] < 0) {
 			prop_count[i] = 0;
@@ -1842,6 +1841,12 @@ static int _sde_sspp_setup_cmn(struct device_node *np,
 			sde_cfg->mdp[j].clk_ctrls[sspp->clk_ctrl].bit_off =
 					PROP_BITVALUE_ACCESS(props->values,
 					SSPP_CLK_CTRL, i, 1);
+			sde_cfg->mdp[j].clk_status[sspp->clk_ctrl].reg_off =
+					PROP_BITVALUE_ACCESS(props->values,
+					SSPP_CLK_STATUS, i, 0);
+			sde_cfg->mdp[j].clk_status[sspp->clk_ctrl].bit_off =
+					PROP_BITVALUE_ACCESS(props->values,
+					SSPP_CLK_STATUS, i, 1);
 		}
 
 		SDE_DEBUG("xin:%d ram:%d clk%d:%x/%d\n",
@@ -2354,6 +2359,12 @@ static int sde_wb_parse_dt(struct device_node *np, struct sde_mdss_cfg *sde_cfg)
 			sde_cfg->mdp[j].clk_ctrls[wb->clk_ctrl].bit_off =
 				PROP_BITVALUE_ACCESS(prop_value,
 						WB_CLK_CTRL, i, 1);
+			sde_cfg->mdp[j].clk_status[wb->clk_ctrl].reg_off =
+				PROP_BITVALUE_ACCESS(prop_value,
+						WB_CLK_STATUS, i, 0);
+			sde_cfg->mdp[j].clk_status[wb->clk_ctrl].bit_off =
+				PROP_BITVALUE_ACCESS(prop_value,
+						WB_CLK_STATUS, i, 1);
 		}
 
 		wb->format_list = sde_cfg->wb_formats;
@@ -3205,25 +3216,22 @@ static int sde_cache_parse_dt(struct device_node *np,
 	struct platform_device *pdev;
 	struct of_phandle_args phargs;
 	struct sde_sc_cfg *sc_cfg = sde_cfg->sc_cfg;
-	struct sde_dt_props *props;
+	struct device_node *llcc_node;
 	int rc = 0;
-	u32 off_count;
 
 	if (!sde_cfg) {
 		SDE_ERROR("invalid argument\n");
 		return -EINVAL;
 	}
 
-	props = sde_get_dt_props(np, CACHE_CONTROLLER_PROP_MAX, cache_prop,
-			ARRAY_SIZE(cache_prop), &off_count);
-	if (IS_ERR_OR_NULL(props))
-		return PTR_ERR(props);
+	if (!sde_cfg->syscache_supported)
+		return 0;
 
-	if (!props->exists[CACHE_CONTROLLER]) {
-		SDE_DEBUG("cache controller missing, will disable img cache:%d",
-				props->exists[CACHE_CONTROLLER]);
-		rc = 0;
-		goto end;
+	llcc_node = of_find_node_by_name(NULL, "cache-controller");
+	if (!llcc_node ||
+		(!of_device_is_compatible(llcc_node, "qcom,llcc-v2"))) {
+		SDE_DEBUG("cache controller missing, will disable img cache\n");
+		return 0;
 	}
 
 	slice = llcc_slice_getd(LLCC_DISP);
@@ -3288,7 +3296,6 @@ static int sde_cache_parse_dt(struct device_node *np,
 cleanup:
 	of_node_put(phargs.np);
 end:
-	sde_put_dt_props(props);
 	return rc;
 }
 
@@ -3655,6 +3662,7 @@ static void _sde_top_parse_dt_helper(struct sde_mdss_cfg *cfg,
 	struct sde_dt_props *props)
 {
 	int i;
+	u32 ddr_type;
 
 	cfg->max_sspp_linewidth = props->exists[SSPP_LINEWIDTH] ?
 			PROP_VALUE_ACCESS(props->values, SSPP_LINEWIDTH, 0) :
@@ -3689,13 +3697,18 @@ static void _sde_top_parse_dt_helper(struct sde_mdss_cfg *cfg,
 			SDE_HW_UBWC_VER(PROP_VALUE_ACCESS(props->values,
 			UBWC_VERSION, 0)) : DEFAULT_SDE_UBWC_NONE;
 
-	cfg->mdp[0].highest_bank_bit = props->exists[BANK_BIT] ?
-			PROP_VALUE_ACCESS(props->values, BANK_BIT, 0) :
-			DEFAULT_SDE_HIGHEST_BANK_BIT;
+	cfg->mdp[0].highest_bank_bit = DEFAULT_SDE_HIGHEST_BANK_BIT;
 
-	if (cfg->ubwc_version == SDE_HW_UBWC_VER_40 &&
-			of_fdt_get_ddrtype() == LP_DDR4_TYPE)
-		cfg->mdp[0].highest_bank_bit = 0x02;
+	if (props->exists[BANK_BIT]) {
+		for (i = 0; i < props->counts[BANK_BIT]; i++) {
+			ddr_type = PROP_BITVALUE_ACCESS(props->values,
+					BANK_BIT, i, 0);
+			if (!ddr_type || (of_fdt_get_ddrtype() == ddr_type))
+				cfg->mdp[0].highest_bank_bit =
+					PROP_BITVALUE_ACCESS(props->values,
+					BANK_BIT, i, 1);
+		}
+	}
 
 	cfg->macrotile_mode = props->exists[MACROTILE_MODE] ?
 			PROP_VALUE_ACCESS(props->values, MACROTILE_MODE, 0) :
@@ -3733,6 +3746,10 @@ static void _sde_top_parse_dt_helper(struct sde_mdss_cfg *cfg,
 	cfg->has_base_layer = PROP_VALUE_ACCESS(props->values, BASE_LAYER, 0);
 	cfg->qseed_hw_version = PROP_VALUE_ACCESS(props->values,
 			 QSEED_HW_VERSION, 0);
+	cfg->trusted_vm_env = PROP_VALUE_ACCESS(props->values, TRUSTED_VM_ENV,
+			 0);
+	cfg->max_trusted_vm_displays = PROP_VALUE_ACCESS(props->values,
+			MAX_TRUSTED_VM_DISPLAYS, 0);
 }
 
 static int sde_top_parse_dt(struct device_node *np, struct sde_mdss_cfg *cfg)
@@ -4689,7 +4706,7 @@ static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
 		sde_cfg->has_cwb_support = true;
 		sde_cfg->has_wb_ubwc = true;
 		sde_cfg->has_qsync = true;
-		sde_cfg->perf.min_prefill_lines = 24;
+		sde_cfg->perf.min_prefill_lines = 35;
 		sde_cfg->vbif_qos_nlvl = 8;
 		sde_cfg->ts_prefill_rev = 2;
 		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
@@ -4707,6 +4724,45 @@ static int _sde_hardware_pre_caps(struct sde_mdss_cfg *sde_cfg, uint32_t hw_rev)
 		sde_cfg->uidle_cfg.uidle_rev = SDE_UIDLE_VERSION_1_0_1;
 		sde_cfg->vbif_disable_inner_outer_shareable = true;
 		sde_cfg->dither_luma_mode_support = true;
+		sde_cfg->mdss_hw_block_size = 0x158;
+		sde_cfg->has_trusted_vm_support = true;
+		sde_cfg->syscache_supported = true;
+	} else if (IS_HOLI_TARGET(hw_rev)) {
+		sde_cfg->has_cwb_support = false;
+		sde_cfg->has_qsync = true;
+		sde_cfg->perf.min_prefill_lines = 24;
+		sde_cfg->vbif_qos_nlvl = 8;
+		sde_cfg->ts_prefill_rev = 2;
+		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
+		sde_cfg->delay_prg_fetch_start = true;
+		sde_cfg->sui_ns_allowed = true;
+		sde_cfg->sui_misr_supported = true;
+		sde_cfg->sui_block_xin_mask = 0xC01;
+		sde_cfg->has_hdr = false;
+		sde_cfg->has_sui_blendstage = true;
+		sde_cfg->vbif_disable_inner_outer_shareable = true;
+		sde_cfg->mdss_hw_block_size = 0x158;
+	} else if (IS_SHIMA_TARGET(hw_rev)) {
+		sde_cfg->has_cwb_support = true;
+		sde_cfg->has_wb_ubwc = true;
+		sde_cfg->has_qsync = true;
+		sde_cfg->perf.min_prefill_lines = 35;
+		sde_cfg->vbif_qos_nlvl = 8;
+		sde_cfg->ts_prefill_rev = 2;
+		sde_cfg->ctl_rev = SDE_CTL_CFG_VERSION_1_0_0;
+		sde_cfg->delay_prg_fetch_start = true;
+		sde_cfg->sui_ns_allowed = true;
+		sde_cfg->sui_misr_supported = true;
+		sde_cfg->sui_block_xin_mask = 0xE71;
+		sde_cfg->has_sui_blendstage = true;
+		sde_cfg->has_3d_merge_reset = true;
+		sde_cfg->has_hdr = true;
+		sde_cfg->has_hdr_plus = true;
+		set_bit(SDE_MDP_DHDR_MEMPOOL, &sde_cfg->mdp[0].features);
+		sde_cfg->has_vig_p010 = true;
+		sde_cfg->true_inline_rot_rev = SDE_INLINE_ROT_VERSION_1_0_0;
+		sde_cfg->inline_disable_const_clr = true;
+		sde_cfg->vbif_disable_inner_outer_shareable = true;
 		sde_cfg->mdss_hw_block_size = 0x158;
 	} else {
 		SDE_ERROR("unsupported chipset id:%X\n", hw_rev);

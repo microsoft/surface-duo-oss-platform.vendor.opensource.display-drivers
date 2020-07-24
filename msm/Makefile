@@ -48,6 +48,7 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_color_processing.o \
 	sde/sde_vbif.o \
 	sde_io_util.o \
+	sde_vm_event.o \
 	sde/sde_hw_reg_dma_v1_color_proc.o \
 	sde/sde_hw_color_proc_v4.o \
 	sde/sde_hw_ad4.o \
@@ -80,7 +81,11 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_hw_qdss.o \
 	sde_dsc_helper.o \
 	sde_vdc_helper.o \
-	sde/sde_hw_rc.o
+	sde/sde_hw_rc.o \
+
+msm_drm-$(CONFIG_DRM_SDE_VM) += sde/sde_vm_common.o \
+	sde/sde_vm_primary.o \
+	sde/sde_vm_trusted.o
 
 msm_drm-$(CONFIG_DEBUG_FS) += sde_dbg.o \
 	sde_dbg_evtlog.o \
@@ -104,6 +109,7 @@ msm_drm-$(CONFIG_DRM_MSM_DSI) += dsi/dsi_phy.o \
 	dsi/dsi_phy_timing_v4_0.o \
 	dsi/dsi_pll.o \
 	dsi/dsi_pll_5nm.o \
+	dsi/dsi_pll_10nm.o \
 	dsi/dsi_ctrl_hw_cmn.o \
 	dsi/dsi_ctrl_hw_1_4.o \
 	dsi/dsi_ctrl_hw_2_0.o \
@@ -127,9 +133,27 @@ msm_drm-$(CONFIG_DRM_MSM) += \
 	msm_gem_prime.o \
 	msm_gem_vma.o \
 	msm_smmu.o \
+	msm_cooling_device.o \
 	msm_prop.o
 
 msm_drm-$(CONFIG_HDCP_QSEECOM) += ../hdcp/msm_hdcp.o \
+
+msm_drm-$(CONFIG_MSM_SDE_ROTATOR) += ../rotator/sde_rotator_dev.o \
+	../rotator/sde_rotator_core.o \
+	../rotator/sde_rotator_base.o \
+	../rotator/sde_rotator_formats.o \
+	../rotator/sde_rotator_util.o \
+	../rotator/sde_rotator_io_util.o \
+	../rotator/sde_rotator_smmu.o \
+	../rotator/sde_rotator_r1_wb.o \
+	../rotator/sde_rotator_r1_pipe.o \
+	../rotator/sde_rotator_r1_ctl.o \
+	../rotator/sde_rotator_r1.o \
+	../rotator/sde_rotator_r3.o \
+	../rotator/sde_rotator_sync.o \
+	../rotator/sde_rotator_debug.o \
+	../rotator/sde_rotator_r1_debug.o \
+	../rotator/sde_rotator_r3_debug.o
 
 obj-$(CONFIG_DISPLAY_BUILD)	+= msm_drm.o
 

@@ -23,6 +23,9 @@ static int dsi_pll_clock_register(struct platform_device *pdev,
 	case DSI_PLL_5NM:
 		rc = dsi_pll_clock_register_5nm(pdev, pll_res);
 		break;
+	case DSI_PLL_10NM:
+		rc = dsi_pll_clock_register_10nm(pdev, pll_res);
+		break;
 	default:
 		rc = -EINVAL;
 		break;
@@ -118,6 +121,7 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 	int rc = 0;
 	const char *label;
 	struct dsi_pll_resource *pll_res = NULL;
+	bool in_trusted_vm = false;
 
 	if (!pdev->dev.of_node) {
 		pr_err("Invalid DSI PHY node\n");
@@ -140,12 +144,14 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 	DSI_PLL_INFO(pll_res, "DSI pll label = %s\n", label);
 
 	/**
-	  * Currently, Only supports 5nm PLL version. Will add
+	  * Currently, Only supports 5nm and 10nm PLL version. Will add
 	  * support for other versions as needed.
 	  */
 
 	if (!strcmp(label, "dsi_pll_5nm"))
 		pll_res->pll_revision = DSI_PLL_5NM;
+	else if (!strcmp(label, "dsi_pll_10nm"))
+		pll_res->pll_revision = DSI_PLL_10NM;
 	else
 		return -ENOTSUPP;
 
@@ -199,6 +205,14 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 	if (dsi_pll_get_ioresources(pdev, &pll_res->gdsc_base, "gdsc_base")) {
 		DSI_PLL_ERR(pll_res, "Unable to remap gdsc base resources\n");
 		return -ENOMEM;
+	}
+
+	in_trusted_vm = of_property_read_bool(pdev->dev.of_node,
+						"qcom,dsi-pll-in-trusted-vm");
+	if (in_trusted_vm) {
+		DSI_PLL_INFO(pll_res,
+			"Bypassing PLL clock register for Trusted VM\n");
+		return rc;
 	}
 
 	rc = dsi_pll_clock_register(pdev, pll_res);

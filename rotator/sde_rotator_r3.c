@@ -3500,6 +3500,21 @@ static int sde_rotator_hw_rev_init(struct sde_hw_rotator *rot)
 				ARRAY_SIZE(sde_hw_rotator_v4_outpixfmts);
 		rot->downscale_caps =
 			"LINEAR/1.5/2/4/8/16/32/64 TILE/1.5/2/4 TP10/1.5/2";
+	} else if (IS_SDE_MAJOR_MINOR_SAME(mdata->mdss_version,
+				SDE_MDP_HW_REV_660)) {
+		SDEROT_DBG("Sys cache inline rotation not supported\n");
+		set_bit(SDE_CAPS_PARTIALWR,  mdata->sde_caps_map);
+		set_bit(SDE_CAPS_HW_TIMESTAMP, mdata->sde_caps_map);
+		rot->inpixfmts[SDE_ROTATOR_MODE_OFFLINE] =
+				sde_hw_rotator_v4_inpixfmts;
+		rot->num_inpixfmt[SDE_ROTATOR_MODE_OFFLINE] =
+				ARRAY_SIZE(sde_hw_rotator_v4_inpixfmts);
+		rot->outpixfmts[SDE_ROTATOR_MODE_OFFLINE] =
+				sde_hw_rotator_v4_outpixfmts;
+		rot->num_outpixfmt[SDE_ROTATOR_MODE_OFFLINE] =
+				ARRAY_SIZE(sde_hw_rotator_v4_outpixfmts);
+		rot->downscale_caps =
+			"LINEAR/1.5/2/4/8/16/32/64 TILE/1.5/2/4 TP10/1.5/2";
 	} else {
 		rot->inpixfmts[SDE_ROTATOR_MODE_OFFLINE] =
 				sde_hw_rotator_v3_inpixfmts;
@@ -4067,12 +4082,6 @@ int sde_rotator_r3_init(struct sde_rot_mgr *mgr)
 		atomic_set(&rot->timestamp[i], 0);
 		INIT_LIST_HEAD(&rot->sbuf_ctx[i]);
 	}
-
-	/* set rotator CBCR to shutoff memory/periphery on clock off.*/
-	clk_set_flags(mgr->rot_clk[SDE_ROTATOR_CLK_MDSS_ROT].clk,
-			CLKFLAG_NORETAIN_MEM);
-	clk_set_flags(mgr->rot_clk[SDE_ROTATOR_CLK_MDSS_ROT].clk,
-			CLKFLAG_NORETAIN_PERIPH);
 
 	mdata->sde_rot_hw = rot;
 	return 0;
