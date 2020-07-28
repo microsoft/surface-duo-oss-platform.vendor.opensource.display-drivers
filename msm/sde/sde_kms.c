@@ -46,6 +46,7 @@
 #include "sde_encoder.h"
 #include "sde_plane.h"
 #include "sde_crtc.h"
+#include "sde_color_processing.h"
 #include "sde_reg_dma.h"
 #include "sde_connector.h"
 #include "sde_vm.h"
@@ -1321,6 +1322,7 @@ int sde_kms_vm_primary_post_commit(struct sde_kms *sde_kms,
 {
 	struct sde_vm_ops *vm_ops;
 	struct sde_crtc_state *cstate;
+	struct drm_crtc *crtc;
 	enum sde_crtc_vm_req vm_req;
 	int rc = 0;
 
@@ -1329,6 +1331,7 @@ int sde_kms_vm_primary_post_commit(struct sde_kms *sde_kms,
 
 	vm_ops = &sde_kms->vm->vm_ops;
 
+	crtc = state->crtcs[0].ptr;
 	cstate = to_sde_crtc_state(state->crtcs[0].new_state);
 
 	vm_req = sde_crtc_get_property(cstate, CRTC_PROP_VM_REQ_STATE);
@@ -1337,6 +1340,9 @@ int sde_kms_vm_primary_post_commit(struct sde_kms *sde_kms,
 
 	/* handle SDE pre-release */
 	sde_kms_vm_pre_release(sde_kms, state);
+
+	/* properly handoff color processing features */
+	sde_cp_crtc_vm_primary_handoff(crtc);
 
 	/* program the current drm mode info to scratch reg */
 	_sde_kms_program_mode_info(sde_kms);
@@ -3134,6 +3140,32 @@ end:
 	drm_modeset_acquire_fini(&ctx);
 }
 
+
+void sde_kms_display_early_wakeup(struct drm_device *dev,
+				const int32_t connector_id)
+{
+	struct drm_connector_list_iter conn_iter;
+	struct drm_connector *conn;
+	struct drm_encoder *drm_enc;
+
+	drm_connector_list_iter_begin(dev, &conn_iter);
+
+	drm_for_each_connector_iter(conn, &conn_iter) {
+		if (connector_id != DRM_MSM_WAKE_UP_ALL_DISPLAYS &&
+			connector_id != conn->base.id)
+			continue;
+
+		if (conn->state && conn->state->best_encoder)
+			drm_enc = conn->state->best_encoder;
+		else
+			drm_enc = conn->encoder;
+
+		sde_encoder_early_wakeup(drm_enc);
+	}
+
+	drm_connector_list_iter_end(&conn_iter);
+}
+
 static void _sde_kms_pm_suspend_idle_helper(struct sde_kms *sde_kms,
 	struct device *dev)
 {
@@ -3408,6 +3440,7 @@ static const struct msm_kms_funcs kms_funcs = {
 	.atomic_check = sde_kms_atomic_check,
 	.get_format      = sde_get_msm_format,
 	.round_pixclk    = sde_kms_round_pixclk,
+	.display_early_wakeup = sde_kms_display_early_wakeup,
 	.pm_suspend      = sde_kms_pm_suspend,
 	.pm_resume       = sde_kms_pm_resume,
 	.destroy         = sde_kms_destroy,
