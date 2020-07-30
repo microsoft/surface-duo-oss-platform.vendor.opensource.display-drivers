@@ -15,7 +15,6 @@
 #include "edp_pll_7nm.h"
 #include "dp_hpd.h"
 
-#define ENABLE_SSC
 #define HIGHER_CLK_FOR_5940MHZ
 
 #define DP_PHY_CFG				0x0010

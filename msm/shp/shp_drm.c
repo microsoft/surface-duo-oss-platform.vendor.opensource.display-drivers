@@ -53,8 +53,30 @@ struct shp_pool {
 	struct list_head plane_list;
 };
 
+/**
+ * enum shp_handoff_state: states of handoff
+ * @SHP_HANDOFF_NONE: No handoff requested.
+ * @SHP_HANDOFF_SET: Activate other shared planes and keep handoff state.
+ *                   set back to none state when other shared plane get
+ *                   committed. When detach mode is selected, disable the
+ *                   plane immediately and set back to none state.
+ * @SHP_HANDOFF_ENABLE_REQ: Request to re-enable plane that is currently
+ *                   disabled. Set back to none state automatically.
+ */
+enum shp_handoff_state {
+	SHP_HANDOFF_NONE = 0,
+	SHP_HANDOFF_SET,
+	SHP_HANDOFF_ENABLE_REQ,
+};
+
+static const struct drm_prop_enum_list shp_handoff_state_enum_list[] = {
+	{ SHP_HANDOFF_NONE, "none" },
+	{ SHP_HANDOFF_SET, "set" },
+	{ SHP_HANDOFF_ENABLE_REQ, "enable_req" },
+};
+
 struct shp_plane_state {
-	bool handoff;
+	enum shp_handoff_state handoff;
 	bool active;
 	bool skip_update;
 	uint32_t possible_crtcs;
@@ -81,12 +103,14 @@ struct shp_plane {
 };
 
 struct shp_device {
+	struct device *device;
 	struct drm_device *dev;
 	struct shp_pool pools[SSPP_MAX];
 	struct shp_plane *planes;
 	int num_planes;
 
 	struct drm_property *handoff_prop;
+	struct notifier_block notifier;
 
 	struct msm_kms_funcs kms_funcs;
 	const struct msm_kms_funcs *orig_kms_funcs;
@@ -104,7 +128,38 @@ static void shp_plane_send_uevent(struct drm_device *dev)
 	SDE_DEBUG("possible crtcs update uevent\n");
 }
 
-int shp_plane_validate(struct shp_plane *splane,
+static void shp_plane_send_handoff_uevent(struct drm_plane *plane)
+{
+	char name[SZ_32];
+	char *envp[2];
+
+	snprintf(name, sizeof(name), "PLANE_HANDOFF_REQUESTED=%d",
+			DRMID(plane));
+
+	envp[0] = name;
+	envp[1] = NULL;
+	kobject_uevent_env(&plane->dev->primary->kdev->kobj,
+			KOBJ_CHANGE, envp);
+
+	SDE_DEBUG("%s\n", name);
+	SDE_EVT32(DRMID(plane));
+}
+
+static void shp_plane_send_enable_req(struct shp_plane *splane)
+{
+	struct shp_pool *pool = splane->pool;
+	struct shp_plane *p;
+
+	list_for_each_entry(p, &pool->plane_list, head) {
+		if (p != p->master || p == splane)
+			continue;
+
+		if (p->plane->possible_crtcs)
+			shp_plane_send_handoff_uevent(p->plane);
+	}
+}
+
+static int shp_plane_validate(struct shp_plane *splane,
 		struct drm_plane_state *state)
 {
 	struct drm_plane *plane = splane->plane;
@@ -115,11 +170,12 @@ int shp_plane_validate(struct shp_plane *splane,
 	struct shp_plane_state *pstate;
 	int ret;
 
-	if (!shp_state->active) {
-		/* handoff only if plane is staged */
-		if (!state->crtc)
-			return 0;
+	if (shp_state->handoff == SHP_HANDOFF_ENABLE_REQ) {
+		SDE_DEBUG("plane already enabled\n");
+		shp_state->handoff = SHP_HANDOFF_NONE;
+	}
 
+	if (!shp_state->active) {
 		list_for_each_entry(p, &pool->plane_list, head) {
 			plane_state = drm_atomic_get_plane_state(
 				state->state, p->plane);
@@ -132,6 +188,9 @@ int shp_plane_validate(struct shp_plane *splane,
 				pstate->active = true;
 				SDE_DEBUG("plane%d set to active",
 					p->plane->base.id);
+				SDE_EVT32(DRMID(p->plane),
+					DRMID(plane_state->crtc),
+					pstate->possible_crtcs);
 				continue;
 			}
 
@@ -155,7 +214,7 @@ int shp_plane_validate(struct shp_plane *splane,
 
 			pstate->possible_crtcs = 0;
 			pstate->active = false;
-			pstate->handoff = false;
+			pstate->handoff = SHP_HANDOFF_NONE;
 
 			SDE_DEBUG("plane%d: 0x%x h=%d c=%d a=%d\n",
 				p->plane->base.id,
@@ -164,15 +223,33 @@ int shp_plane_validate(struct shp_plane *splane,
 				plane_state->crtc ?
 					plane_state->crtc->base.id : 0,
 				pstate->active);
+
+			SDE_EVT32(DRMID(p->plane),
+				DRMID(p->plane->state->crtc),
+				DRMID(plane_state->crtc),
+				p->plane->possible_crtcs,
+				p->state.active);
 		}
 	}
+
+	if (WARN_ON(!shp_state->active))
+		return -EINVAL;
 
 	if (shp_state->handoff != splane->state.handoff ||
 			state->crtc != plane->state->crtc) {
 		uint32_t crtc_mask;
 
-		if (splane->detach_handoff && !state->crtc) {
+		if (splane->detach_handoff) {
+			if (!shp_state->handoff)
+				return 0;
+
+			if (state->crtc) {
+				SDE_ERROR("can't handoff when crtc is set\n");
+				return -EINVAL;
+			}
+
 			shp_state->active = false;
+			shp_state->handoff = SHP_HANDOFF_NONE;
 			crtc_mask = 0xFFFFFFFF;
 		} else if (!shp_state->handoff) {
 			crtc_mask = 0;
@@ -189,9 +266,13 @@ int shp_plane_validate(struct shp_plane *splane,
 				return PTR_ERR(plane_state);
 
 			pstate = &p->new_state;
-			if (p->master != splane)
+			if (p->master != splane) {
 				pstate->possible_crtcs =
 					crtc_mask & p->default_crtcs;
+			} else if (!shp_state->active) {
+				pstate->possible_crtcs = 0;
+				pstate->active = false;
+			}
 
 			SDE_DEBUG("plane%d: 0x%x h=%d c=%d a=%d\n",
 				p->plane->base.id,
@@ -200,13 +281,21 @@ int shp_plane_validate(struct shp_plane *splane,
 				plane_state->crtc ?
 					plane_state->crtc->base.id : 0,
 				pstate->active);
+
+			SDE_EVT32(DRMID(p->plane),
+				DRMID(p->plane->state->crtc),
+				DRMID(plane_state->crtc),
+				p->plane->possible_crtcs,
+				p->state.active,
+				pstate->possible_crtcs,
+				pstate->active);
 		}
 	}
 
 	return 0;
 }
 
-int shp_atomic_check(struct drm_atomic_state *state)
+static int shp_atomic_check(struct drm_atomic_state *state)
 {
 	struct shp_device *shp_dev = &g_shp_device;
 	struct shp_plane *shp_plane;
@@ -286,16 +375,39 @@ static void shp_kms_post_swap(struct msm_kms *kms,
 				plane->base.id,
 				plane->possible_crtcs,
 				new_state->possible_crtcs);
+			SDE_EVT32(DRMID(plane),
+				DRMID(old_plane_state->crtc),
+				DRMID(new_plane_state->crtc),
+				plane->possible_crtcs,
+				new_state->possible_crtcs);
 			plane->possible_crtcs = new_state->possible_crtcs;
 			update = true;
 		}
 
-		shp_plane->state.handoff = new_state->handoff;
+		if (shp_plane->state.handoff != new_state->handoff) {
+			SDE_DEBUG("plane%d handoff %d to %d\n",
+				plane->base.id,
+				shp_plane->state.handoff,
+				new_state->handoff);
+			SDE_EVT32(DRMID(plane),
+				shp_plane->state.handoff,
+				new_state->handoff);
+			if (new_state->handoff == SHP_HANDOFF_ENABLE_REQ)
+				shp_plane_send_enable_req(shp_plane);
+			else
+				shp_plane->state.handoff = new_state->handoff;
+		}
 
 		if (shp_plane->state.active != new_state->active) {
 			SDE_DEBUG("plane%d active %d\n",
 				plane->base.id,
 				new_state->active);
+			SDE_EVT32(DRMID(plane),
+				DRMID(old_plane_state->crtc),
+				DRMID(new_plane_state->crtc),
+				shp_plane->state.active,
+				new_state->active,
+				new_state->skip_update);
 			shp_plane->state.active = new_state->active;
 			if (new_state->skip_update) {
 				shd_skip_shared_plane_update(plane,
@@ -326,7 +438,7 @@ static int shp_plane_atomic_set_property(struct drm_plane *plane,
 	shp_plane = &shp_dev->planes[plane->index];
 
 	if (property == shp_dev->handoff_prop) {
-		shp_plane->new_state.handoff = !!val;
+		shp_plane->new_state.handoff = val;
 		return 0;
 	}
 
@@ -353,7 +465,7 @@ static int shp_plane_atomic_get_property(struct drm_plane *plane,
 			state, property, val);
 }
 
-struct drm_plane_state *shp_plane_atomic_duplicate_state(
+static struct drm_plane_state *shp_plane_atomic_duplicate_state(
 				struct drm_plane *plane)
 {
 	struct shp_device *shp_dev = &g_shp_device;
@@ -395,7 +507,7 @@ static void shp_plane_atomic_update(struct drm_plane *plane,
 	return shp_plane->helper_funcs_orig->atomic_update(plane, old_state);
 }
 
-static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
+static int shp_parse(struct shp_device *shp)
 {
 	struct drm_device *dev = shp->dev;
 	struct msm_drm_private *priv = dev->dev_private;
@@ -409,7 +521,7 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 	int dup_count, system_count, total_count, i, j;
 	int rc = 0;
 
-	parent_node = of_get_child_by_name(pdev->dev.of_node,
+	parent_node = of_get_child_by_name(shp->device->of_node,
 			"qcom,add-planes");
 	if (!parent_node) {
 		SDE_ERROR("no planes defined\n");
@@ -422,13 +534,12 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 		return -EINVAL;
 	}
 
-	mutex_lock(&dev->mode_config.mutex);
 	sde_power_resource_enable(&priv->phandle,
 			sde_kms->core_client, true);
 
 	system_count = priv->num_planes;
 	total_count = dup_count + system_count;
-	shp->planes = devm_kzalloc(&pdev->dev,
+	shp->planes = devm_kzalloc(shp->device,
 			sizeof(*shp_plane) * total_count, GFP_KERNEL);
 	if (!shp->planes) {
 		rc = -ENOMEM;
@@ -491,6 +602,7 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 			parent->is_shared = true;
 			parent->master = parent;
 			parent->state.active = true;
+			parent->detach_handoff = true;
 			parent->default_crtcs =
 				parent->plane->possible_crtcs;
 			sspp = sde_plane_pipe(parent->plane);
@@ -581,9 +693,6 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 		list_add_tail(&shp_plane->head, &shp_plane->pool->plane_list);
 		shp_plane->is_shared = true;
 		shp_plane->state.active = p->state.active;
-
-		if (plane->funcs->reset)
-			plane->funcs->reset(plane);
 	}
 
 	/* setup all planes with new atomic check */
@@ -634,7 +743,6 @@ static int shp_parse(struct platform_device *pdev, struct shp_device *shp)
 out:
 	sde_power_resource_enable(&priv->phandle,
 				sde_kms->core_client, false);
-	mutex_unlock(&dev->mode_config.mutex);
 
 	/* dump all the planes */
 	for (i = 0; i < shp->num_planes; i++) {
@@ -656,54 +764,100 @@ out:
 	return rc;
 }
 
-#ifdef CONFIG_DRM_SDE_SHD
-static int sde_shp_match_unprobed_name(struct device *dev, void *data)
+static int sde_shp_notifier(struct notifier_block *nb,
+			unsigned long action, void *data)
 {
-	struct device_driver *drv = data;
+	struct shp_device *shp_dev;
+	int ret;
 
-	return drv->bus->match(dev, drv) && !dev_get_drvdata(dev);
+	if (action != MSM_COMP_OBJECT_CREATED)
+		return 0;
+
+	shp_dev = container_of(nb, struct shp_device, notifier);
+
+	ret = shp_parse(shp_dev);
+	if (ret) {
+		SDE_ERROR("failed to parse shared plane device\n");
+		return ret;
+	}
+
+	return 0;
 }
 
-static bool sde_shp_has_unprobed_device(const char *drv_name)
+static int sde_shp_bind(struct device *dev, struct device *master,
+		void *data)
 {
-	struct device *dev;
-	struct device_driver *drv;
+	int rc = 0;
+	struct shp_device *shp_dev;
+	struct drm_device *drm;
+	struct platform_device *pdev = to_platform_device(dev);
 
-	drv = driver_find(drv_name, &platform_bus_type);
-	if (!drv)
-		return false;
+	if (!dev || !pdev || !master) {
+		pr_err("invalid param(s), dev %pK, pdev %pK, master %pK\n",
+				dev, pdev, master);
+		rc = -EINVAL;
+		goto end;
+	}
 
-	dev = bus_find_device(&platform_bus_type, NULL,
-			(void *)drv, sde_shp_match_unprobed_name);
+	drm = dev_get_drvdata(master);
+	shp_dev = platform_get_drvdata(pdev);
+	if (!drm || !shp_dev) {
+		pr_err("invalid param(s), drm %pK, shp_dev %pK\n",
+				drm, shp_dev);
+		rc = -EINVAL;
+		goto end;
+	}
 
-	return (dev != NULL);
+	shp_dev->handoff_prop = drm_property_create_enum(drm,
+			DRM_MODE_PROP_ENUM, "handoff",
+			shp_handoff_state_enum_list,
+			ARRAY_SIZE(shp_handoff_state_enum_list));
+
+	if (!shp_dev->handoff_prop)
+		return -ENOMEM;
+
+	shp_dev->dev = drm;
+	shp_dev->notifier.notifier_call = sde_shp_notifier;
+
+	rc = msm_drm_register_component(drm, &shp_dev->notifier);
+	if (rc) {
+		pr_err("failed to register component notifier\n");
+		goto end;
+	}
+
+end:
+	return rc;
 }
-#else
-static bool sde_shp_has_unprobed_device(const char *drv_name)
+
+static void sde_shp_unbind(struct device *dev, struct device *master,
+		void *data)
 {
-	return false;
+	struct shp_device *shp_dev;
+	struct platform_device *pdev = to_platform_device(dev);
+
+	if (!dev || !pdev) {
+		pr_err("invalid param");
+		return;
+	}
+
+	shp_dev = platform_get_drvdata(pdev);
+	if (!shp_dev) {
+		pr_err("invalid param");
+		return;
+	}
+
+	msm_drm_unregister_component(shp_dev->dev, &shp_dev->notifier);
 }
-#endif
+
+static const struct component_ops sde_shp_comp_ops = {
+	.bind = sde_shp_bind,
+	.unbind = sde_shp_unbind,
+};
 
 static int sde_shp_probe(struct platform_device *pdev)
 {
 	struct shp_device *shp_dev;
-	struct drm_minor *minor;
-	struct drm_device *dev;
 	int ret;
-
-	/* defer until primary drm is created */
-	minor = drm_minor_acquire(0);
-	if (IS_ERR(minor))
-		return -EPROBE_DEFER;
-
-	dev = minor->dev;
-	drm_minor_release(minor);
-	if (!dev)
-		return -EPROBE_DEFER;
-
-	if (sde_shp_has_unprobed_device("sde_shd"))
-		return -EPROBE_DEFER;
 
 	shp_dev = &g_shp_device;
 	if (shp_dev->dev) {
@@ -711,21 +865,14 @@ static int sde_shp_probe(struct platform_device *pdev)
 		return -EEXIST;
 	}
 
-	shp_dev->dev = dev;
-	shp_dev->handoff_prop = drm_property_create_range(dev,
-			DRM_MODE_PROP_ATOMIC, "handoff", 0, 1);
+	shp_dev->device = &pdev->dev;
+	platform_set_drvdata(pdev, shp_dev);
 
-	if (!shp_dev->handoff_prop)
-		return -ENOMEM;
-
-	ret = shp_parse(pdev, shp_dev);
+	ret = component_add(&pdev->dev, &sde_shp_comp_ops);
 	if (ret) {
-		SDE_ERROR("failed to parse shared plane device\n");
-		drm_property_destroy(dev, shp_dev->handoff_prop);
+		pr_err("component add failed, rc=%d\n", ret);
 		return ret;
 	}
-
-	platform_set_drvdata(pdev, shp_dev);
 
 	return 0;
 }

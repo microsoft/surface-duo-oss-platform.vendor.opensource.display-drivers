@@ -23,6 +23,8 @@
 #include <linux/of_graph.h>
 #include <linux/of_device.h>
 #include <linux/debugfs.h>
+#include <linux/component.h>
+#include <asm/sizes.h>
 #include <drm/drm_of.h>
 #include <drm/drmP.h>
 #include <drm/drm_atomic.h>
@@ -30,6 +32,7 @@
 #include <drm/drm_auth.h>
 #include <drm/drm_ioctl.h>
 #include <drm_internal.h>
+#include <msm_drv.h>
 
 #define MAX_LEASE_OBJECT_COUNT 64
 
@@ -49,6 +52,7 @@ struct msm_lease {
 	struct drm_minor *minor;
 	struct drm_master *master;
 	struct list_head head;
+	struct notifier_block notifier;
 	u32 object_ids[MAX_LEASE_OBJECT_COUNT];
 	int obj_cnt;
 	const char *dev_name;
@@ -120,15 +124,15 @@ static inline bool _obj_is_leased(int id,
 static struct drm_master *msm_lease_get_dev_master(struct drm_device *dev)
 {
 	if (!g_master_ddev_master) {
-		if (dev->master) {
-			DRM_ERROR("card0 master already opened\n");
-			return NULL;
-		}
-
 		g_master_ddev_master = drm_master_create(dev);
 		if (!g_master_ddev_master) {
 			DRM_ERROR("failed to create dev master\n");
 			return NULL;
+		}
+
+		if (dev->master) {
+			DRM_WARN("card0 master already opened\n");
+			drm_master_put(&dev->master);
 		}
 
 		dev->master = g_master_ddev_master;
@@ -184,6 +188,9 @@ static int msm_lease_open(struct drm_device *dev, struct drm_file *file)
 	struct drm_master *dev_master;
 	struct idr leases;
 	int id, i, rc;
+
+	if (!dev->registered)
+		return -ENOENT;
 
 	rc = g_master_open(dev, file);
 	if (rc)
@@ -327,6 +334,8 @@ static long msm_lease_ioctl(struct file *filp,
 			return -EFAULT;
 
 		return 0;
+	} else if (cmd == DRM_IOCTL_DROP_MASTER) {
+		return -EINVAL;
 	}
 
 	return g_master_ddev_fops->unlocked_ioctl(filp, cmd, arg);
@@ -382,6 +391,8 @@ static long msm_lease_compat_ioctl(struct file *filp,
 			return -EFAULT;
 
 		return 0;
+	} else if (DRM_IOCTL_NR(cmd) == DRM_IOCTL_NR(DRM_IOCTL_DROP_MASTER)) {
+		return -EINVAL;
 	}
 
 	return g_master_ddev_fops->compat_ioctl(filp, cmd, arg);
@@ -414,8 +425,8 @@ static int msm_lease_add_connector(struct drm_device *dev, const char *name,
 	drm_connector_list_iter_end(&conn_iter);
 
 	if (conn_id < 0) {
-		DRM_ERROR("failed to find connector %s, defer...\n", name);
-		rc = -EPROBE_DEFER;
+		DRM_ERROR("failed to find connector %s\n", name);
+		rc = -ENOENT;
 		goto out;
 	}
 
@@ -427,8 +438,8 @@ static int msm_lease_add_connector(struct drm_device *dev, const char *name,
 
 	encoder = drm_encoder_find(dev, NULL, connector->encoder_ids[0]);
 	if (!encoder) {
-		DRM_ERROR("failed to find encoder for %s, defer...\n", name);
-		rc = -EPROBE_DEFER;
+		DRM_ERROR("failed to find encoder for %s\n", name);
+		rc = -ENOENT;
 		goto out;
 	}
 
@@ -444,10 +455,13 @@ static int msm_lease_add_connector(struct drm_device *dev, const char *name,
 	}
 
 	if (crtc_id < 0) {
-		DRM_ERROR("failed to find crtc for %s, defer...\n", name);
-		rc = -EPROBE_DEFER;
+		DRM_ERROR("failed to find crtc for %s\n", name);
+		rc = -ENOENT;
 		goto out;
 	}
+
+	/* unique connector-crtc mapping is required by cont splash */
+	encoder->possible_crtcs = drm_crtc_mask(crtc);
 
 	object_ids[(*object_count)++] = conn_id;
 	object_ids[(*object_count)++] = crtc_id;
@@ -485,8 +499,8 @@ static int msm_lease_add_plane(struct drm_device *dev, const char *name,
 	}
 
 	if (plane_id < 0) {
-		DRM_ERROR("failed to find plane for %s, defer...\n", name);
-		return -EPROBE_DEFER;
+		DRM_ERROR("failed to find plane for %s\n", name);
+		return -ENOENT;
 	}
 
 	object_ids[(*object_count)++] = plane_id;
@@ -503,6 +517,9 @@ static void msm_lease_fixup_crtc_primary(struct drm_device *dev,
 	struct drm_plane *plane;
 	struct drm_crtc *crtc;
 	int i, plane_count = 0, crtc_count = 0;
+
+	if (!object_count)
+		return;
 
 	/* get all the leased crtcs and planes */
 	for (i = 0; i < object_count; i++) {
@@ -565,10 +582,8 @@ static int msm_lease_parse_objs(struct drm_device *dev,
 	int count, rc, i;
 
 	count = of_property_count_strings(of_node, "qcom,lease-planes");
-	if (!count) {
-		DRM_ERROR("no planes found\n");
-		return -EINVAL;
-	}
+	if (count <= 0)
+		return 0;
 
 	for (i = 0; i < count; i++) {
 		of_property_read_string_index(of_node, "qcom,lease-planes",
@@ -580,9 +595,9 @@ static int msm_lease_parse_objs(struct drm_device *dev,
 	}
 
 	count = of_property_count_strings(of_node, "qcom,lease-connectors");
-	if (!count) {
-		DRM_ERROR("no connectors found\n");
-		return -EINVAL;
+	if (count <= 0) {
+		*object_count = 0;
+		return 0;
 	}
 
 	if (count > *object_count) {
@@ -600,6 +615,99 @@ static int msm_lease_parse_objs(struct drm_device *dev,
 	}
 
 	return 0;
+}
+
+static void msm_lease_parse_remain_objs(void)
+{
+	struct device_node *of_node;
+	struct msm_lease *lease, *target = NULL;
+	struct drm_device *dev;
+	struct drm_plane *plane;
+	struct drm_connector *connector;
+	struct drm_connector_list_iter conn_iter;
+	struct drm_crtc *crtc;
+	u32 object_ids[MAX_LEASE_OBJECT_COUNT];
+	int object_count = 0;
+	const char *name;
+	int count, rc, i;
+
+	list_for_each_entry(lease, &g_lease_list, head) {
+		if (!lease->minor)
+			return;
+
+		if (!lease->obj_cnt)
+			target = lease;
+	}
+
+	if (!target)
+		return;
+
+	of_node = target->dev->of_node;
+	dev = target->drm_dev;
+
+	count = of_property_count_strings(of_node, "qcom,lease-planes");
+	if (count > 0) {
+		for (i = 0; i < count; i++) {
+			of_property_read_string_index(of_node,
+					"qcom,lease-planes",
+					i, &name);
+			rc = msm_lease_add_plane(dev, name,
+					object_ids, &object_count);
+			if (rc)
+				break;
+		}
+	} else {
+		drm_for_each_plane(plane, dev) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(plane->base.id,
+					object_ids, object_count))
+				continue;
+
+			object_ids[object_count++] = plane->base.id;
+		}
+	}
+
+	count = of_property_count_strings(of_node, "qcom,lease-connectors");
+	if (count > 0) {
+		for (i = 0; i < count; i++) {
+			of_property_read_string_index(of_node,
+					"qcom,lease-connectors",
+					i, &name);
+			rc = msm_lease_add_connector(dev, name,
+					object_ids, &object_count);
+			if (rc)
+				break;
+		}
+	} else {
+		drm_connector_list_iter_begin(dev, &conn_iter);
+		drm_for_each_connector_iter(connector, &conn_iter) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(connector->base.id,
+					object_ids, object_count))
+				continue;
+
+			object_ids[object_count++] = connector->base.id;
+		}
+		drm_connector_list_iter_end(&conn_iter);
+		drm_for_each_crtc(crtc, dev) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(crtc->base.id,
+					object_ids, object_count))
+				continue;
+
+			object_ids[object_count++] = crtc->base.id;
+		}
+	}
+
+	target->obj_cnt = object_count;
+	memcpy(target->object_ids, object_ids, sizeof(u32) * object_count);
+	msm_lease_fixup_crtc_primary(dev, object_ids, object_count);
 }
 
 static int msm_lease_parse_misc(struct msm_lease *lease_drv)
@@ -632,42 +740,27 @@ static const struct file_operations msm_lease_fops = {
 	.mmap               = msm_lease_mmap,
 };
 
-static int msm_lease_probe(struct platform_device *pdev)
+static int msm_lease_notifier(struct notifier_block *nb,
+			unsigned long action, void *data)
 {
-	struct device *dev = &pdev->dev;
-	struct drm_device *ddev, *master_ddev;
-	struct drm_minor *minor;
 	struct msm_lease *lease_drv;
+	struct drm_device *ddev, *master_ddev;
 	u32 object_ids[MAX_LEASE_OBJECT_COUNT];
 	int object_count = 0;
 	int ret;
 
-	/* defer until primary drm is created */
-	minor = drm_minor_acquire(0);
-	if (IS_ERR(minor))
-		return -EPROBE_DEFER;
+	if (action != MSM_COMP_OBJECT_CREATED)
+		return 0;
 
-	/* get master device */
-	master_ddev = minor->dev;
-	drm_minor_release(minor);
-	if (!master_ddev)
-		return -EPROBE_DEFER;
-
-	mutex_lock(&g_lease_mutex);
+	lease_drv = container_of(nb, struct msm_lease, notifier);
+	master_ddev = lease_drv->drm_dev;
 
 	/* parse lease resources */
-	ret = msm_lease_parse_objs(master_ddev, dev->of_node,
+	ret = msm_lease_parse_objs(master_ddev,
+			lease_drv->dev->of_node,
 			object_ids, &object_count);
 	if (ret)
 		goto fail;
-
-	lease_drv = devm_kzalloc(dev, sizeof(*lease_drv), GFP_KERNEL);
-	if (!lease_drv)
-		goto fail;
-
-	platform_set_drvdata(pdev, lease_drv);
-	lease_drv->dev = dev;
-	lease_drv->drm_dev = master_ddev;
 
 	/* parse misc options */
 	msm_lease_parse_misc(lease_drv);
@@ -675,32 +768,14 @@ static int msm_lease_probe(struct platform_device *pdev)
 	/* create temporary device */
 	ddev = drm_dev_alloc(&msm_lease_driver, master_ddev->dev);
 	if (!ddev) {
-		dev_err(dev, "failed to allocate drm_device\n");
+		dev_err(lease_drv->dev, "failed to allocate drm_device\n");
 		goto fail;
 	}
-
-	ret = drm_dev_register(ddev, 0);
-	if (ret) {
-		dev_err(dev, "failed to register drm device\n");
-		drm_dev_put(ddev);
-		goto fail;
-	}
-
-	/* redirect minor to master dev */
-	minor = ddev->primary;
-	minor->dev = master_ddev;
-	minor->type = -1;
-	ddev->primary = NULL;
-
-	/* unregister temporary driver */
-	drm_dev_unregister(ddev);
-	drm_dev_put(ddev);
 
 	/* update ids list */
-	lease_drv->minor = minor;
+	lease_drv->minor = ddev->primary;
 	lease_drv->obj_cnt = object_count;
 	memcpy(lease_drv->object_ids, object_ids, sizeof(u32) * object_count);
-	list_add_tail(&lease_drv->head, &g_lease_list);
 
 	/* fixup crtcs' primary planes */
 	msm_lease_fixup_crtc_primary(master_ddev, object_ids, object_count);
@@ -727,9 +802,119 @@ static int msm_lease_probe(struct platform_device *pdev)
 				"%s_orig", master_ddev->driver->name);
 	}
 
+	/* redirect primary minor to master dev */
+	ddev->primary->dev = master_ddev;
+	ddev->primary->type = -1;
+
+	/* register primary minor */
+	ret = drm_dev_register(ddev, 0);
+	if (ret) {
+		dev_err(lease_drv->dev, "failed to register drm device\n");
+		drm_dev_unref(ddev);
+		goto fail;
+	}
+
+	/* unregister temporary driver and keep primary minor */
+	ddev->primary = NULL;
+	drm_dev_unregister(ddev);
+	drm_dev_unref(ddev);
+
+	/* check if there are remaining objs */
+	msm_lease_parse_remain_objs();
 fail:
-	mutex_unlock(&g_lease_mutex);
 	return ret;
+}
+
+static int msm_lease_bind(struct device *dev, struct device *master,
+		void *data)
+{
+	int rc = 0;
+	struct msm_lease *lease_drv;
+	struct drm_device *drm;
+	struct platform_device *pdev = to_platform_device(dev);
+
+	if (!dev || !pdev || !master) {
+		pr_err("invalid param(s), dev %pK, pdev %pK, master %pK\n",
+				dev, pdev, master);
+		rc = -EINVAL;
+		goto end;
+	}
+
+	drm = dev_get_drvdata(master);
+	lease_drv = platform_get_drvdata(pdev);
+	if (!drm || !lease_drv) {
+		pr_err("invalid param(s), drm %pK, lease_drv %pK\n",
+				drm, lease_drv);
+		rc = -EINVAL;
+		goto end;
+	}
+
+	lease_drv->drm_dev = drm;
+	lease_drv->notifier.notifier_call = msm_lease_notifier;
+
+	rc = msm_drm_register_component(drm, &lease_drv->notifier);
+	if (rc) {
+		pr_err("failed to register component notifier\n");
+		goto end;
+	}
+
+end:
+	return rc;
+}
+
+static void msm_lease_unbind(struct device *dev, struct device *master,
+		void *data)
+{
+	struct msm_lease *lease_drv;
+	struct platform_device *pdev = to_platform_device(dev);
+
+	if (!dev || !pdev) {
+		pr_err("invalid param");
+		return;
+	}
+
+	lease_drv = platform_get_drvdata(pdev);
+	if (!lease_drv) {
+		pr_err("invalid param");
+		return;
+	}
+
+	msm_drm_unregister_component(lease_drv->drm_dev, &lease_drv->notifier);
+
+	mutex_lock(&g_lease_mutex);
+	list_del_init(&lease_drv->head);
+	mutex_unlock(&g_lease_mutex);
+}
+
+static const struct component_ops msm_lease_comp_ops = {
+	.bind = msm_lease_bind,
+	.unbind = msm_lease_unbind,
+};
+
+static int msm_lease_probe(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	struct msm_lease *lease_drv;
+	int ret;
+
+	lease_drv = devm_kzalloc(dev, sizeof(*lease_drv), GFP_KERNEL);
+	if (!lease_drv)
+		return -ENOMEM;
+
+	platform_set_drvdata(pdev, lease_drv);
+	lease_drv->dev = dev;
+
+	mutex_lock(&g_lease_mutex);
+	list_add_tail(&lease_drv->head, &g_lease_list);
+	mutex_unlock(&g_lease_mutex);
+
+	ret = component_add(&pdev->dev, &msm_lease_comp_ops);
+	if (ret) {
+		pr_err("component add failed, rc=%d\n", ret);
+		return ret;
+	}
+
+	return 0;
 }
 
 static int msm_lease_remove(struct platform_device *pdev)
@@ -739,10 +924,6 @@ static int msm_lease_remove(struct platform_device *pdev)
 	lease_drv = platform_get_drvdata(pdev);
 	if (!lease_drv)
 		return 0;
-
-	mutex_lock(&g_lease_mutex);
-	list_del_init(&lease_drv->head);
-	mutex_unlock(&g_lease_mutex);
 
 	platform_set_drvdata(pdev, NULL);
 

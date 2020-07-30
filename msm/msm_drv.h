@@ -67,7 +67,7 @@ struct msm_gem_vma;
 
 #define NUM_DOMAINS    4    /* one for KMS, then one per gpu core (?) */
 #define MAX_CRTCS      16
-#define MAX_PLANES     20
+#define MAX_PLANES     32
 #define MAX_ENCODERS   16
 #define MAX_BRIDGES    16
 #define MAX_CONNECTORS 16
@@ -130,7 +130,6 @@ enum msm_mdp_plane_property {
 	PLANE_PROP_SRC_CONFIG,
 	PLANE_PROP_FB_TRANSLATION_MODE,
 	PLANE_PROP_MULTIRECT_MODE,
-	PLANE_PROP_LAYOUT,
 
 	/* total # of properties */
 	PLANE_PROP_COUNT
@@ -164,6 +163,7 @@ enum msm_mdp_crtc_property {
 	CRTC_PROP_IDLE_TIMEOUT,
 	CRTC_PROP_DEST_SCALER,
 	CRTC_PROP_CAPTURE_OUTPUT,
+	CRTC_PROP_ROI_MISR,
 
 	CRTC_PROP_IDLE_PC_STATE,
 
