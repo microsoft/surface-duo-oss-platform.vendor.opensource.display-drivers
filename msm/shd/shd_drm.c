@@ -1324,6 +1324,8 @@ static int shd_drm_base_init(struct drm_device *ddev,
 	if (!g_shd_kms) {
 		priv = ddev->dev_private;
 		g_shd_kms = kzalloc(sizeof(*g_shd_kms), GFP_KERNEL);
+		if (!g_shd_kms)
+			return -ENOMEM;
 		g_shd_kms->funcs = *priv->kms->funcs;
 		g_shd_kms->orig_funcs = priv->kms->funcs;
 		g_shd_kms->funcs.atomic_check = shd_display_atomic_check;
