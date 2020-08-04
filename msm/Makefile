@@ -76,6 +76,9 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_fence.o \
 	sde/sde_hw_qdss.o \
 	sde/sde_hw_roi_misr.o \
+	sde/sde_fence_file.o \
+	sde/sde_fence_helper.o \
+	sde/sde_fence_post_commit.o \
 
 msm_drm-$(CONFIG_DRM_SDE_ROI_MISR) += sde/sde_roi_misr.o \
 	sde/sde_fence_misr.o \
