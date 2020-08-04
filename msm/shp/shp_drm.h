@@ -21,10 +21,4 @@
 #include <drm/drm_plane.h>
 #include "msm_drv.h"
 
-/* drm crtc internal header */
-int drm_atomic_set_property(struct drm_atomic_state *state,
-			    struct drm_mode_object *obj,
-			    struct drm_property *prop,
-			    uint64_t prop_value);
-
 #endif /* _SHP_DRM_H_ */
