@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -604,7 +604,7 @@ int vco_28nm_prepare(struct clk_hw *hw)
 
 	if ((rsc->vco_cached_rate != 0)
 	    && (rsc->vco_cached_rate == clk_hw_get_rate(hw))) {
-		rc = hw->init->ops->set_rate(hw, rsc->vco_cached_rate,
+		rc = vco_28nm_set_rate(hw, rsc->vco_cached_rate,
 				rsc->vco_cached_rate);
 		if (rc) {
 			pr_err("pll(%d ) set_rate failed. rc=%d\n",

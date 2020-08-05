@@ -666,8 +666,8 @@ int edp_vco_prepare_7nm(struct clk_hw *hw)
 
 	if ((edp_res->vco_cached_rate != 0)
 		&& (edp_res->vco_cached_rate == vco->rate)) {
-		rc = vco->hw.init->ops->set_rate(hw,
-			edp_res->vco_cached_rate, edp_res->vco_cached_rate);
+		rc = edp_vco_set_rate_7nm(hw, edp_res->vco_cached_rate,
+					edp_res->vco_cached_rate);
 		if (rc) {
 			pr_err("eDP%d vco_set_rate failed. rc=%d\n",
 				edp_res->index, rc);

@@ -872,8 +872,8 @@ int dp_vco_prepare_7nm(struct clk_hw *hw)
 
 	if ((dp_res->vco_cached_rate != 0)
 		&& (dp_res->vco_cached_rate == vco->rate)) {
-		rc = vco->hw.init->ops->set_rate(hw,
-			dp_res->vco_cached_rate, dp_res->vco_cached_rate);
+		rc = dp_vco_set_rate_7nm(hw, dp_res->vco_cached_rate,
+					dp_res->vco_cached_rate);
 		if (rc) {
 			pr_err("DP%d vco_set_rate failed. rc=%d\n",
 				dp_res->index, rc);
