@@ -289,8 +289,7 @@ void sde_fence_prepare(struct sde_fence_context *ctx)
 	}
 }
 
-static void _sde_fence_trigger(struct sde_fence_context *ctx,
-		ktime_t ts, bool error)
+static void _sde_fence_trigger(struct sde_fence_context *ctx, bool error)
 {
 	unsigned long flags;
 	struct sde_fence *fc, *next;
@@ -312,8 +311,8 @@ static void _sde_fence_trigger(struct sde_fence_context *ctx,
 
 	list_for_each_entry_safe(fc, next, &local_list_head, fence_list) {
 		spin_lock_irqsave(&ctx->lock, flags);
-		fc->base.error = error ? -EBUSY : 0;
-		fc->base.timestamp = ts;
+		if (error)
+			dma_fence_set_error(&fc->base, -EBUSY);
 		is_signaled = dma_fence_is_signaled_locked(&fc->base);
 		spin_unlock_irqrestore(&ctx->lock, flags);
 
@@ -363,7 +362,7 @@ int sde_fence_create(struct sde_fence_context *ctx, uint64_t *val,
 
 	if (fd >= 0) {
 		rc = 0;
-		_sde_fence_trigger(ctx, ktime_get(), false);
+		_sde_fence_trigger(ctx, false);
 	} else {
 		rc = fd;
 	}
@@ -412,7 +411,7 @@ void sde_fence_signal(struct sde_fence_context *ctx, ktime_t ts,
 	SDE_EVT32(ctx->drm_id, ctx->done_count, ctx->commit_count,
 			ktime_to_us(ts));
 
-	_sde_fence_trigger(ctx, ts, (fence_event == SDE_FENCE_SIGNAL_ERROR));
+	_sde_fence_trigger(ctx, (fence_event == SDE_FENCE_SIGNAL_ERROR));
 }
 
 void sde_fence_timeline_status(struct sde_fence_context *ctx,
