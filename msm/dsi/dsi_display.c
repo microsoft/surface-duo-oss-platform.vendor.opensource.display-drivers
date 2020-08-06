@@ -5644,7 +5644,7 @@ static int dsi_display_ext_get_info(struct drm_connector *connector,
 
 	info->is_connected = connector->status != connector_status_disconnected;
 
-	if (!strcmp(display->dsi_type, "primary"))
+	if (!strcmp(display->display_type, "primary"))
 		info->is_primary = true;
 	else
 		info->is_primary = false;
@@ -6030,7 +6030,7 @@ int dsi_display_get_info(struct drm_connector *connector,
 	info->is_connected = true;
 	info->is_primary = false;
 
-	if (!strcmp(display->dsi_type, "primary"))
+	if (!strcmp(display->display_type, "primary"))
 		info->is_primary = true;
 
 	info->width_mm = phy_props.panel_width_mm;
@@ -7616,6 +7616,8 @@ int dsi_display_unprepare(struct dsi_display *display)
 		pr_err("[%s] panel unprepare failed, rc=%d\n",
 		       display->name, rc);
 
+	dsi_display_set_clk_src(display, false);
+
 	rc = dsi_display_ctrl_host_disable(display);
 	if (rc)
 		pr_err("[%s] failed to disable DSI host, rc=%d\n",
@@ -7652,8 +7654,6 @@ int dsi_display_unprepare(struct dsi_display *display)
 	if (rc)
 		pr_err("[%s] panel post-unprepare failed, rc=%d\n",
 		       display->name, rc);
-
-	dsi_display_set_clk_src(display, false);
 
 	mutex_unlock(&display->display_lock);
 

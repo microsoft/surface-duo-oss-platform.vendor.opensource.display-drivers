@@ -982,6 +982,7 @@ int dp_connector_get_info(struct drm_connector *connector,
 		struct msm_display_info *info, void *data)
 {
 	struct dp_display *display = data;
+	const char *display_type = NULL;
 
 	if (!info || !display || !display->drm_dev) {
 		pr_err("invalid params\n");
@@ -1004,6 +1005,12 @@ int dp_connector_get_info(struct drm_connector *connector,
 		for (i = 0; i < DP_STREAM_MAX; i++)
 			info->h_tile_instance[i] = dp_info.intf_idx[i];
 	}
+
+	display->get_display_type(display, &display_type);
+
+	if (display_type)
+		if (!strcmp(display_type, "primary"))
+			info->is_primary = true;
 
 	info->is_connected = display->is_sst_connected;
 	info->capabilities = MSM_DISPLAY_CAP_VID_MODE | MSM_DISPLAY_CAP_EDID |

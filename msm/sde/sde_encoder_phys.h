@@ -18,8 +18,7 @@
 #include "sde_hw_cdm.h"
 #include "sde_encoder.h"
 #include "sde_connector.h"
-#include "sde_fence_misr.h"
-#include "sde_hw_roi_misr.h"
+#include "sde_roi_misr.h"
 
 #define SDE_ENCODER_NAME_MAX	16
 
@@ -701,55 +700,6 @@ int sde_encoder_helper_register_irq(struct sde_encoder_phys *phys_enc,
  */
 int sde_encoder_helper_unregister_irq(struct sde_encoder_phys *phys_enc,
 		enum sde_intr_idx intr_idx);
-
-/**
- * sde_encoder_get_roi_misr_num - get roi misr number
- * @drm_enc: Pointer to drm encoder structure
- */
-unsigned int sde_encoder_get_roi_misr_num(
-		struct drm_encoder *drm_enc);
-
-/**
- * sde_encoder_helper_roi_misr_reset - reset roi misr register values
- * @phys_enc: Pointer to physical encoder structure
- * @base_drm_enc: Pointer to base drm encoder structure
- */
-void sde_encoder_helper_roi_misr_reset(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc);
-
-/**
- * sde_encoder_helper_roi_misr_setup_irq_hw_idx - setup irq hardware
- *		index for master physical encoder
- * @phys_enc: Pointer to physical encoder structure
- * @base_drm_enc: Pointer to base drm encoder structure
- */
-void sde_encoder_helper_roi_misr_setup_irq_hw_idx(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc);
-
-/**
- * sde_encoder_helper_roi_misr_irq_enable - enable or disable all irqs
- *		of one misr block
- * @phys_enc: Pointer to physical encoder structure
- * @base_irq_idx: one roi misr's base irq table index
- * @roi_idx: the roi index of one misr
- * @enable: control to enable or disable one misr block irqs
- * @Return: 0 or -ERROR
- */
-int sde_encoder_helper_roi_misr_irq_enable(struct sde_encoder_phys *phys_enc,
-		int base_irq_idx, int roi_idx, bool enable);
-
-/**
- * sde_encoder_helper_roi_misr_update_fence - update fence data
- * @phys_enc: Pointer to physical encoder structure
- * @base_drm_enc: Pointer to base drm encoder structure
- * @Return: true for all signature are ready
- *          false for all signature are not ready
- */
-bool sde_encoder_helper_roi_misr_update_fence(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc);
 
 /**
  * sde_encoder_helper_update_intf_cfg - update interface configuration for

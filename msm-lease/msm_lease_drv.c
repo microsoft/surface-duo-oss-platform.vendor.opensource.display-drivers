@@ -124,15 +124,15 @@ static inline bool _obj_is_leased(int id,
 static struct drm_master *msm_lease_get_dev_master(struct drm_device *dev)
 {
 	if (!g_master_ddev_master) {
-		if (dev->master) {
-			DRM_ERROR("card0 master already opened\n");
-			return NULL;
-		}
-
 		g_master_ddev_master = drm_master_create(dev);
 		if (!g_master_ddev_master) {
 			DRM_ERROR("failed to create dev master\n");
 			return NULL;
+		}
+
+		if (dev->master) {
+			DRM_WARN("card0 master already opened\n");
+			drm_master_put(&dev->master);
 		}
 
 		dev->master = g_master_ddev_master;

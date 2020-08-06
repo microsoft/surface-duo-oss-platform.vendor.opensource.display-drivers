@@ -21,6 +21,7 @@
 #include <linux/component.h>
 #include <linux/of_irq.h>
 #include <linux/kthread.h>
+#include <linux/backlight.h>
 #include <uapi/linux/sched/types.h>
 #include "sde_connector.h"
 #include <drm/drm_atomic_helper.h>
@@ -1087,6 +1088,41 @@ static void shd_drm_bridge_deinit(void *data)
 	kfree(bridge);
 }
 
+static int shd_backlight_device_update_status(struct backlight_device *bd)
+{
+	return 0;
+}
+
+static int shd_backlight_device_get_brightness(struct backlight_device *bd)
+{
+	return 0;
+}
+
+static const struct backlight_ops shd_backlight_device_ops = {
+	.update_status = shd_backlight_device_update_status,
+	.get_brightness = shd_backlight_device_get_brightness,
+};
+
+static int shd_display_create_backlight(struct drm_connector *connector)
+{
+	struct sde_connector *c_conn = to_sde_connector(connector);
+	struct backlight_properties props;
+	char bl_node_name[32];
+
+	memset(&props, 0, sizeof(props));
+	props.type = BACKLIGHT_RAW;
+	props.power = FB_BLANK_UNBLANK;
+	props.max_brightness = 255;
+	props.brightness = 255;
+	snprintf(bl_node_name, sizeof(bl_node_name), "panel%u-backlight",
+			connector->connector_type_id - 1);
+	c_conn->bl_device = backlight_device_register(bl_node_name,
+			connector->dev->dev,
+			c_conn, &shd_backlight_device_ops, &props);
+
+	return 0;
+}
+
 static int shd_drm_obj_init(struct shd_display *display)
 {
 	struct msm_drm_private *priv;
@@ -1197,6 +1233,9 @@ static int shd_drm_obj_init(struct shd_display *display)
 	if (display->name)
 		connector->name = kasprintf(GFP_KERNEL, "%s", display->name);
 
+	if (info.intf_type == DRM_MODE_CONNECTOR_DSI)
+		shd_display_create_backlight(connector);
+
 	SDE_DEBUG("create connector %d\n", DRMID(connector));
 
 	crtc = sde_crtc_init(dev, primary);
@@ -1250,6 +1289,9 @@ static int shd_drm_postinit(struct msm_kms *kms)
 		sde_conn = to_sde_connector(base->connector);
 		base->ops = sde_conn->ops;
 		sde_conn->ops.detect = shd_display_base_detect;
+		sde_conn->ops.set_info_blob = NULL;
+		sde_connector_set_blob_data(&sde_conn->base, NULL,
+				CONNECTOR_PROP_SDE_INFO);
 	}
 
 	return g_shd_kms->orig_funcs->postinit(kms);
@@ -1282,6 +1324,8 @@ static int shd_drm_base_init(struct drm_device *ddev,
 	if (!g_shd_kms) {
 		priv = ddev->dev_private;
 		g_shd_kms = kzalloc(sizeof(*g_shd_kms), GFP_KERNEL);
+		if (!g_shd_kms)
+			return -ENOMEM;
 		g_shd_kms->funcs = *priv->kms->funcs;
 		g_shd_kms->orig_funcs = priv->kms->funcs;
 		g_shd_kms->funcs.atomic_check = shd_display_atomic_check;

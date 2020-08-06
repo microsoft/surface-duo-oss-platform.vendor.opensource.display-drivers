@@ -373,4 +373,12 @@ int sde_encoder_get_ctlstart_timeout_state(struct drm_encoder *enc);
 struct sde_misr_fence *sde_encoder_get_fence_object(
 		struct drm_encoder *encoder);
 
+/**
+ * sde_encoder_get_misr_data - get misr data of virtual encoder
+ * @drm_enc:	Pointer to drm encoder structure
+ * @Return:	Pointer of misr data
+ */
+struct sde_misr_enc_data *sde_encoder_get_misr_data(
+		struct drm_encoder *encoder);
+
 #endif /* __SDE_ENCODER_H__ */
