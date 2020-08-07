@@ -11,5 +11,6 @@ USERINCLUDE = -I$(srctree)/techpack/display/include/uapi/display
 endif
 
 obj-$(CONFIG_DRM_MSM) += msm/
+obj-$(CONFIG_DRM_MSM_HYP) += msm-hyp/
 obj-$(CONFIG_MSM_SDE_ROTATOR) += rotator/
 obj-$(CONFIG_DRM_MSM_LEASE) += msm-lease/
