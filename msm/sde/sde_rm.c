@@ -31,6 +31,10 @@
 #define RM_IS_TOPOLOGY_MATCH(t, r) ((t).num_lm == (r).num_lm && \
 				(t).num_comp_enc == (r).num_enc && \
 				(t).num_intf == (r).num_intf)
+#define IS_COMPATIBLE_PP_DSC(p, d) (p % 2 == d % 2)
+
+/* ~one vsync poll time for rsvp_nxt to cleared by modeset from commit thread */
+#define RM_NXT_CLEAR_POLL_TIMEOUT_US 16600
 
 /**
  * toplogy information to be used when ctl path version does not
@@ -56,12 +60,12 @@ static const struct sde_rm_topology_def g_ctl_ver_1_top_table[] = {
 	{   SDE_RM_TOPOLOGY_NONE,                 0, 0, 0, 0, false },
 	{   SDE_RM_TOPOLOGY_SINGLEPIPE,           1, 0, 1, 1, false },
 	{   SDE_RM_TOPOLOGY_SINGLEPIPE_DSC,       1, 1, 1, 1, false },
-	{   SDE_RM_TOPOLOGY_DUALPIPE,             2, 0, 2, 1, true  },
-	{   SDE_RM_TOPOLOGY_DUALPIPE_DSC,         2, 2, 2, 1, true  },
+	{   SDE_RM_TOPOLOGY_DUALPIPE,             2, 0, 2, 1, false },
+	{   SDE_RM_TOPOLOGY_DUALPIPE_DSC,         2, 2, 2, 1, false },
 	{   SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE,     2, 0, 1, 1, false },
 	{   SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC, 2, 1, 1, 1, false },
 	{   SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE,    2, 2, 1, 1, false },
-	{   SDE_RM_TOPOLOGY_PPSPLIT,              1, 0, 2, 1, true  },
+	{   SDE_RM_TOPOLOGY_PPSPLIT,              1, 0, 2, 1, false },
 };
 
 
@@ -1230,7 +1234,8 @@ static int _sde_rm_reserve_ctls(
 static bool _sde_rm_check_dsc(struct sde_rm *rm,
 		struct sde_rm_rsvp *rsvp,
 		struct sde_rm_hw_blk *dsc,
-		struct sde_rm_hw_blk *paired_dsc)
+		struct sde_rm_hw_blk *paired_dsc,
+		struct sde_rm_hw_blk *pp_blk)
 {
 	const struct sde_dsc_cfg *dsc_cfg = to_sde_hw_dsc(dsc->hw)->caps;
 
@@ -1239,6 +1244,14 @@ static bool _sde_rm_check_dsc(struct sde_rm *rm,
 		SDE_DEBUG("dsc %d already reserved\n", dsc_cfg->id);
 		return false;
 	}
+
+	/**
+	 * This check is required for routing even numbered DSC
+	 * blks to any of the even numbered PP blks and odd numbered
+	 * DSC blks to any of the odd numbered PP blks.
+	 */
+	if (!pp_blk || !IS_COMPATIBLE_PP_DSC(pp_blk->id, dsc->id))
+		return false;
 
 	/* Check if this dsc is a peer of the proposed paired DSC */
 	if (paired_dsc) {
@@ -1255,6 +1268,22 @@ static bool _sde_rm_check_dsc(struct sde_rm *rm,
 	return true;
 }
 
+static void sde_rm_get_rsvp_nxt_hw_blks(
+		struct sde_rm *rm,
+		struct sde_rm_rsvp *rsvp,
+		int type,
+		struct sde_rm_hw_blk **blk_arr)
+{
+	struct sde_rm_hw_blk *blk;
+	int i = 0;
+
+	list_for_each_entry(blk, &rm->hw_blks[type], list) {
+		if (blk->rsvp_nxt && blk->rsvp_nxt->seq ==
+					rsvp->seq)
+			blk_arr[i++] = blk;
+	}
+}
+
 static int _sde_rm_reserve_dsc(
 		struct sde_rm *rm,
 		struct sde_rm_rsvp *rsvp,
@@ -1263,6 +1292,7 @@ static int _sde_rm_reserve_dsc(
 {
 	struct sde_rm_hw_iter iter_i, iter_j;
 	struct sde_rm_hw_blk *dsc[MAX_BLOCKS];
+	struct sde_rm_hw_blk *pp[MAX_BLOCKS];
 	int alloc_count = 0;
 	int num_dsc_enc = top->num_comp_enc;
 	int i;
@@ -1271,6 +1301,7 @@ static int _sde_rm_reserve_dsc(
 		return 0;
 
 	sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_DSC);
+	sde_rm_get_rsvp_nxt_hw_blks(rm, rsvp, SDE_HW_BLK_PINGPONG, pp);
 
 	/* Find a first DSC */
 	while (alloc_count != num_dsc_enc &&
@@ -1281,7 +1312,8 @@ static int _sde_rm_reserve_dsc(
 		if (_dsc_ids && (iter_i.blk->id != _dsc_ids[alloc_count]))
 			continue;
 
-		if (!_sde_rm_check_dsc(rm, rsvp, iter_i.blk, NULL))
+		if (!_sde_rm_check_dsc(rm, rsvp, iter_i.blk, NULL,
+					 pp[alloc_count]))
 			continue;
 
 		SDE_DEBUG("blk id = %d, _dsc_ids[%d] = %d\n",
@@ -1303,8 +1335,8 @@ static int _sde_rm_reserve_dsc(
 					_dsc_ids[alloc_count]))
 				continue;
 
-			if (!_sde_rm_check_dsc(rm, rsvp,
-					iter_j.blk, iter_i.blk))
+			if (!_sde_rm_check_dsc(rm, rsvp, iter_j.blk,
+					 iter_i.blk, pp[alloc_count]))
 				continue;
 
 			SDE_DEBUG("blk id = %d, _dsc_ids[%d] = %d\n",
@@ -2074,6 +2106,30 @@ static int _sde_rm_commit_rsvp(
 	return ret;
 }
 
+/* call this only after rm_mutex held */
+struct sde_rm_rsvp *_sde_rm_poll_get_rsvp_nxt_locked(struct sde_rm *rm,
+		struct drm_encoder *enc)
+{
+	int i;
+	u32 loop_count = 20;
+	struct sde_rm_rsvp *rsvp_nxt = NULL;
+	u32 sleep = RM_NXT_CLEAR_POLL_TIMEOUT_US / loop_count;
+
+	for (i = 0; i < loop_count; i++) {
+		rsvp_nxt = _sde_rm_get_rsvp_nxt(rm, enc);
+		if (!rsvp_nxt)
+			return rsvp_nxt;
+
+		mutex_unlock(&rm->rm_lock);
+		SDE_DEBUG("iteration i:%d sleep range:%uus to %uus\n",
+				i, sleep, sleep * 2);
+		usleep_range(sleep, sleep * 2);
+		mutex_lock(&rm->rm_lock);
+	}
+
+	return rsvp_nxt;
+}
+
 int sde_rm_reserve(
 		struct sde_rm *rm,
 		struct drm_encoder *enc,
@@ -2125,16 +2181,19 @@ int sde_rm_reserve(
 	 * commit rsvps. This rsvp_nxt can be cleared by a back to back
 	 * check_only commit with modeset when its predecessor atomic
 	 * commit is delayed / not committed the reservation yet.
-	 * Bail out in such cases so that check only commit
-	 * comes again after earlier commit gets processed.
+	 * Poll for rsvp_nxt clear, allow the check_only commit if rsvp_nxt
+	 * gets cleared and bailout if it does not get cleared before timeout.
 	 */
-
 	if (test_only && rsvp_cur && rsvp_nxt) {
-		SDE_ERROR("cur %d nxt %d enc %d conn %d\n", rsvp_cur->seq,
-			 rsvp_nxt->seq, enc->base.id,
-			 conn_state->connector->base.id);
-		ret = -EINVAL;
-		goto end;
+		rsvp_nxt = _sde_rm_poll_get_rsvp_nxt_locked(rm, enc);
+		if (rsvp_nxt) {
+			SDE_ERROR("poll timeout cur %d nxt %d enc %d\n",
+				rsvp_cur->seq, rsvp_nxt->seq, enc->base.id);
+			SDE_EVT32(rsvp_cur->seq, rsvp_nxt->seq,
+					 enc->base.id, SDE_EVTLOG_ERROR);
+			ret = -EINVAL;
+			goto end;
+		}
 	}
 
 	if (!test_only && rsvp_nxt)
