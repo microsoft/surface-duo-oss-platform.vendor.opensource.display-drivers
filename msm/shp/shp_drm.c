@@ -170,6 +170,11 @@ static int shp_plane_validate(struct shp_plane *splane,
 	struct shp_plane_state *pstate;
 	int ret;
 
+	if (!shp_state->possible_crtcs) {
+		SDE_DEBUG("possible_crtcs is updated\n");
+		return 0;
+	}
+
 	if (shp_state->handoff == SHP_HANDOFF_ENABLE_REQ) {
 		SDE_DEBUG("plane already enabled\n");
 		shp_state->handoff = SHP_HANDOFF_NONE;
@@ -202,7 +207,7 @@ static int shp_plane_validate(struct shp_plane *splane,
 				}
 
 				/* skip update for seamless handoff */
-				if (p->plane->state->crtc)
+				if (p->plane->state->crtc && state->crtc)
 					pstate->skip_update = true;
 			}
 
