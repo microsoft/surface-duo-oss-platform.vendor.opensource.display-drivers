@@ -27,6 +27,7 @@
 #include "sde_core_perf.h"
 #include "sde_hw_blk.h"
 #include "sde_hw_ds.h"
+#include "sde_roi_misr.h"
 
 #define SDE_CRTC_NAME_SIZE	12
 
@@ -87,6 +88,7 @@ struct sde_crtc_retire_event {
  * @hw_ctl:	CTL Path HW driver context
  * @hw_dspp:	DSPP HW driver context
  * @hw_ds:	DS HW driver context
+ * @hw_roi_misr:	ROI_MISR HW driver context
  * @encoder:	Encoder attached to this lm & ctl
  * @mixer_op_mode: mixer blending operation mode
  */
@@ -95,6 +97,7 @@ struct sde_crtc_mixer {
 	struct sde_hw_ctl *hw_ctl;
 	struct sde_hw_dspp *hw_dspp;
 	struct sde_hw_ds *hw_ds;
+	struct sde_hw_roi_misr *hw_roi_misr;
 	struct drm_encoder *encoder;
 	u32 mixer_op_mode;
 };
@@ -227,6 +230,7 @@ struct sde_crtc_fps_info {
  * @rp_lock       : serialization lock for resource pool
  * @rp_head       : list of active resource pool
  * @plane_mask_old: keeps track of the planes used in the previous commit
+ * @roi_misr_data: roi misr related fence, event and hw config data
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -308,6 +312,8 @@ struct sde_crtc {
 
 	/* blob for histogram data */
 	struct drm_property_blob *hist_blob;
+
+	struct sde_misr_crtc_data roi_misr_data;
 };
 
 #define to_sde_crtc(x) container_of(x, struct sde_crtc, base)
@@ -403,6 +409,7 @@ struct sde_crtc_respool {
  * @padding_height: panel height after line padding
  * @padding_active: active lines in panel stacking pattern
  * @padding_dummy: dummy lines in panel stacking pattern
+ * @misr_state: misr config data and current topology state
  */
 struct sde_crtc_state {
 	struct drm_crtc_state base;
@@ -444,6 +451,8 @@ struct sde_crtc_state {
 	u32 padding_dummy;
 
 	struct sde_crtc_respool rp;
+
+	struct sde_misr_state misr_state;
 };
 
 enum sde_crtc_irq_state {
@@ -887,10 +896,18 @@ static inline void sde_crtc_state_set_topology_name(
 	case SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE:
 		cstate->num_mixers = 2;
 		break;
+	case SDE_RM_TOPOLOGY_TRIPLEPIPE:
+	case SDE_RM_TOPOLOGY_TRIPLEPIPE_DSC:
+		cstate->num_mixers = 3;
+		break;
 	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE:
 	case SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE:
 	case SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC:
 		cstate->num_mixers = 4;
+		break;
+	case SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE:
+	case SDE_RM_TOPOLOGY_SIXPIPE_DSCMERGE:
+		cstate->num_mixers = 6;
 		break;
 	default:
 		cstate->num_mixers = 1;

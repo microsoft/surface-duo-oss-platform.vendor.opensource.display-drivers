@@ -906,6 +906,31 @@ int dsi_conn_prepare_commit(void *display,
 	return dsi_display_pre_commit(display, params);
 }
 
+int dsi_conn_get_tile_map(struct drm_connector *connector,
+		void *display, int num_tile, int *tile_map)
+{
+	struct drm_display_mode *mode;
+	struct dsi_display_mode_priv_info *priv_info;
+
+	if (!connector->encoder || !connector->encoder->crtc || num_tile != 2)
+		return -EINVAL;
+
+	mode = &connector->encoder->crtc->state->adjusted_mode;
+	priv_info = (struct dsi_display_mode_priv_info *)mode->private;
+	if (!priv_info)
+		return -EINVAL;
+
+	/* if no swap is needed */
+	if (!priv_info->swap_intf)
+		return -EINVAL;
+
+	/* dsi only support 2-tile mode */
+	tile_map[0] = 1;
+	tile_map[1] = 0;
+
+	return 0;
+}
+
 void dsi_conn_enable_event(struct drm_connector *connector,
 		uint32_t event_idx, bool enable, void *display)
 {

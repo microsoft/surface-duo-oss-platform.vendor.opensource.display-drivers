@@ -4346,11 +4346,6 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
 		{SDE_SSPP_MULTIRECT_PARALLEL, "parallel"},
 		{SDE_SSPP_MULTIRECT_TIME_MX,  "serial"},
 	};
-	static const struct drm_prop_enum_list e_layout_index[] = {
-		{SDE_LAYOUT_NONE, "none"},
-		{SDE_LAYOUT_LEFT, "left"},
-		{SDE_LAYOUT_RIGHT, "right"},
-	};
 	const struct sde_format_extended *format_list;
 	struct sde_kms_info *info;
 	struct sde_plane *psde = to_sde_plane(plane);
@@ -4483,9 +4478,6 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
 
 	msm_property_install_enum(&psde->property_info, "src_config", 0x0, 1,
 		e_src_config, ARRAY_SIZE(e_src_config), PLANE_PROP_SRC_CONFIG);
-
-	msm_property_install_enum(&psde->property_info, "sspp_layout", 0x0, 0,
-		e_layout_index, ARRAY_SIZE(e_layout_index), PLANE_PROP_LAYOUT);
 
 	if (psde->pipe_hw->ops.setup_solidfill)
 		msm_property_install_range(&psde->property_info, "color_fill",
@@ -5059,11 +5051,9 @@ sde_plane_duplicate_state(struct drm_plane *plane)
 	sde_plane_rot_duplicate_state(plane, &pstate->base);
 
 	/* reset layout offset */
-	if (pstate->layout_offset) {
-		if (pstate->layout_offset > 0)
-			pstate->base.crtc_x += pstate->layout_offset;
-		pstate->property_values[PLANE_PROP_LAYOUT].value =
-				SDE_LAYOUT_NONE;
+	if (pstate->layout) {
+		pstate->base.crtc_x += pstate->layout_offset;
+		pstate->layout = 0;
 		pstate->layout_offset = 0;
 	}
 

@@ -793,8 +793,11 @@ static ssize_t dp_debug_force_bond_mode_write(struct file *file,
 	if (kstrtoint(buf, 10, &force_bond) != 0)
 		return -EINVAL;
 
+	if (force_bond)
+		(*debug->connector)->tile_h_loc = force_bond - 1;
+
 	debug->dp_debug.force_bond_mode = !!force_bond;
-	pr_debug("force_bond_mode: %d\n", force_bond);
+	pr_info("force_bond_mode: %d\n", force_bond);
 
 	return count;
 }
@@ -2170,7 +2173,7 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 	if (IS_ERR_OR_NULL(file)) {
 		rc = PTR_ERR(file);
 		pr_err("[%s] debugfs mst_topology failed, rc=%d\n",
-		       DEBUG_NAME, rc);
+		       debug_name, rc);
 	}
 
 	file = debugfs_create_bool("force_multi_func", 0644, dir,

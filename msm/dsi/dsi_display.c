@@ -5023,7 +5023,7 @@ static int dsi_display_bind(struct device *dev,
 		j = display->panel->host_config.ext_bridge_map[i];
 		if (!display->ext_bridge[j].node_of) {
 			pr_err("invalid ext bridge node\n");
-			return -EINVAL;
+			continue;
 		}
 
 		if (!of_drm_find_bridge(display->ext_bridge[j].node_of)) {
@@ -5621,7 +5621,7 @@ static int dsi_display_ext_get_info(struct drm_connector *connector,
 
 	info->is_connected = connector->status != connector_status_disconnected;
 
-	if (!strcmp(display->dsi_type, "primary"))
+	if (!strcmp(display->display_type, "primary"))
 		info->is_primary = true;
 	else
 		info->is_primary = false;
@@ -5853,6 +5853,10 @@ int dsi_display_drm_ext_bridge_init(struct dsi_display *display,
 		if (ext_bridge_info->bridge)
 			return 0;
 
+		/* continue if no bridge is found */
+		if (!ext_bridge_info->node_of)
+			continue;
+
 		ext_bridge = of_drm_find_bridge(ext_bridge_info->node_of);
 		if (IS_ERR_OR_NULL(ext_bridge)) {
 			rc = PTR_ERR(ext_bridge);
@@ -5936,6 +5940,32 @@ int dsi_display_drm_ext_bridge_init(struct dsi_display *display,
 		display->host.ops = &dsi_host_ext_ops;
 	}
 
+	/*
+	 * Builtin DSI bridge is the first bridge in the bridge chain by
+	 * default. Move the builtin bridge to other position if
+	 * builtin bridge pos is set.
+	 */
+	if (display->panel->host_config.builtin_bridge_pos) {
+		int pos = min(display->panel->host_config.builtin_bridge_pos,
+				display->panel->host_config.ext_bridge_num);
+
+		prev_bridge = bridge;
+		for (i = 0; i < pos; i++) {
+			prev_bridge = prev_bridge->next;
+			if (!prev_bridge) {
+				pr_err("Invalid dsi bridge chain\n");
+				rc = -EINVAL;
+				goto error;
+			}
+		}
+
+		if (prev_bridge != bridge) {
+			encoder->bridge = bridge->next;
+			bridge->next = prev_bridge->next;
+			prev_bridge->next = bridge;
+		}
+	}
+
 	return 0;
 error:
 	return rc;
@@ -5977,7 +6007,7 @@ int dsi_display_get_info(struct drm_connector *connector,
 	info->is_connected = true;
 	info->is_primary = false;
 
-	if (!strcmp(display->dsi_type, "primary"))
+	if (!strcmp(display->display_type, "primary"))
 		info->is_primary = true;
 
 	info->width_mm = phy_props.panel_width_mm;
@@ -7563,6 +7593,8 @@ int dsi_display_unprepare(struct dsi_display *display)
 		pr_err("[%s] panel unprepare failed, rc=%d\n",
 		       display->name, rc);
 
+	dsi_display_set_clk_src(display, false);
+
 	rc = dsi_display_ctrl_host_disable(display);
 	if (rc)
 		pr_err("[%s] failed to disable DSI host, rc=%d\n",
@@ -7599,8 +7631,6 @@ int dsi_display_unprepare(struct dsi_display *display)
 	if (rc)
 		pr_err("[%s] panel post-unprepare failed, rc=%d\n",
 		       display->name, rc);
-
-	dsi_display_set_clk_src(display, false);
 
 	mutex_unlock(&display->display_lock);
 

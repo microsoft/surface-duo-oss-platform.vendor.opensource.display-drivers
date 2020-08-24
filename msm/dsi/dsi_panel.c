@@ -1169,6 +1169,9 @@ static int dsi_panel_parse_ext_bridge_config(struct dsi_host_common_cfg *host,
 
 	pr_debug("[%s] ext bridge count is %d\n", name, host->ext_bridge_num);
 
+	utils->read_u32(utils->data, "qcom,mdss-dsi-builtin-bridge-pos",
+			&host->builtin_bridge_pos);
+
 	return rc;
 }
 
@@ -2825,6 +2828,9 @@ static int dsi_panel_parse_topology(
 		topology[top_sel].num_lm,
 		topology[top_sel].num_enc,
 		topology[top_sel].num_intf);
+
+	priv_info->swap_intf = utils->read_bool(utils->data,
+			"qcom,mdss-dsi-panel-swap-intf");
 
 parse_done:
 	memcpy(&priv_info->topology, &topology[top_sel],

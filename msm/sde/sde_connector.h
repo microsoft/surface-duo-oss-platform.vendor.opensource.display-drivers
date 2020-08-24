@@ -316,6 +316,17 @@ struct sde_connector_ops {
 	 */
 	int (*prepare_commit)(void *display,
 			struct msm_display_conn_params *params);
+
+	/**
+	 * get_tile_map - get tile mapping information
+	 * @connector: Pointer to drm connector structure
+	 * @display: Pointer to private display structure
+	 * @num_tile: Number of tiles
+	 * @tile_map: Tile indices map
+	 * Returns: Zero on success
+	 */
+	int (*get_tile_map)(struct drm_connector *connector,
+			void *display, int num_tile, int *tile_map);
 };
 
 /**
@@ -917,5 +928,15 @@ int sde_connector_get_panel_vfp(struct drm_connector *connector,
  * @connector: Pointer to DRM connector object
  */
 int sde_connector_esd_status(struct drm_connector *connector);
+
+/**
+ * get_tile_map - get tile mapping information
+ * @connector: Pointer to drm connector structure
+ * @num_tile: Number of tiles
+ * @tile_map: Pointer to tile indices map
+ * Returns: Zero on success
+ */
+int sde_connector_get_tile_map(struct drm_connector *connector,
+		int num_tile, int *tile_map);
 
 #endif /* _SDE_CONNECTOR_H_ */

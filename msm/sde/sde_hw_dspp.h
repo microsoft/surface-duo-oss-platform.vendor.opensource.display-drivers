@@ -7,6 +7,7 @@
 #define _SDE_HW_DSPP_H
 
 #include "sde_hw_blk.h"
+#include "sde_hw_util.h"
 
 struct sde_hw_dspp;
 
@@ -157,6 +158,15 @@ struct sde_hw_dspp_ops {
 	 */
 	void (*ad_read_intr_resp)(struct sde_hw_dspp *ctx, u32 event,
 			u32 *resp_in, u32 *resp_out);
+
+	/**
+	 * setup_roi_misr - update the roi misr property
+	 * @ctx: Pointer to dspp context
+	 * @roi_num: The number of roi should be set
+	 * @roi_cfg: Pointer to roi configuration
+	 */
+	void (*setup_roi_misr)(struct sde_hw_dspp *ctx, int roi_num,
+			struct sde_rect *roi_cfg);
 
 };
 

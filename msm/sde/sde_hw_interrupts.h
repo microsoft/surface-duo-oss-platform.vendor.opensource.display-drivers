@@ -54,6 +54,7 @@
  * @SDE_IRQ_TYPE_INTF_TEAR_AUTO_REF:	INTF Tear auto refresh
  * @SDE_IRQ_TYPE_INTF_TEAR_TEAR_CHECK:	INTF Tear Tear check
  * @SDE_IRQ_TYPE_INTF_TEAR_TE_CHECK:	INTF Tear TE detection
+ * @SDE_IRQ_TYPE_ROI_MISR:		ROI MISR mismatch detection
  * @SDE_IRQ_TYPE_RESERVED:		Reserved for expansion
  */
 enum sde_intr_type {
@@ -89,6 +90,7 @@ enum sde_intr_type {
 	SDE_IRQ_TYPE_INTF_TEAR_AUTO_REF,
 	SDE_IRQ_TYPE_INTF_TEAR_TEAR_CHECK,
 	SDE_IRQ_TYPE_INTF_TEAR_TE_CHECK,
+	SDE_IRQ_TYPE_ROI_MISR,
 	SDE_IRQ_TYPE_RESERVED,
 };
 
