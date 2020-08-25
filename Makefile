@@ -12,4 +12,3 @@ endif
 
 obj-$(CONFIG_DRM_MSM) += msm/
 obj-$(CONFIG_MSM_SDE_ROTATOR) += rotator/
-obj-$(CONFIG_DRM_MSM_LEASE) += msm-lease/

@@ -984,7 +984,6 @@ static const struct of_device_id dt_match[] = {
 	{ .compatible = "qcom,sde-kms-lease" },
 	{}
 };
-MODULE_DEVICE_TABLE(of, dt_match);
 
 static struct platform_driver msm_lease_platform_driver = {
 	.probe      = msm_lease_probe,
@@ -995,18 +994,15 @@ static struct platform_driver msm_lease_platform_driver = {
 	},
 };
 
-static int __init msm_lease_drm_register(void)
+void __init msm_lease_drm_register(void)
 {
-	return platform_driver_register(&msm_lease_platform_driver);
+	platform_driver_register(&msm_lease_platform_driver);
 }
 
-static void __exit msm_lease_drm_unregister(void)
+void __exit msm_lease_drm_unregister(void)
 {
 	platform_driver_unregister(&msm_lease_platform_driver);
 }
-
-module_init(msm_lease_drm_register);
-module_exit(msm_lease_drm_unregister);
 
 MODULE_DESCRIPTION("MSM LEASE DRM Driver");
 MODULE_LICENSE("GPL v2");
