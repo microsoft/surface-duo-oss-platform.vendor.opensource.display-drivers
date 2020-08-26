@@ -11,7 +11,7 @@
  * GNU General Public License for more details.
  */
 
-#include <uapi/drm/sde_drm.h>
+#include <drm/sde_drm.h>
 #include "sde_hw_top.h"
 #include "shd_drm.h"
 
