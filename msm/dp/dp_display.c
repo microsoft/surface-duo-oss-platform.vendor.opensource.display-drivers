@@ -117,6 +117,7 @@ struct dp_display_private {
 	u32 phy_idx;
 
 	enum dp_phy_bond_mode phy_bond_mode;
+	struct drm_connector *bond_primary;
 };
 
 static const struct of_device_id dp_dt_match[] = {
@@ -1230,7 +1231,11 @@ static void dp_display_connect_work(struct work_struct *work)
 	 * SST panel in normal mode will reset by the mode change commit.
 	 */
 	if (dp->active_stream_cnt) {
-		if (dp->active_panels[DP_STREAM_0] == dp->panel &&
+		if (IS_BOND_MODE(dp->phy_bond_mode)) {
+			dp->aux->abort(dp->aux, true);
+			dp->ctrl->abort(dp->ctrl, true);
+			reset_connector = dp->bond_primary;
+		} else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
 				!dp->panel->video_test) {
 			dp->aux->abort(dp->aux, true);
 			dp->ctrl->abort(dp->ctrl, true);
@@ -2782,7 +2787,8 @@ static int dp_display_mst_get_fixed_topology_display_type(
 
 
 static int dp_display_set_phy_bond_mode(struct dp_display *dp_display,
-		enum dp_phy_bond_mode mode)
+		enum dp_phy_bond_mode mode,
+		struct drm_connector *primary_connector)
 {
 	struct dp_display_private *dp;
 
@@ -2811,6 +2817,8 @@ static int dp_display_set_phy_bond_mode(struct dp_display *dp_display,
 
 		dp_display_change_phy_bond_mode(dp, mode);
 	}
+
+	dp->bond_primary = primary_connector;
 
 	mutex_unlock(&dp->session_lock);
 
