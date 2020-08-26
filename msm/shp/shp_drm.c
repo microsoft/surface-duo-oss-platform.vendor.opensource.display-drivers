@@ -24,6 +24,7 @@
 #include <uapi/linux/sched/types.h>
 #include "sde_connector.h"
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_uapi.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_vblank.h>
@@ -304,7 +305,7 @@ static int shp_atomic_check(struct drm_atomic_state *state)
 	uint32_t plane_mask = 0;
 	int i, ret;
 
-	for_each_plane_in_state(state, plane, plane_state, i) {
+	for_each_new_plane_in_state(state, plane, plane_state, i) {
 		shp_plane = &shp_dev->planes[plane->index];
 
 		if (!shp_plane->is_shared || shp_plane != shp_plane->master)
@@ -534,8 +535,7 @@ static int shp_parse(struct shp_device *shp)
 		return -EINVAL;
 	}
 
-	sde_power_resource_enable(&priv->phandle,
-			sde_kms->core_client, true);
+	pm_runtime_get_sync(sde_kms->dev->dev);
 
 	system_count = priv->num_planes;
 	total_count = dup_count + system_count;
@@ -741,8 +741,7 @@ static int shp_parse(struct shp_device *shp)
 	}
 
 out:
-	sde_power_resource_enable(&priv->phandle,
-				sde_kms->core_client, false);
+	pm_runtime_put_sync(sde_kms->dev->dev);
 
 	/* dump all the planes */
 	for (i = 0; i < shp->num_planes; i++) {
