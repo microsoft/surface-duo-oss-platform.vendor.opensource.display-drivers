@@ -535,13 +535,16 @@ static int shd_display_atomic_check(struct msm_kms *kms,
 	struct shd_crtc *shd_crtc;
 	struct shd_display *display;
 	struct shd_display_base *base;
-	u32 base_mask = 0, enable_mask = 0, disable_mask = 0;
+	u32 base_mask = 0, enable_mask = 0, disable_mask = 0, change_mask = 0;
 	u32 crtc_mask, active_mask;
 	bool active;
 	int i, rc;
 
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state,
 			new_crtc_state, i) {
+		if (new_crtc_state->mode_changed && new_crtc_state->active)
+			change_mask |= drm_crtc_mask(crtc);
+
 		if (crtc->helper_private->atomic_check !=
 				shd_crtc_atomic_check)
 			continue;
@@ -558,6 +561,29 @@ static int shd_display_atomic_check(struct msm_kms *kms,
 			enable_mask |= drm_crtc_mask(crtc);
 		else
 			disable_mask |= drm_crtc_mask(crtc);
+	}
+
+	/*
+	 * when base display has mode change set, all shared displays should
+	 * also set mode change flag.
+	 */
+	if (change_mask) {
+		list_for_each_entry(base, &g_base_list, head) {
+			if (!(drm_crtc_mask(base->crtc) & change_mask))
+				continue;
+
+			list_for_each_entry(display, &base->disp_list, head) {
+				new_crtc_state = drm_atomic_get_crtc_state(
+						state, display->crtc);
+				if (IS_ERR(new_crtc_state))
+					return PTR_ERR(new_crtc_state);
+
+				if (new_crtc_state->active)
+					new_crtc_state->mode_changed = true;
+			}
+
+			base_mask |= drm_crtc_mask(base->crtc);
+		}
 	}
 
 	if (!base_mask)
