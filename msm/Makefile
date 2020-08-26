@@ -124,6 +124,8 @@ msm_drm-$(CONFIG_DRM_SDE_SHD) += shd/shd_drm.o \
 
 msm_drm-$(CONFIG_DRM_SDE_SHP) += shp/shp_drm.o
 
+msm_drm-$(CONFIG_DRM_MSM_LEASE) += ../msm-lease/msm_lease_drv.o
+
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/pll_util.o
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/pll_drv.o
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/dsi_pll_10nm.o
