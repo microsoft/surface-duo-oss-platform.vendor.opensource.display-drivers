@@ -4,7 +4,6 @@
  */
 
 #define CONFIG_DRM_MSM 1
-#define CONFIG_DRM_MSM_HYP 1
 #define CONFIG_DRM_MSM_SDE 1
 #define CONFIG_SYNC_FILE 1
 #define CONFIG_DRM_MSM_DSI 1

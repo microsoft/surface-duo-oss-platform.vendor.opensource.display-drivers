@@ -10,6 +10,11 @@ LINUXINCLUDE += -I$(srctree)/techpack/display/include \
 USERINCLUDE = -I$(srctree)/techpack/display/include/uapi/display
 endif
 
+ifeq (y, $(findstring y, $(CONFIG_QTI_QUIN_GVM)))
+include $(srctree)/techpack/display/config/gvmgen3disp.conf
+LINUXINCLUDE += -include $(srctree)/techpack/display/config/gvmgen3dispconf.h
+endif
+
 obj-$(CONFIG_DRM_MSM) += msm/
 obj-$(CONFIG_DRM_MSM_HYP) += msm-hyp/
 obj-$(CONFIG_MSM_SDE_ROTATOR) += rotator/
