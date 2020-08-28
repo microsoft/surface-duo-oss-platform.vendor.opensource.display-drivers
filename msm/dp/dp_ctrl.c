@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
@@ -749,6 +749,16 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 
 	catalog = ctrl->catalog;
 	link_params = &ctrl->link->link_params;
+
+	if (ctrl->parser->is_cont_splash_enabled) {
+		pr_debug("splash enabled, skip main link setup\n");
+		rc = ctrl->power->clk_enable(ctrl->power, DP_LINK_PM, true);
+		if (rc) {
+			pr_err("Unable to start link clocks\n");
+			rc = -EINVAL;
+		}
+		return rc;
+	}
 
 	while (1) {
 		pr_debug("bw_code=%d, lane_count=%d\n",
