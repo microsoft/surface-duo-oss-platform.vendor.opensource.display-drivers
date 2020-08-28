@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
@@ -22,6 +22,7 @@ struct dp_aux_private {
 	struct dp_aux dp_aux;
 	struct dp_catalog_aux *catalog;
 	struct dp_aux_cfg *cfg;
+	struct dp_parser *parser;
 	struct device_node *aux_switch_node;
 	struct mutex mutex;
 	struct completion comp;
@@ -599,10 +600,12 @@ static void dp_aux_init(struct dp_aux *dp_aux, struct dp_aux_cfg *aux_cfg)
 	if (aux->enabled)
 		return;
 
-	dp_aux_reset_phy_config_indices(aux_cfg);
-	aux->catalog->setup(aux->catalog, aux_cfg);
-	aux->catalog->reset(aux->catalog);
-	aux->catalog->enable(aux->catalog, true);
+	if (!aux->parser->is_cont_splash_enabled) {
+		dp_aux_reset_phy_config_indices(aux_cfg);
+		aux->catalog->setup(aux->catalog, aux_cfg);
+		aux->catalog->reset(aux->catalog);
+		aux->catalog->enable(aux->catalog, true);
+	}
 	atomic_set(&aux->aborted, 0);
 	aux->retry_cnt = 0;
 	aux->enabled = true;
@@ -774,6 +777,7 @@ struct dp_aux *dp_aux_get(struct device *dev, struct dp_catalog_aux *catalog,
 	aux->dev = dev;
 	aux->catalog = catalog;
 	aux->cfg = parser->aux_cfg;
+	aux->parser = parser;
 	aux->aux_switch_node = aux_switch;
 	aux->aux_bridge = aux_bridge;
 	dp_aux = &aux->dp_aux;

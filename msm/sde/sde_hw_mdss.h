@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_MDSS_H
@@ -37,6 +37,8 @@
 #endif
 
 #define MAX_DSI_DISPLAYS		2
+#define MAX_DP_DISPLAYS			1
+#define SDE_MAX_DISPLAYS              (MAX_DSI_DISPLAYS + MAX_DP_DISPLAYS)
 #define MAX_DATA_PATH_PER_DSIPLAY	2
 
 #define SDE_AD4_REG_LEN		0x484
@@ -641,8 +643,8 @@ struct sde_splash_display {
 struct sde_splash_data {
 	u32 num_splash_regions;
 	u32 num_splash_displays;
-	struct sde_splash_mem splash_mem[MAX_DSI_DISPLAYS];
-	struct sde_splash_display splash_display[MAX_DSI_DISPLAYS];
+	struct sde_splash_mem splash_mem[SDE_MAX_DISPLAYS];
+	struct sde_splash_display splash_display[SDE_MAX_DISPLAYS];
 };
 
 /**
