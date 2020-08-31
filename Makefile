@@ -10,3 +10,4 @@ obj-$(CONFIG_MSM_DRM_TECHPACK) += msm/
 obj-$(CONFIG_MSM_DRM_TECHPACK) += rotator/
 obj-$(CONFIG_MSM_DRM_TECHPACK) += pll/
 obj-$(CONFIG_MSM_DRM_TECHPACK) += msm-lease/
+obj-$(CONFIG_MSM_DRM_TECHPACK) += hdcp/
