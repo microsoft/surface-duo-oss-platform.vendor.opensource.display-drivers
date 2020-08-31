@@ -688,12 +688,6 @@ static struct sde_prop_type roi_misr_prop[] = {
 	{ROI_MSIR_ENABLE, "qcom,sde-has-roi-misr", false, PROP_TYPE_BOOL},
 };
 
-static struct sde_prop_type roi_misr_prop[] = {
-	{ROI_MISR_OFF, "qcom,sde-roi-misr-off", false, PROP_TYPE_U32_ARRAY},
-	{ROI_MISR_LEN, "qcom,sde-roi-misr-size", false, PROP_TYPE_U32},
-	{ROI_MSIR_ENABLE, "qcom,sde-has-roi-misr", false, PROP_TYPE_BOOL},
-};
-
 static struct sde_prop_type cdm_prop[] = {
 	{HW_OFF, "qcom,sde-cdm-off", false, PROP_TYPE_U32_ARRAY},
 	{HW_LEN, "qcom,sde-cdm-size", false, PROP_TYPE_U32},

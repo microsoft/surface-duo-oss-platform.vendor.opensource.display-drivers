@@ -831,17 +831,6 @@ struct sde_roi_misr_cfg {
 };
 
 /**
- * struct sde_roi_misr_cfg - information of ROI_MISR blocks
- * @id                 enum identifying this block
- * @base               register offset of this block
- * @len                length of hardware block
- * @features           bit mask identifying sub-blocks/features
- */
-struct sde_roi_misr_cfg {
-	SDE_HW_BLK_INFO;
-};
-
-/**
  * struct sde_cdm_cfg - information of chroma down blocks
  * @id                 enum identifying this block
  * @base               register offset of this block
