@@ -19,6 +19,7 @@
 #include "sde_hw_rot.h"
 #include "sde_crtc.h"
 #include "sde_hw_qdss.h"
+#include "sde_hw_roi_misr.h"
 
 #define RESERVED_BY_OTHER(h, r) \
 	((h)->rsvp && ((h)->rsvp->enc_id != (r)->enc_id))
@@ -62,9 +63,13 @@ static const struct sde_rm_topology_def g_ctl_ver_1_top_table[] = {
 	{   SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC, 2, 1, 1, 1, false },
 	{   SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE,    2, 2, 1, 1, false },
 	{   SDE_RM_TOPOLOGY_PPSPLIT,              1, 0, 2, 1, false },
+	{   SDE_RM_TOPOLOGY_TRIPLEPIPE,           3, 0, 3, 1, false },
+	{   SDE_RM_TOPOLOGY_TRIPLEPIPE_DSC,       3, 3, 3, 1, false },
 	{   SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE,     4, 0, 2, 1, false },
 	{   SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC, 4, 3, 2, 1, false },
 	{   SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE,    4, 4, 2, 1, false },
+	{   SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE,      6, 0, 3, 1, false },
+	{   SDE_RM_TOPOLOGY_SIXPIPE_DSCMERGE,     6, 6, 3, 1, false },
 };
 
 
@@ -211,7 +216,8 @@ int sde_rm_get_topology_num_encoders(struct sde_rm *rm,
 static bool sde_rm_is_dscmerge_case(enum sde_rm_topology_name top_name)
 {
 	return (top_name == SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE
-			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE);
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE
+			|| top_name == SDE_RM_TOPOLOGY_SIXPIPE_DSCMERGE);
 }
 
 int sde_rm_get_roi_misr_num(struct sde_rm *rm,
@@ -237,7 +243,8 @@ static bool sde_rm_is_3dmux_case(enum sde_rm_topology_name top_name)
 	return (top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE
 			|| top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC
 			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE
-			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC);
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC
+			|| top_name == SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE);
 }
 
 static bool _sde_rm_get_hw_locked(struct sde_rm *rm, struct sde_rm_hw_iter *i)
@@ -768,11 +775,9 @@ static bool _sde_rm_check_lm_and_get_connected_blks(
 		if (RM_RQ_DSPP(reqs) && RM_RQ_DS(reqs))
 			ret = (is_valid_dspp && is_valid_ds);
 		else if (RM_RQ_DSPP(reqs))
-			ret = is_valid_dspp;
+			ret = is_valid_dspp && !is_valid_ds;
 		else if (RM_RQ_DS(reqs))
-			ret = is_valid_ds;
-		else if (reqs->topology->num_lm == CRTC_QUAD_MIXERS)
-			ret = !is_valid_ds;
+			ret = !is_valid_dspp && is_valid_ds;
 		else
 			ret = !(is_valid_dspp || is_valid_ds);
 
@@ -970,6 +975,7 @@ static int _sde_rm_reserve_lms(
 	u32 lm_mask = 0;
 	int lm_count = 0;
 	int i, rc = 0;
+	uint64_t org_top_ctrl = reqs->top_ctrl;
 
 	if (!reqs->topology->num_lm) {
 		SDE_DEBUG("invalid number of lm: %d\n", reqs->topology->num_lm);
@@ -978,8 +984,28 @@ static int _sde_rm_reserve_lms(
 
 	/* Find a primary mixer */
 	sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_LM);
-	while (lm_count != reqs->topology->num_lm &&
-			_sde_rm_get_hw_locked(rm, &iter_i)) {
+	while (lm_count != reqs->topology->num_lm) {
+		if (!_sde_rm_get_hw_locked(rm, &iter_i)) {
+			/*
+			 * Prefer to give away low-resource mixers first:
+			 * - Firstly check mixers without DSPPs and DSs
+			 * - If failed, check mixers with DSPPs without DSs
+			 * - If failed, check mixers with DSPPs and DSs
+			 */
+			if (!RM_RQ_DSPP(reqs)) {
+				SDE_DEBUG("Try enable DSPP\n");
+				reqs->top_ctrl |= BIT(SDE_RM_TOPCTL_DSPP);
+				sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_LM);
+				continue;
+			} else if (!RM_RQ_DS(reqs)) {
+				SDE_DEBUG("Try enable DS\n");
+				reqs->top_ctrl |= BIT(SDE_RM_TOPCTL_DS);
+				sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_LM);
+				continue;
+			}
+			break;
+		}
+
 		if (lm_mask & (1 << iter_i.blk->id))
 			continue;
 
@@ -1051,6 +1077,9 @@ static int _sde_rm_reserve_lms(
 			--lm_count;
 		}
 	}
+
+	/* Restore the DSPP/DS request */
+	reqs->top_ctrl = org_top_ctrl;
 
 	if (lm_count != reqs->topology->num_lm) {
 		SDE_DEBUG("unable to find appropriate mixers\n");
@@ -1180,17 +1209,49 @@ static int _sde_rm_reserve_ctls(
 	return 0;
 }
 
+
+static bool _sde_rm_check_dsc(struct sde_rm *rm,
+		struct sde_rm_rsvp *rsvp,
+		struct sde_rm_hw_blk *dsc,
+		struct sde_rm_hw_blk *paired_dsc)
+{
+	const struct sde_dsc_cfg *dsc_cfg = to_sde_hw_dsc(dsc->hw)->caps;
+
+	/* Already reserved? */
+	if (RESERVED_BY_OTHER(dsc, rsvp)) {
+		SDE_DEBUG("dsc %d already reserved\n", dsc_cfg->id);
+		return false;
+	}
+
+	/* Check if this dsc is a peer of the proposed paired DSC */
+	if (paired_dsc) {
+		const struct sde_dsc_cfg *paired_dsc_cfg =
+				to_sde_hw_dsc(paired_dsc->hw)->caps;
+
+		if (!test_bit(dsc_cfg->id, &paired_dsc_cfg->dsc_pair_mask)) {
+			SDE_DEBUG("dsc %d not peer of dsc %d\n", dsc_cfg->id,
+					paired_dsc_cfg->id);
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static int _sde_rm_reserve_dsc(
 		struct sde_rm *rm,
 		struct sde_rm_rsvp *rsvp,
 		const struct sde_rm_topology_def *top,
 		u8 *_dsc_ids)
 {
-	struct sde_rm_hw_iter iter;
+	struct sde_rm_hw_iter iter_i, iter_j;
+	struct sde_rm_hw_blk *dsc[MAX_BLOCKS];
+	u32 reserve_mask = 0;
 	struct msm_drm_private *priv = rm->dev->dev_private;
 	struct sde_kms *sde_kms;
 	int alloc_count = 0;
-	int num_dsc_enc = top->num_lm;
+	int num_dsc_enc = top->num_comp_enc;
+	int i;
 
 	if (!top->num_comp_enc)
 		return 0;
@@ -1205,31 +1266,79 @@ static int _sde_rm_reserve_dsc(
 	if (sde_kms->catalog->has_roi_misr)
 		return 0;
 
-	sde_rm_init_hw_iter(&iter, 0, SDE_HW_BLK_DSC);
+	sde_rm_init_hw_iter(&iter_i, 0, SDE_HW_BLK_DSC);
 
-	while (_sde_rm_get_hw_locked(rm, &iter)) {
-		if (RESERVED_BY_OTHER(iter.blk, rsvp))
+	while (alloc_count != num_dsc_enc &&
+			_sde_rm_get_hw_locked(rm, &iter_i)) {
+		if (reserve_mask & (1 << iter_i.blk->id))
+			continue;
+
+		if (_dsc_ids && (iter_i.blk->id != _dsc_ids[alloc_count]))
+			continue;
+
+		if (!_sde_rm_check_dsc(rm, rsvp, iter_i.blk, NULL))
 			continue;
 
 		SDE_DEBUG("blk id = %d, _dsc_ids[%d] = %d\n",
-			iter.blk->id,
+			iter_i.blk->id,
 			alloc_count,
 			_dsc_ids ? _dsc_ids[alloc_count] : -1);
 
-		if (_dsc_ids && (iter.blk->id != _dsc_ids[alloc_count]))
-			continue;
+		reserve_mask |= 1 << iter_i.blk->id;
+		dsc[alloc_count++] = iter_i.blk;
 
-		iter.blk->rsvp_nxt = rsvp;
-		SDE_EVT32(iter.blk->type, rsvp->enc_id, iter.blk->id);
+		/* Return if peer is not needed */
+		if (alloc_count == num_dsc_enc)
+			break;
 
-		if (++alloc_count == num_dsc_enc)
-			return 0;
+		/* Valid first dsc found, find matching peers */
+		sde_rm_init_hw_iter(&iter_j, 0, SDE_HW_BLK_DSC);
+
+		while (_sde_rm_get_hw_locked(rm, &iter_j)) {
+			if (reserve_mask & (1 << iter_j.blk->id))
+				continue;
+
+			if (_dsc_ids && (iter_j.blk->id !=
+					_dsc_ids[alloc_count]))
+				continue;
+
+			if (!_sde_rm_check_dsc(rm, rsvp, iter_j.blk,
+					iter_i.blk))
+				continue;
+
+			SDE_DEBUG("blk id = %d, _dsc_ids[%d] = %d\n",
+				iter_j.blk->id,
+				alloc_count,
+				_dsc_ids ? _dsc_ids[alloc_count] : -1);
+
+			reserve_mask |= 1 << iter_j.blk->id;
+			dsc[alloc_count++] = iter_j.blk;
+			break;
+		}
+
+		/* Rollback primary DSC if peer is not found */
+		if (!iter_j.hw) {
+			reserve_mask &= ~(1 << iter_i.blk->id);
+			--alloc_count;
+		}
 	}
 
-	SDE_ERROR("couldn't reserve %d dsc blocks for enc id %d\n",
-		num_dsc_enc, rsvp->enc_id);
+	if (alloc_count != num_dsc_enc) {
+		SDE_ERROR("couldn't reserve %d dsc blocks for enc id %d\n",
+			num_dsc_enc, rsvp->enc_id);
+		return -ENAVAIL;
+	}
 
-	return -ENAVAIL;
+	for (i = 0; i < alloc_count; i++) {
+		if (!dsc[i])
+			break;
+
+		dsc[i]->rsvp_nxt = rsvp;
+
+		SDE_EVT32(dsc[i]->type, rsvp->enc_id, dsc[i]->id);
+	}
+
+	return 0;
 }
 
 static int _sde_rm_reserve_qdss(
@@ -1401,16 +1510,8 @@ static int _sde_rm_make_next_rsvp(
 
 	/*
 	 * Assign LMs and blocks whose usage is tied to them: DSPP & Pingpong.
-	 * Do assignment preferring to give away low-resource mixers first:
-	 * - Check mixers without DSPPs
-	 * - Only then allow to grab from mixers with DSPP capability
 	 */
 	ret = _sde_rm_reserve_lms(rm, rsvp, reqs, NULL);
-	if (ret && !RM_RQ_DSPP(reqs)) {
-		reqs->top_ctrl |= BIT(SDE_RM_TOPCTL_DSPP);
-		ret = _sde_rm_reserve_lms(rm, rsvp, reqs, NULL);
-	}
-
 	if (ret) {
 		SDE_ERROR("unable to find appropriate mixers\n");
 		return ret;

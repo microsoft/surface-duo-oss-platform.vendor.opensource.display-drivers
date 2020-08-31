@@ -68,8 +68,10 @@
 #define MAX_IMG_HEIGHT 0x3fff
 
 #define CRTC_DUAL_MIXERS	2
+#define CRTC_TRIPLE_MIXERS	3
 #define CRTC_QUAD_MIXERS	4
-#define MAX_MIXERS_PER_CRTC	4
+#define CRTC_SIX_MIXERS		6
+#define MAX_MIXERS_PER_CRTC	6
 #define MAX_MIXERS_PER_LAYOUT	2
 #define MAX_LAYOUTS_PER_CRTC	(MAX_MIXERS_PER_CRTC / MAX_MIXERS_PER_LAYOUT)
 
@@ -83,10 +85,10 @@
 #define LIMIT_SUBBLK_COUNT_MAX 10
 
 #define SDE_CTL_CFG_VERSION_1_0_0       0x100
-#define MAX_INTF_PER_CTL_V1                 2
-#define MAX_DSC_PER_CTL_V1                  4
+#define MAX_INTF_PER_CTL_V1                 3
+#define MAX_DSC_PER_CTL_V1                  6
 #define MAX_CWB_PER_CTL_V1                  2
-#define MAX_MERGE_3D_PER_CTL_V1             2
+#define MAX_MERGE_3D_PER_CTL_V1             3
 #define MAX_WB_PER_CTL_V1                   1
 #define MAX_CDM_PER_CTL_V1                  1
 #define IS_SDE_CTL_REV_100(rev) \
@@ -810,8 +812,21 @@ struct sde_pingpong_cfg  {
  * @base               register offset of this block
  * @len:               length of hardware block
  * @features           bit mask identifying sub-blocks/features
+ * @dsc_pair_mask:     Bitmask of DSCs that can be controlled by same CTL
  */
 struct sde_dsc_cfg {
+	SDE_HW_BLK_INFO;
+	unsigned long dsc_pair_mask;
+};
+
+/**
+ * struct sde_roi_misr_cfg - information of ROI_MISR blocks
+ * @id                 enum identifying this block
+ * @base               register offset of this block
+ * @len                length of hardware block
+ * @features           bit mask identifying sub-blocks/features
+ */
+struct sde_roi_misr_cfg {
 	SDE_HW_BLK_INFO;
 };
 

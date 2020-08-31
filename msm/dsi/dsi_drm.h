@@ -144,4 +144,15 @@ u64 dsi_drm_find_bit_clk_rate(void *display,
 int dsi_conn_prepare_commit(void *display,
 		struct msm_display_conn_params *params);
 
+/**
+ * dsi_conn_get_tile_map - callback to get tile map
+ * @connector: Pointer to drm connector structure
+ * @display: Pointer to private display handle
+ * @num_tile: Number of tiles
+ * @tile_map: Pointer to tile indices
+ * Returns: Zero on success
+ */
+int dsi_conn_get_tile_map(struct drm_connector *connector,
+		void *display, int num_tile, int *tile_map);
+
 #endif /* _DSI_DRM_H_ */

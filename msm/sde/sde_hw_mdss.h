@@ -28,10 +28,10 @@
 #endif
 
 #ifndef SDE_MAX_PLANES
-#define SDE_MAX_PLANES			4
+#define SDE_MAX_PLANES			6
 #endif
 
-#define PIPES_PER_STAGE			2
+#define PIPES_PER_STAGE			6
 #ifndef SDE_MAX_DE_CURVES
 #define SDE_MAX_DE_CURVES		3
 #endif
@@ -423,21 +423,6 @@ enum sde_3d_blend_mode {
 	BLEND_3D_V_ROW_INT,
 	BLEND_3D_COL_INT,
 	BLEND_3D_MAX
-};
-
-/**
- * enum sde_layout
- * Describes SSPP to LM staging layout when using more than 1 pair of LMs
- * @SDE_LAYOUT_NONE    : SSPPs to LMs staging layout not enabled
- * @SDE_LAYOUT_LEFT    : SSPPs will be staged on left two LMs
- * @SDE_LAYOUT_RIGHT   : SSPPs will be staged on right two LMs
- * @SDE_LAYOUT_MAX     :
- */
-enum sde_layout {
-	SDE_LAYOUT_NONE = 0,
-	SDE_LAYOUT_LEFT,
-	SDE_LAYOUT_RIGHT,
-	SDE_LAYOUT_MAX,
 };
 
 /** struct sde_format - defines the format configuration which

@@ -8,6 +8,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_crtc.h>
+#include <linux/sort.h>
 
 #include "msm_drv.h"
 #include "msm_kms.h"
@@ -43,6 +44,12 @@ struct dp_bond_info {
 	struct dp_bond_mgr *bond_mgr;
 	struct dp_bond_bridge *bond_bridge[DP_BOND_MAX];
 	u32 bond_idx;
+};
+
+struct dp_bond_bridge_sort_state {
+	int intf_idx;
+	int h_tile_idx;
+	int h_tile_norm;
 };
 
 #define to_dp_bridge(x)     container_of((x), struct dp_bridge, base)
@@ -975,6 +982,7 @@ int dp_connector_get_info(struct drm_connector *connector,
 		struct msm_display_info *info, void *data)
 {
 	struct dp_display *display = data;
+	const char *display_type = NULL;
 
 	if (!info || !display || !display->drm_dev) {
 		pr_err("invalid params\n");
@@ -997,6 +1005,12 @@ int dp_connector_get_info(struct drm_connector *connector,
 		for (i = 0; i < DP_STREAM_MAX; i++)
 			info->h_tile_instance[i] = dp_info.intf_idx[i];
 	}
+
+	display->get_display_type(display, &display_type);
+
+	if (display_type)
+		if (!strcmp(display_type, "primary"))
+			info->is_primary = true;
 
 	info->is_connected = display->is_sst_connected;
 	info->capabilities = MSM_DISPLAY_CAP_VID_MODE | MSM_DISPLAY_CAP_EDID |
@@ -1522,6 +1536,68 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 		bond_state->connector[bond_bridge->type] = NULL;
 		bond_state->bond_mask[bond_bridge->type] = 0;
 		bond_state->connector_mask &= ~bond_bridge->bond_mask;
+	}
+
+	return 0;
+}
+
+static int dp_connector_intf_cmp(const void *a, const void *b)
+{
+	const struct dp_bond_bridge_sort_state *bridge_a = a;
+	const struct dp_bond_bridge_sort_state *bridge_b = b;
+
+	return bridge_a->intf_idx - bridge_b->intf_idx;
+}
+
+static int dp_connector_tile_cmp(const void *a, const void *b)
+{
+	const struct dp_bond_bridge_sort_state *bridge_a = a;
+	const struct dp_bond_bridge_sort_state *bridge_b = b;
+
+	if (bridge_a->h_tile_idx != bridge_b->h_tile_idx)
+		return bridge_a->h_tile_idx - bridge_b->h_tile_idx;
+	else
+		return bridge_a->intf_idx - bridge_b->intf_idx;
+}
+
+int dp_connector_get_tile_map(struct drm_connector *connector,
+		void *display, int num_tile, int *tile_map)
+{
+	struct dp_bond_bridge *bond_bridge;
+	struct dp_bond_bridge_sort_state bridges[MAX_DP_BOND_NUM];
+	struct dp_display_info disp_info;
+	struct dp_bridge *bridge;
+	int i, ret;
+
+	if (!connector->encoder || num_tile < 2)
+		return -EINVAL;
+
+	bond_bridge = to_dp_bond_bridge(connector->encoder->bridge);
+
+	if (WARN_ON(num_tile != bond_bridge->bridge_num))
+		return -EINVAL;
+
+	for (i = 0; i < num_tile; i++) {
+		bridge = bond_bridge->bridges[i];
+		ret = dp_display_get_info(bridge->display, &disp_info);
+		if (ret)
+			return ret;
+		bridges[i].intf_idx = disp_info.intf_idx[0];
+		bridges[i].h_tile_idx = bridge->connector->tile_h_loc;
+	}
+
+	sort(bridges, num_tile, sizeof(bridges[0]),
+			dp_connector_tile_cmp, NULL);
+
+	for (i = 0; i < num_tile; i++)
+		bridges[i].h_tile_norm = i;
+
+	sort(bridges, num_tile, sizeof(bridges[0]),
+			dp_connector_intf_cmp, NULL);
+
+	for (i = 0; i < num_tile; i++) {
+		tile_map[i] = bridges[i].h_tile_norm;
+		pr_info("tile map: in %d out %d\n", tile_map[i], i);
 	}
 
 	return 0;

@@ -15,6 +15,7 @@
 
 #include "sde_hw_blk.h"
 #include "sde_hw_mdss.h"
+#include "sde_hw_util.h"
 
 struct sde_hw_roi_misr;
 

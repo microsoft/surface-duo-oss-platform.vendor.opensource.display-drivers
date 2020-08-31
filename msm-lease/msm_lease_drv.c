@@ -124,15 +124,15 @@ static inline bool _obj_is_leased(int id,
 static struct drm_master *msm_lease_get_dev_master(struct drm_device *dev)
 {
 	if (!g_master_ddev_master) {
-		if (dev->master) {
-			DRM_ERROR("card0 master already opened\n");
-			return NULL;
-		}
-
 		g_master_ddev_master = drm_master_create(dev);
 		if (!g_master_ddev_master) {
 			DRM_ERROR("failed to create dev master\n");
 			return NULL;
+		}
+
+		if (dev->master) {
+			DRM_WARN("card0 master already opened\n");
+			drm_master_put(&dev->master);
 		}
 
 		dev->master = g_master_ddev_master;
@@ -334,6 +334,8 @@ static long msm_lease_ioctl(struct file *filp,
 			return -EFAULT;
 
 		return 0;
+	} else if (cmd == DRM_IOCTL_DROP_MASTER) {
+		return -EINVAL;
 	}
 
 	return g_master_ddev_fops->unlocked_ioctl(filp, cmd, arg);
@@ -389,6 +391,8 @@ static long msm_lease_compat_ioctl(struct file *filp,
 			return -EFAULT;
 
 		return 0;
+	} else if (DRM_IOCTL_NR(cmd) == DRM_IOCTL_NR(DRM_IOCTL_DROP_MASTER)) {
+		return -EINVAL;
 	}
 
 	return g_master_ddev_fops->compat_ioctl(filp, cmd, arg);
@@ -456,6 +460,9 @@ static int msm_lease_add_connector(struct drm_device *dev, const char *name,
 		goto out;
 	}
 
+	/* unique connector-crtc mapping is required by cont splash */
+	encoder->possible_crtcs = drm_crtc_mask(crtc);
+
 	object_ids[(*object_count)++] = conn_id;
 	object_ids[(*object_count)++] = crtc_id;
 
@@ -510,6 +517,9 @@ static void msm_lease_fixup_crtc_primary(struct drm_device *dev,
 	struct drm_plane *plane;
 	struct drm_crtc *crtc;
 	int i, plane_count = 0, crtc_count = 0;
+
+	if (!object_count)
+		return;
 
 	/* get all the leased crtcs and planes */
 	for (i = 0; i < object_count; i++) {
@@ -576,10 +586,8 @@ static int msm_lease_parse_objs(struct drm_device *dev,
 	int count, rc, i;
 
 	count = of_property_count_strings(of_node, "qcom,lease-planes");
-	if (!count) {
-		DRM_ERROR("no planes found\n");
-		return -EINVAL;
-	}
+	if (count <= 0)
+		return 0;
 
 	for (i = 0; i < count; i++) {
 		of_property_read_string_index(of_node, "qcom,lease-planes",
@@ -591,9 +599,9 @@ static int msm_lease_parse_objs(struct drm_device *dev,
 	}
 
 	count = of_property_count_strings(of_node, "qcom,lease-connectors");
-	if (!count) {
-		DRM_ERROR("no connectors found\n");
-		return -EINVAL;
+	if (count <= 0) {
+		*object_count = 0;
+		return 0;
 	}
 
 	if (count > *object_count) {
@@ -611,6 +619,99 @@ static int msm_lease_parse_objs(struct drm_device *dev,
 	}
 
 	return 0;
+}
+
+static void msm_lease_parse_remain_objs(void)
+{
+	struct device_node *of_node;
+	struct msm_lease *lease, *target = NULL;
+	struct drm_device *dev;
+	struct drm_plane *plane;
+	struct drm_connector *connector;
+	struct drm_connector_list_iter conn_iter;
+	struct drm_crtc *crtc;
+	u32 object_ids[MAX_LEASE_OBJECT_COUNT];
+	int object_count = 0;
+	const char *name;
+	int count, rc, i;
+
+	list_for_each_entry(lease, &g_lease_list, head) {
+		if (!lease->minor)
+			return;
+
+		if (!lease->obj_cnt)
+			target = lease;
+	}
+
+	if (!target)
+		return;
+
+	of_node = target->dev->of_node;
+	dev = target->drm_dev;
+
+	count = of_property_count_strings(of_node, "qcom,lease-planes");
+	if (count > 0) {
+		for (i = 0; i < count; i++) {
+			of_property_read_string_index(of_node,
+					"qcom,lease-planes",
+					i, &name);
+			rc = msm_lease_add_plane(dev, name,
+					object_ids, &object_count);
+			if (rc)
+				break;
+		}
+	} else {
+		drm_for_each_plane(plane, dev) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(plane->base.id,
+					object_ids, object_count))
+				continue;
+
+			object_ids[object_count++] = plane->base.id;
+		}
+	}
+
+	count = of_property_count_strings(of_node, "qcom,lease-connectors");
+	if (count > 0) {
+		for (i = 0; i < count; i++) {
+			of_property_read_string_index(of_node,
+					"qcom,lease-connectors",
+					i, &name);
+			rc = msm_lease_add_connector(dev, name,
+					object_ids, &object_count);
+			if (rc)
+				break;
+		}
+	} else {
+		drm_connector_list_iter_begin(dev, &conn_iter);
+		drm_for_each_connector_iter(connector, &conn_iter) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(connector->base.id,
+					object_ids, object_count))
+				continue;
+
+			object_ids[object_count++] = connector->base.id;
+		}
+		drm_connector_list_iter_end(&conn_iter);
+		drm_for_each_crtc(crtc, dev) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(crtc->base.id,
+					object_ids, object_count))
+				continue;
+
+			object_ids[object_count++] = crtc->base.id;
+		}
+	}
+
+	target->obj_cnt = object_count;
+	memcpy(target->object_ids, object_ids, sizeof(u32) * object_count);
+	msm_lease_fixup_crtc_primary(dev, object_ids, object_count);
 }
 
 static int msm_lease_parse_misc(struct msm_lease *lease_drv)
@@ -665,7 +766,6 @@ static int msm_lease_notifier(struct notifier_block *nb,
 	if (ret)
 		goto fail;
 
-
 	/* parse misc options */
 	msm_lease_parse_misc(lease_drv);
 
@@ -680,13 +780,6 @@ static int msm_lease_notifier(struct notifier_block *nb,
 	lease_drv->minor = ddev->primary;
 	lease_drv->obj_cnt = object_count;
 	memcpy(lease_drv->object_ids, object_ids, sizeof(u32) * object_count);
-
-	/* add to global lease list */
-	mutex_lock(&g_lease_mutex);
-	list_add_tail(&lease_drv->head, &g_lease_list);
-	mutex_unlock(&g_lease_mutex);
-
-	mutex_lock(&drm_global_mutex);
 
 	/* fixup crtcs' primary planes */
 	msm_lease_fixup_crtc_primary(master_ddev, object_ids, object_count);
@@ -713,8 +806,6 @@ static int msm_lease_notifier(struct notifier_block *nb,
 				"%s_orig", master_ddev->driver->name);
 	}
 
-	mutex_unlock(&drm_global_mutex);
-
 	/* redirect primary minor to master dev */
 	ddev->primary->dev = master_ddev;
 	ddev->primary->type = -1;
@@ -732,6 +823,8 @@ static int msm_lease_notifier(struct notifier_block *nb,
 	drm_dev_unregister(ddev);
 	drm_dev_unref(ddev);
 
+	/* check if there are remaining objs */
+	msm_lease_parse_remain_objs();
 fail:
 	return ret;
 }
@@ -814,6 +907,10 @@ static int msm_lease_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, lease_drv);
 	lease_drv->dev = dev;
+
+	mutex_lock(&g_lease_mutex);
+	list_add_tail(&lease_drv->head, &g_lease_list);
+	mutex_unlock(&g_lease_mutex);
 
 	ret = component_add(&pdev->dev, &msm_lease_comp_ops);
 	if (ret) {

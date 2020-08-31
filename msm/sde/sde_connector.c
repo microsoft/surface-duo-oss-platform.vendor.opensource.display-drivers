@@ -38,9 +38,13 @@ static const struct drm_prop_enum_list e_topology_name[] = {
 	{SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC,	"sde_dualpipemerge_dsc"},
 	{SDE_RM_TOPOLOGY_DUALPIPE_DSCMERGE,	"sde_dualpipe_dscmerge"},
 	{SDE_RM_TOPOLOGY_PPSPLIT,	"sde_ppsplit"},
+	{SDE_RM_TOPOLOGY_TRIPLEPIPE,	"sde_triplepipe"},
+	{SDE_RM_TOPOLOGY_TRIPLEPIPE_DSC,	"sde_triplepipe_dsc"},
 	{SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE,	"sde_quadpipemerge"},
 	{SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE,	"sde_quadpipe_dscmerge"},
-	{SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC,	"sde_quadpipe_3dmerge_dsc"}
+	{SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC,	"sde_quadpipe_3dmerge_dsc"},
+	{SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE,	"sde_sixpipemerge"},
+	{SDE_RM_TOPOLOGY_SIXPIPE_DSCMERGE,	"sde_sixpipe_dscmerge"},
 };
 static const struct drm_prop_enum_list e_topology_control[] = {
 	{SDE_RM_TOPCTL_RESERVE_LOCK,	"reserve_lock"},
@@ -1936,6 +1940,22 @@ static void sde_connector_check_status_work(struct work_struct *work)
 	}
 
 	_sde_connector_report_panel_dead(conn, false);
+}
+
+int sde_connector_get_tile_map(struct drm_connector *connector,
+		int num_tile, int *tile_map)
+{
+	struct sde_connector *sde_conn = NULL;
+
+	if (!connector || num_tile < 2 || !tile_map)
+		return -EINVAL;
+
+	sde_conn = to_sde_connector(connector);
+	if (!sde_conn->ops.get_tile_map)
+		return -EINVAL;
+
+	return sde_conn->ops.get_tile_map(connector, sde_conn->display,
+			num_tile, tile_map);
 }
 
 static const struct drm_connector_helper_funcs sde_connector_helper_ops = {

@@ -10,6 +10,7 @@
 #include "sde_formats.h"
 #include "dsi_display.h"
 #include "sde_trace.h"
+#include "sde_roi_misr_helper.h"
 
 #define SDE_DEBUG_VIDENC(e, fmt, ...) SDE_DEBUG("enc%d intf%d " fmt, \
 		(e) && (e)->base.parent ? \
@@ -464,6 +465,7 @@ static void sde_encoder_phys_vid_setup_timing_engine(
 	unsigned long lock_flags;
 	struct sde_hw_intf_cfg intf_cfg = { 0 };
 	bool is_split_link = false;
+	int splits;
 
 	if (!phys_enc || !phys_enc->sde_kms || !phys_enc->hw_ctl ||
 					!phys_enc->hw_intf) {
@@ -483,14 +485,15 @@ static void sde_encoder_phys_vid_setup_timing_engine(
 
 	is_split_link = phys_enc->hw_intf->cfg.split_link_en;
 	if (phys_enc->split_role != ENC_ROLE_SOLO || is_split_link) {
-		mode.hdisplay >>= 1;
-		mode.htotal >>= 1;
-		mode.hsync_start >>= 1;
-		mode.hsync_end >>= 1;
+		splits = phys_enc->num_of_splits;
+		mode.hdisplay /= splits;
+		mode.htotal /= splits;
+		mode.hsync_start /= splits;
+		mode.hsync_end /= splits;
 
 		SDE_DEBUG_VIDENC(vid_enc,
-			"split_role %d, halve horizontal %d %d %d %d\n",
-			phys_enc->split_role,
+			"split_role %d, 1/%d horizontal %d %d %d %d\n",
+			phys_enc->split_role, splits,
 			mode.hdisplay, mode.htotal,
 			mode.hsync_start, mode.hsync_end);
 	}
@@ -643,7 +646,7 @@ static void sde_encoder_phys_vid_roi_misr_irq(void *arg, int irq_idx)
 	 * update fence data and check event should be
 	 * sent or not
 	 */
-	event_status = sde_encoder_helper_roi_misr_update_fence(phys_enc,
+	event_status = sde_roi_misr_update_fence(phys_enc,
 			phys_enc->parent);
 
 	if (event_status && phys_enc->parent_ops.handle_roi_misr_virt)
@@ -672,7 +675,7 @@ static void _sde_encoder_phys_vid_setup_irq_hw_idx(
 		irq->hw_idx = phys_enc->intf_idx;
 
 	if (sde_encoder_phys_vid_is_master(phys_enc))
-		sde_encoder_helper_roi_misr_setup_irq_hw_idx(phys_enc,
+		sde_roi_misr_setup_irq_hw_idx(phys_enc,
 				phys_enc->parent);
 }
 
@@ -715,7 +718,8 @@ static void sde_encoder_phys_vid_mode_set(
 		SDE_DEBUG_VIDENC(vid_enc, "caching mode:\n");
 	}
 
-	instance = phys_enc->split_role == ENC_ROLE_SLAVE ? 1 : 0;
+	instance = phys_enc->split_role == ENC_ROLE_SLAVE ?
+			phys_enc->slave_idx + 1 : 0;
 
 	/* Retrieve previously allocated HW Resources. Shouldn't fail */
 	sde_rm_init_hw_iter(&iter, phys_enc->parent->base.id, SDE_HW_BLK_CTL);
@@ -816,14 +820,14 @@ static int sde_encoder_phys_vid_control_roi_misr_irq(
 	if (!sde_encoder_phys_vid_is_master(phys_enc))
 		return 0;
 
-	num_roi_misr = sde_encoder_get_roi_misr_num(phys_enc->parent);
+	num_roi_misr = sde_roi_misr_get_num(phys_enc->parent);
 
 	for (i = 0; i < num_roi_misr; i++) {
 		base_irq_idx = MISR_ROI_MISMATCH_BASE_IDX
 			+ i * ROI_MISR_MAX_ROIS_PER_MISR;
 
 		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; j++) {
-			ret = sde_encoder_helper_roi_misr_irq_enable(phys_enc,
+			ret = sde_roi_misr_irq_control(phys_enc,
 				base_irq_idx, j, enable);
 			if (ret)
 				return ret;
@@ -1205,7 +1209,7 @@ static void sde_encoder_phys_vid_disable(struct sde_encoder_phys *phys_enc)
 		return;
 	}
 
-	sde_encoder_helper_roi_misr_reset(phys_enc, phys_enc->parent);
+	sde_roi_misr_hw_reset(phys_enc, phys_enc->parent);
 
 	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
 	phys_enc->hw_intf->ops.enable_timing(phys_enc->hw_intf, 0);
@@ -1486,10 +1490,12 @@ struct sde_encoder_phys *sde_encoder_phys_vid_init(
 	phys_enc->parent_ops = p->parent_ops;
 	phys_enc->sde_kms = p->sde_kms;
 	phys_enc->split_role = p->split_role;
+	phys_enc->slave_idx = p->slave_idx;
 	phys_enc->intf_mode = INTF_MODE_VIDEO;
 	phys_enc->enc_spinlock = p->enc_spinlock;
 	phys_enc->vblank_ctl_lock = p->vblank_ctl_lock;
 	phys_enc->comp_type = p->comp_type;
+	phys_enc->num_of_splits = p->num_of_splits;
 	for (i = 0; i < INTR_IDX_MAX; i++) {
 		irq = &phys_enc->irq[i];
 		INIT_LIST_HEAD(&irq->cb.list);
