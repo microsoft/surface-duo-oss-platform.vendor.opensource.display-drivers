@@ -1003,8 +1003,12 @@ static char dp_dsc_rc_range_max_qp_1_1_scr1[][15] = {
  * DSC 1.1 and DSC 1.1 SCR
  * Rate control - bpg offset values
  */
-static char dp_dsc_rc_range_bpg_offset[] = {2, 0, 0, -2, -4, -6, -8, -8,
-		-8, -10, -10, -12, -12, -12, -12};
+static char dp_dsc_rc_range_bpg_offset[][15] = {
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12},
+	};
 
 struct dp_dsc_dto_data {
 	enum msm_display_compression_ratio comp_ratio;
@@ -1386,7 +1390,7 @@ static void dp_panel_dsc_populate_static_params(
 		dsc->range_min_qp = dp_dsc_rc_range_min_qp_1_1[ratio_index];
 		dsc->range_max_qp = dp_dsc_rc_range_max_qp_1_1[ratio_index];
 	}
-	dsc->range_bpg_offset = dp_dsc_rc_range_bpg_offset;
+	dsc->range_bpg_offset = dp_dsc_rc_range_bpg_offset[ratio_index];
 
 	if (bpp == 8) {
 		dsc->initial_offset = 6144;

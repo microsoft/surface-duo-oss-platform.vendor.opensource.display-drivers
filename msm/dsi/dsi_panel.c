@@ -94,8 +94,12 @@ static char dsi_dsc_rc_range_max_qp_1_1_scr1[][15] = {
  * DSC 1.1 and DSC 1.1 SCR
  * Rate control - bpg offset values
  */
-static char dsi_dsc_rc_range_bpg_offset[] = {2, 0, 0, -2, -4, -6, -8, -8,
-		-8, -10, -10, -12, -12, -12, -12};
+static char dsi_dsc_rc_range_bpg_offset[][15] = {
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12},
+	};
 
 int dsi_dsc_create_pps_buf_cmd(struct msm_display_dsc_info *dsc, char *buf,
 				int pps_id)
@@ -2437,7 +2441,7 @@ int dsi_dsc_populate_static_param(struct msm_display_dsc_info *dsc)
 		dsc->range_min_qp = dsi_dsc_rc_range_min_qp_1_1[ratio_index];
 		dsc->range_max_qp = dsi_dsc_rc_range_max_qp_1_1[ratio_index];
 	}
-	dsc->range_bpg_offset = dsi_dsc_rc_range_bpg_offset;
+	dsc->range_bpg_offset = dsi_dsc_rc_range_bpg_offset[ratio_index];
 
 	if (bpp == 8) {
 		dsc->initial_offset = 6144;
