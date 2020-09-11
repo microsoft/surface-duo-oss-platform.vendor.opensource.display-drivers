@@ -2001,11 +2001,13 @@ dp_mst_find_fixed_connector(struct dp_mst_private *dp_mst,
 	struct dp_display *dp_display = dp_mst->dp_display;
 	struct drm_connector *connector = NULL;
 	struct sde_connector *c_conn;
-	u32 port_num;
+	u32 port_num = 0;
 	int i;
 
 	mutex_lock(&port->mgr->lock);
-	port_num = dp_mst_find_fixed_port_num(port->mgr->mst_primary, port);
+	if (port->mgr->mst_primary)
+		port_num = dp_mst_find_fixed_port_num(
+				port->mgr->mst_primary, port);
 	mutex_unlock(&port->mgr->lock);
 
 	if (!port_num)
