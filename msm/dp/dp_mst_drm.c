@@ -2272,9 +2272,7 @@ static void dp_mst_display_hpd(void *dp_display, bool hpd_status)
 	struct dp_display *dp = dp_display;
 	struct dp_mst_private *mst = dp->dp_mst_prv_info;
 
-	mutex_lock(&mst->mst_lock);
 	mst->mst_session_state = hpd_status;
-	mutex_unlock(&mst->mst_lock);
 
 	if (!hpd_status)
 		rc = mst->mst_fw_cbs->topology_mgr_set_mst(&mst->mst_mgr,
