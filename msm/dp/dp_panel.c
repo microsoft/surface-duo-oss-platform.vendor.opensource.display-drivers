@@ -1871,8 +1871,10 @@ static void dp_panel_decode_dsc_dpcd(struct dp_panel *dp_panel)
 		dp_panel->sink_dsc_caps.color_depth =
 				dp_panel->dsc_dpcd[10];
 
-		if (dp_panel->sink_dsc_caps.version >= 0x11)
+		if (dp_panel->sink_dsc_caps.version >= 0x11) {
 			dp_panel->dsc_en = true;
+			dp_panel->widebus_en = true;
+		}
 	} else {
 		dp_panel->sink_dsc_caps.dsc_capable = false;
 		dp_panel->dsc_en = false;
