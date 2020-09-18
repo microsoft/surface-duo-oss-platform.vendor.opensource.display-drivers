@@ -272,12 +272,40 @@ static int dp_ctrl_read_link_status(struct dp_ctrl_private *ctrl,
 	return ret;
 }
 
+static int dp_ctrl_link_rate_down_shift(struct dp_ctrl_private *ctrl)
+{
+	int ret = 0;
+
+	if (!ctrl)
+		return -EINVAL;
+
+	switch (ctrl->link->link_params.bw_code) {
+	case DP_LINK_BW_8_1:
+		ctrl->link->link_params.bw_code = DP_LINK_BW_5_4;
+		break;
+	case DP_LINK_BW_5_4:
+		ctrl->link->link_params.bw_code = DP_LINK_BW_2_7;
+		break;
+	case DP_LINK_BW_2_7:
+		ctrl->link->link_params.bw_code = DP_LINK_BW_1_62;
+		break;
+	case DP_LINK_BW_1_62:
+	default:
+		ret = -EINVAL;
+		break;
+	};
+
+	pr_debug("new bw code=0x%x\n", ctrl->link->link_params.bw_code);
+
+	return ret;
+}
+
 static int dp_ctrl_lane_count_down_shift(struct dp_ctrl_private *ctrl)
 {
-	int ret = -EAGAIN;
+	int ret = 0;
 	u8 lanes = ctrl->link->link_params.lane_count;
 
-	if (ctrl->panel->link_info.revision != 0x14)
+	if (ctrl->panel->link_info.revision < 0x14)
 		return -EINVAL;
 
 	switch (lanes) {
@@ -298,11 +326,6 @@ static int dp_ctrl_lane_count_down_shift(struct dp_ctrl_private *ctrl)
 	return ret;
 }
 
-static bool dp_ctrl_is_link_rate_rbr(struct dp_ctrl_private *ctrl)
-{
-	return ctrl->link->link_params.bw_code == DP_LINK_BW_1_62;
-}
-
 static u8 dp_ctrl_get_active_lanes(struct dp_ctrl_private *ctrl,
 				u8 *link_status)
 {
@@ -320,10 +343,11 @@ static u8 dp_ctrl_get_active_lanes(struct dp_ctrl_private *ctrl,
 
 static int dp_ctrl_link_training_1(struct dp_ctrl_private *ctrl)
 {
-	int tries, old_v_level, ret = -EINVAL;
+	int tries, tries2, old_v_level, ret = 0;
 	u8 link_status[DP_LINK_STATUS_SIZE];
 	u8 pattern = 0;
-	int const maximum_retries = 5;
+	int const maximum_retries = 10;
+	int const maximum_retries_same_level = 5;
 
 	ctrl->aux->state &= ~DP_STATE_TRAIN_1_FAILED;
 	ctrl->aux->state &= ~DP_STATE_TRAIN_1_SUCCEEDED;
@@ -334,8 +358,14 @@ static int dp_ctrl_link_training_1(struct dp_ctrl_private *ctrl)
 	wmb();
 
 	tries = 0;
+	tries2 = 0;
 	old_v_level = ctrl->link->phy_params.v_level;
-	while (!atomic_read(&ctrl->aborted)) {
+	while (1) {
+		if (atomic_read(&ctrl->aborted)) {
+			ret = -EINVAL;
+			break;
+		}
+
 		/* update hardware with current swing/pre-emp values */
 		dp_ctrl_update_hw_vx_px(ctrl);
 
@@ -360,21 +390,20 @@ static int dp_ctrl_link_training_1(struct dp_ctrl_private *ctrl)
 		if (ret)
 			break;
 
-		if (!drm_dp_clock_recovery_ok(link_status,
+		if (drm_dp_clock_recovery_ok(link_status,
 			ctrl->link->link_params.lane_count))
-			ret = -EINVAL;
-		else
 			break;
 
 		if (ctrl->link->phy_params.v_level == DP_LINK_VOLTAGE_MAX) {
 			pr_err_ratelimited("max v_level reached\n");
+			ret = -EAGAIN;
 			break;
 		}
 
 		if (old_v_level == ctrl->link->phy_params.v_level) {
-			if (++tries >= maximum_retries) {
-				pr_err("max tries reached\n");
-				ret = -ETIMEDOUT;
+			if (++tries >= maximum_retries_same_level) {
+				pr_err("max tries of same v_level reached\n");
+				ret = -EAGAIN;
 				break;
 			}
 		} else {
@@ -382,19 +411,44 @@ static int dp_ctrl_link_training_1(struct dp_ctrl_private *ctrl)
 			old_v_level = ctrl->link->phy_params.v_level;
 		}
 
+		if (++tries2 >= maximum_retries) {
+			pr_err("max tries reached\n");
+			ret = -EAGAIN;
+			break;
+		}
+
 		pr_debug("clock recovery not done, adjusting vx px\n");
 
 		ctrl->link->adjust_levels(ctrl->link, link_status);
 	}
 
-	if (ret && dp_ctrl_is_link_rate_rbr(ctrl)) {
-		u8 active_lanes = dp_ctrl_get_active_lanes(ctrl, link_status);
+	if (ret == -EAGAIN) {
+		/* Try reduce link rate */
+		if (dp_ctrl_link_rate_down_shift(ctrl)) {
+			/*
+			 * Already RBR? Reduce lane count to
+			 * the lowest-numbered LANEx_CR_DONE lanes.
+			 */
+			u8 active_lanes = dp_ctrl_get_active_lanes(ctrl,
+					link_status);
 
-		if (active_lanes) {
-			ctrl->link->link_params.lane_count = active_lanes;
-			ctrl->link->link_params.bw_code = ctrl->initial_bw_code;
-
-			/* retry with new settings */
+			active_lanes = ctrl->link->link_params.lane_count / 2;
+			if (active_lanes) {
+				/*
+				 * Retry with initial link rate and
+				 * reduced lane count.
+				 */
+				ctrl->link->link_params.lane_count =
+						active_lanes;
+				ctrl->link->link_params.bw_code =
+						ctrl->initial_bw_code;
+				ret = -EAGAIN;
+			} else {
+				/* Failed the clock recovery sequence */
+				ret = -ETIMEDOUT;
+			}
+		} else {
+			/* Retry with reduced link rate */
 			ret = -EAGAIN;
 		}
 	}
@@ -409,32 +463,6 @@ static int dp_ctrl_link_training_1(struct dp_ctrl_private *ctrl)
 	return ret;
 }
 
-static int dp_ctrl_link_rate_down_shift(struct dp_ctrl_private *ctrl)
-{
-	int ret = 0;
-
-	if (!ctrl)
-		return -EINVAL;
-
-	switch (ctrl->link->link_params.bw_code) {
-	case DP_LINK_BW_8_1:
-		ctrl->link->link_params.bw_code = DP_LINK_BW_5_4;
-		break;
-	case DP_LINK_BW_5_4:
-		ctrl->link->link_params.bw_code = DP_LINK_BW_2_7;
-		break;
-	case DP_LINK_BW_2_7:
-	case DP_LINK_BW_1_62:
-	default:
-		ctrl->link->link_params.bw_code = DP_LINK_BW_1_62;
-		break;
-	};
-
-	pr_debug("new bw code=0x%x\n", ctrl->link->link_params.bw_code);
-
-	return ret;
-}
-
 static void dp_ctrl_clear_training_pattern(struct dp_ctrl_private *ctrl)
 {
 	dp_ctrl_update_sink_pattern(ctrl, 0);
@@ -443,8 +471,8 @@ static void dp_ctrl_clear_training_pattern(struct dp_ctrl_private *ctrl)
 
 static int dp_ctrl_link_training_2(struct dp_ctrl_private *ctrl)
 {
-	int tries = 0, ret = -EINVAL;
-	u8 dpcd_pattern, pattern = 0;
+	int tries = 0, ret = 0;
+	u8 pattern = 0;
 	int const maximum_retries = 5;
 	u8 link_status[DP_LINK_STATUS_SIZE];
 
@@ -456,14 +484,17 @@ static int dp_ctrl_link_training_2(struct dp_ctrl_private *ctrl)
 	/* Make sure to clear the current pattern before starting a new one */
 	wmb();
 
-	dpcd_pattern = ctrl->training_2_pattern;
+	while (1)  {
+		if (atomic_read(&ctrl->aborted)) {
+			ret = -EINVAL;
+			break;
+		}
 
-	while (!atomic_read(&ctrl->aborted)) {
 		/* update hardware with current swing/pre-emp values */
 		dp_ctrl_update_hw_vx_px(ctrl);
 
 		if (!pattern) {
-			pattern = dpcd_pattern;
+			pattern = ctrl->training_2_pattern;
 
 			/* program hw to send pattern */
 			ctrl->catalog->set_pattern(ctrl->catalog, pattern);
@@ -487,23 +518,44 @@ static int dp_ctrl_link_training_2(struct dp_ctrl_private *ctrl)
 		/* check if CR bits still remain set */
 		if (!drm_dp_clock_recovery_ok(link_status,
 			ctrl->link->link_params.lane_count)) {
-			ret = -EINVAL;
+			ret = -EAGAIN;
 			break;
 		}
 
-		if (!drm_dp_channel_eq_ok(link_status,
+		if (drm_dp_channel_eq_ok(link_status,
 			ctrl->link->link_params.lane_count))
-			ret = -EINVAL;
-		else
 			break;
 
-		if (tries >= maximum_retries) {
-			ret = dp_ctrl_lane_count_down_shift(ctrl);
+		if (++tries > maximum_retries) {
+			ret = -EAGAIN;
 			break;
 		}
-		tries++;
 
 		ctrl->link->adjust_levels(ctrl->link, link_status);
+	}
+
+	if (ret == -EAGAIN) {
+		/* reduce lane count and keep current link rate */
+		if (dp_ctrl_lane_count_down_shift(ctrl))
+			/* Lowest lane count or < DP 1.4, reduce link rate */
+			if (dp_ctrl_link_rate_down_shift(ctrl)) {
+				/*
+				 * Already RBR?
+				 * Failed the channel EQ sequence.
+				 */
+				ret = -ETIMEDOUT;
+			} else {
+				/*
+				 * Retry with new link rate and
+				 * initial lane count.
+				 */
+				ctrl->link->link_params.lane_count =
+						ctrl->initial_lane_count;
+				ret = -EAGAIN;
+			}
+		else
+			/* Retry with new lane count */
+			ret = -EAGAIN;
 	}
 
 	ctrl->aux->state &= ~DP_STATE_TRAIN_2_STARTED;
@@ -577,7 +629,6 @@ end:
 static int dp_ctrl_setup_main_link(struct dp_ctrl_private *ctrl)
 {
 	int ret = 0;
-	const unsigned int fec_cfg_dpcd = 0x120;
 
 	if (ctrl->link->sink_request & DP_TEST_LINK_PHY_TEST_PATTERN)
 		goto end;
@@ -590,7 +641,8 @@ static int dp_ctrl_setup_main_link(struct dp_ctrl_private *ctrl)
 	ctrl->catalog->reset(ctrl->catalog);
 
 	if (ctrl->fec_mode)
-		drm_dp_dpcd_writeb(ctrl->aux->drm_aux, fec_cfg_dpcd, 0x01);
+		drm_dp_dpcd_writeb(ctrl->aux->drm_aux, DP_FEC_CONFIGURATION,
+				0x01);
 
 	ret = dp_ctrl_link_train(ctrl);
 
@@ -670,11 +722,8 @@ end:
 	ctrl->training_2_pattern = pattern;
 }
 
-static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
+static void dp_ctrl_config_phy(struct dp_ctrl_private *ctrl)
 {
-	int rc = -EINVAL;
-	bool downgrade = false;
-	u32 link_train_max_retries = 100;
 	struct dp_catalog_ctrl *catalog;
 	struct dp_link_params *link_params;
 
@@ -688,10 +737,24 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 	 * Otherwise the spare register would be overwritten.
 	 */
 	catalog->set_phy_bond_mode(catalog, ctrl->phy_bond_mode);
+}
 
-	do {
+static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
+{
+	int rc = -EINVAL;
+	bool downgrade = false;
+	u32 link_train_max_retries = 100;
+	struct dp_catalog_ctrl *catalog;
+	struct dp_link_params *link_params;
+
+	catalog = ctrl->catalog;
+	link_params = &ctrl->link->link_params;
+
+	while (1) {
 		pr_debug("bw_code=%d, lane_count=%d\n",
 			link_params->bw_code, link_params->lane_count);
+
+		dp_ctrl_config_phy(ctrl);
 
 		rc = dp_ctrl_enable_link_clock(ctrl);
 		if (rc)
@@ -725,18 +788,15 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 			break;
 		}
 
-		if (!link_train_max_retries || atomic_read(&ctrl->aborted))
-			break;
-
-		if (rc != -EAGAIN)
-			dp_ctrl_link_rate_down_shift(ctrl);
-
 		dp_ctrl_configure_source_link_params(ctrl, false);
 		dp_ctrl_disable_link_clock(ctrl);
 
+		if (!link_train_max_retries || atomic_read(&ctrl->aborted))
+			break;
+
 		/* hw recommended delays before retrying link training */
 		msleep(20);
-	} while (--link_train_max_retries && !atomic_read(&ctrl->aborted));
+	}
 
 	return rc;
 }
