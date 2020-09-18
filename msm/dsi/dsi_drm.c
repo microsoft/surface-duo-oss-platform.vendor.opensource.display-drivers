@@ -699,7 +699,7 @@ void dsi_connector_put_modes(struct drm_connector *connector,
 static int dsi_drm_update_edid_name(struct edid *edid, const char *name)
 {
 	u8 *dtd = (u8 *)&edid->detailed_timings[3];
-	u8 standard_header[] = {0x00, 0x00, 0x00, 0xFE, 0x00};
+	u8 standard_header[] = {0x00, 0x00, 0x00, 0xFC, 0x00};
 	u32 dtd_size = 18;
 	u32 header_size = sizeof(standard_header);
 
