@@ -35,11 +35,7 @@ enum dp_aux_error {
 };
 
 struct dp_aux {
-	u32 reg;
-	u32 size;
 	u32 state;
-
-	bool read;
 
 	struct drm_dp_aux *drm_aux;
 	int (*drm_aux_register)(struct dp_aux *aux);
@@ -49,8 +45,7 @@ struct dp_aux {
 	void (*deinit)(struct dp_aux *aux);
 	void (*reconfig)(struct dp_aux *aux);
 	void (*abort)(struct dp_aux *aux, bool reset);
-	void (*dpcd_updated)(struct dp_aux *aux);
-	void (*set_sim_mode)(struct dp_aux *aux, bool en, u8 *edid, u8 *dpcd,
+	void (*set_sim_mode)(struct dp_aux *aux,
 		struct msm_dp_aux_bridge *sim_bridge);
 	int (*aux_switch)(struct dp_aux *aux, bool enable, int orientation);
 };
