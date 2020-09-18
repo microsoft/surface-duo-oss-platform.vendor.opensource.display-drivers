@@ -29,6 +29,7 @@
 #include "dp_display.h"
 #include "sde_hdcp.h"
 #include "dp_debug.h"
+#include "dp_mst_sim.h"
 
 #define DP_MST_DEBUG(fmt, ...) pr_debug(fmt, ##__VA_ARGS__)
 
@@ -1017,6 +1018,20 @@ static void dp_display_clean(struct dp_display_private *dp)
 
 static void dp_display_handle_disconnect(struct dp_display_private *dp)
 {
+	if (dp->parser->force_connect_mode) {
+		/*
+		 * switch from normal mode to simulation mode. update EDID
+		 * and send hotplug to user. this gives user a chance to
+		 * update the mode if simulation EDID is different than
+		 * current EDID.
+		 */
+		mutex_lock(&dp->session_lock);
+		dp_sim_set_sim_mode(dp->aux_bridge, DP_SIM_MODE_ALL);
+		mutex_unlock(&dp->session_lock);
+		dp_display_process_hpd_high(dp);
+		return;
+	}
+
 	dp_display_process_hpd_low(dp);
 
 	/* cancel any pending request */
@@ -1246,6 +1261,16 @@ static void dp_display_connect_work(struct work_struct *work)
 		}
 	}
 
+	if (dp->parser->force_connect_mode) {
+		if (!reset_connector) {
+			dp_display_clean(dp);
+			dp_display_host_deinit(dp);
+		}
+		dp->is_connected = false;
+		dp_display_process_mst_hpd_low(dp);
+		dp_sim_set_sim_mode(dp->aux_bridge, 0);
+	}
+
 	mutex_unlock(&dp->session_lock);
 
 	rc = dp_display_process_hpd_high(dp);
@@ -1470,6 +1495,17 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 
 	dp_display_get_usb_extcon(dp);
 
+	if (dp->parser->force_connect_mode) {
+		/*
+		 * always enter simulation first regardless of the actual
+		 * connection state to make connector always connected.
+		 * this will fix the corner case when user tries to read
+		 * connector modes when link training is still running.
+		 */
+		dp_sim_set_sim_mode(dp->aux_bridge, DP_SIM_MODE_ALL);
+		dp_display_process_hpd_high(dp);
+	}
+
 	rc = dp->hpd->register_hpd(dp->hpd);
 	if (rc) {
 		pr_err("failed register hpd\n");
@@ -1592,7 +1628,7 @@ static int dp_display_prepare(struct dp_display *dp_display, void *panel)
 	if (dp->power_on)
 		goto end;
 
-	if (!dp_display_is_ready(dp))
+	if (!dp_display_is_ready(dp) && !dp->parser->force_connect_mode)
 		goto end;
 
 	dp_display_host_init(dp);
@@ -1941,7 +1977,7 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	 * reboot or suspend-resume but not from normal
 	 * hot plug.
 	 */
-	if (dp_display_is_ready(dp))
+	if (dp_display_is_ready(dp) || dp->parser->force_connect_mode)
 		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
 
 	/*
