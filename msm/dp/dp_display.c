@@ -773,9 +773,9 @@ static void dp_display_host_init(struct dp_display_private *dp)
 
 	dp->power->init(dp->power, flip);
 	dp->hpd->host_init(dp->hpd, &dp->catalog->hpd);
+	enable_irq(dp->irq);
 	dp->ctrl->init(dp->ctrl, flip, reset);
 	dp->aux->init(dp->aux, dp->parser->aux_cfg);
-	enable_irq(dp->irq);
 	dp->panel->init(dp->panel);
 	dp->core_initialized = true;
 

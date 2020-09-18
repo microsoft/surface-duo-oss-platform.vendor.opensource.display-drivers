@@ -39,6 +39,7 @@
 #include "sde_core_irq.h"
 #include "sde_hw_top.h"
 #include "sde_hw_qdss.h"
+#include "sde_recovery_manager.h"
 
 #define SDE_DEBUG_ENC(e, fmt, ...) SDE_DEBUG("enc%d " fmt,\
 		(e) ? (e)->base.base.id : -1, ##__VA_ARGS__)
@@ -1129,6 +1130,14 @@ static int sde_encoder_virt_atomic_check(
 		if (ret) {
 			SDE_ERROR_ENC(sde_enc,
 				"failed to get mode info, rc = %d\n", ret);
+			return ret;
+		}
+
+		ret = sde_connector_get_info(sde_conn_state->base.connector,
+				&sde_enc->disp_info);
+		if (ret) {
+			SDE_ERROR_ENC(sde_enc,
+				"failed to get disp info, rc = %d\n", ret);
 			return ret;
 		}
 
@@ -4097,6 +4106,9 @@ static void sde_encoder_underrun_callback(struct drm_encoder *drm_enc,
 	SDE_ATRACE_BEGIN("encoder_underrun_callback");
 	atomic_inc(&phy_enc->underrun_cnt);
 	SDE_EVT32(DRMID(drm_enc), atomic_read(&phy_enc->underrun_cnt));
+	if (drm_enc != NULL)
+		sde_recovery_set_event(drm_enc->dev, DRM_EVENT_SDE_UNDERRUN,
+				drm_enc->crtc);
 
 	trace_sde_encoder_underrun(DRMID(drm_enc),
 		atomic_read(&phy_enc->underrun_cnt));
