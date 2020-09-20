@@ -839,11 +839,10 @@ static int dp_display_send_hpd_notification(struct dp_display_private *dp)
 		DP_WARN("%s timeout\n", hpd ? "connect" : "disconnect");
 		ret = -EINVAL;
 	}
-	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state, hpd, ret);
-	return ret;
+
 skip_wait:
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state, hpd, ret);
-	return 0;
+	return ret;
 }
 
 static void dp_display_update_mst_state(struct dp_display_private *dp,
@@ -904,8 +903,11 @@ static void dp_display_process_mst_hpd_high(struct dp_display_private *dp,
 		info.mst_port_cnt = dp->debug->mst_port_cnt;
 		info.edid = dp->debug->get_edid(dp->debug);
 
+		if (dp->mst.cbs.set_mgr_state)
+			dp->mst.cbs.set_mgr_state(&dp->dp_display, true, &info);
+
 		if (dp->mst.cbs.hpd)
-			dp->mst.cbs.hpd(&dp->dp_display, true, &info);
+			dp->mst.cbs.hpd(&dp->dp_display, true);
 	}
 
 	DP_MST_DEBUG("mst_hpd_high. mst_active:%d\n", dp->mst.mst_active);
@@ -1131,16 +1133,34 @@ skip_notify:
 
 static void dp_display_process_mst_hpd_low(struct dp_display_private *dp)
 {
+	int rc = 0;
 	struct dp_mst_hpd_info info = {0};
 
 	if (dp->mst.mst_active) {
 		DP_MST_DEBUG("mst_hpd_low work\n");
 
-		if (dp->mst.cbs.hpd) {
-			info.mst_protocol = dp->parser->has_mst_sideband;
-			dp->mst.cbs.hpd(&dp->dp_display, false, &info);
-		}
+		/*
+		 * HPD unplug callflow:
+		 * 1. send hpd unplug event with status=disconnected
+		 * 2. send hpd unplug on base connector so usermode can disable
+		 * all external displays.
+		 * 3. unset mst state in the topology mgr so the branch device
+		 *  can be cleaned up.
+		 */
+		if (dp->mst.cbs.hpd)
+			dp->mst.cbs.hpd(&dp->dp_display, false);
+
 		dp_display_update_mst_state(dp, false);
+
+		if ((dp_display_state_is(DP_STATE_CONNECT_NOTIFIED) ||
+				dp_display_state_is(DP_STATE_ENABLED)))
+			rc = dp_display_send_hpd_notification(dp);
+
+		if (dp->mst.cbs.set_mgr_state) {
+			info.mst_protocol = dp->parser->has_mst_sideband;
+			dp->mst.cbs.set_mgr_state(&dp->dp_display, false,
+					&info);
+		}
 	}
 
 	DP_MST_DEBUG("mst_hpd_low. mst_active:%d\n", dp->mst.mst_active);
@@ -1153,12 +1173,14 @@ static int dp_display_process_hpd_low(struct dp_display_private *dp)
 	dp_display_state_remove(DP_STATE_CONNECTED);
 	dp->process_hpd_connect = false;
 	dp_audio_enable(dp, false);
-	dp_display_process_mst_hpd_low(dp);
 
-	if ((dp_display_state_is(DP_STATE_CONNECT_NOTIFIED) ||
-			dp_display_state_is(DP_STATE_ENABLED)) &&
-			!dp->mst.mst_active)
-		rc = dp_display_send_hpd_notification(dp);
+	if (dp->mst.mst_active) {
+		dp_display_process_mst_hpd_low(dp);
+	} else {
+		if ((dp_display_state_is(DP_STATE_CONNECT_NOTIFIED) ||
+				dp_display_state_is(DP_STATE_ENABLED)))
+			rc = dp_display_send_hpd_notification(dp);
+	}
 
 	mutex_lock(&dp->session_lock);
 	if (!dp->active_stream_cnt)
@@ -1215,6 +1237,12 @@ end:
 static int dp_display_stream_pre_disable(struct dp_display_private *dp,
 			struct dp_panel *dp_panel)
 {
+	if (!dp->active_stream_cnt) {
+		DP_WARN("streams already disabled cnt=%d\n",
+				dp->active_stream_cnt);
+		return 0;
+	}
+
 	dp->ctrl->stream_pre_off(dp->ctrl, dp_panel);
 
 	return 0;
@@ -1224,8 +1252,14 @@ static void dp_display_stream_disable(struct dp_display_private *dp,
 			struct dp_panel *dp_panel)
 {
 	if (!dp->active_stream_cnt) {
-		DP_ERR("invalid active_stream_cnt (%d)\n",
+		DP_WARN("streams already disabled cnt=%d\n",
 				dp->active_stream_cnt);
+		return;
+	}
+
+	if (dp_panel->stream_id == DP_STREAM_MAX ||
+			!dp->active_panels[dp_panel->stream_id]) {
+		DP_ERR("panel is already disabled\n");
 		return;
 	}
 
@@ -1286,7 +1320,7 @@ static int dp_display_handle_disconnect(struct dp_display_private *dp)
 	}
 
 	mutex_lock(&dp->session_lock);
-	if (rc && dp_display_state_is(DP_STATE_ENABLED))
+	if (dp_display_state_is(DP_STATE_ENABLED))
 		dp_display_clean(dp);
 
 	dp_display_host_unready(dp);
@@ -1333,6 +1367,14 @@ static int dp_display_usbpd_disconnect_cb(struct device *dev)
 
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state,
 			dp->debug->psm_enabled);
+
+	/* skip if a disconnect is already in progress */
+	if (dp_display_state_is(DP_STATE_ABORTED) &&
+	    dp_display_state_is(DP_STATE_READY)) {
+		DP_DEBUG("disconnect already in progress\n");
+		SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_CASE1, dp->state);
+		return 0;
+	}
 
 	if (dp->debug->psm_enabled && dp_display_state_is(DP_STATE_READY))
 		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
@@ -1400,6 +1442,12 @@ static void dp_display_attention_work(struct work_struct *work)
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 	mutex_lock(&dp->session_lock);
 	SDE_EVT32_EXTERNAL(dp->state);
+
+	if (dp_display_state_is(DP_STATE_ABORTED)) {
+		DP_INFO("Hpd off, not handling any attention\n");
+		mutex_unlock(&dp->session_lock);
+		goto exit;
+	}
 
 	if (dp->debug->mst_hpd_sim || !dp_display_state_is(DP_STATE_READY)) {
 		mutex_unlock(&dp->session_lock);
@@ -1492,6 +1540,7 @@ cp_irq:
 
 mst_attention:
 	dp_display_mst_attention(dp);
+exit:
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 }
 
@@ -1868,6 +1917,9 @@ static int dp_display_set_mode(struct dp_display *dp_display, void *panel,
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state,
+			mode->timing.h_active, mode->timing.v_active,
+			mode->timing.refresh_rate);
 
 	mutex_lock(&dp->session_lock);
 	mode->timing.bpp =
@@ -1880,6 +1932,7 @@ static int dp_display_set_mode(struct dp_display *dp_display, void *panel,
 
 	dp_panel->pinfo = mode->timing;
 	mutex_unlock(&dp->session_lock);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 
 	return 0;
 }
@@ -2000,6 +2053,8 @@ static int dp_display_set_stream_info(struct dp_display *dp_display,
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state, strm_id,
+			start_slot, num_slots);
 
 	mutex_lock(&dp->session_lock);
 
@@ -2013,6 +2068,7 @@ static int dp_display_set_stream_info(struct dp_display *dp_display,
 	}
 
 	mutex_unlock(&dp->session_lock);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state, rc);
 
 	return rc;
 }
@@ -2152,6 +2208,7 @@ end:
 
 	complete_all(&dp->notification_comp);
 	mutex_unlock(&dp->session_lock);
+	DP_DEBUG("display post enable complete. state: 0x%x\n", dp->state);
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 	return 0;
 }
@@ -2859,6 +2916,7 @@ static int dp_display_init_aux_switch(struct dp_display_private *dp)
 		goto end;
 	}
 
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY);
 	dp->aux_switch_node = of_parse_phandle(dp->pdev->dev.of_node,
 			phandle, 0);
 	if (!dp->aux_switch_node) {
@@ -2878,6 +2936,7 @@ static int dp_display_init_aux_switch(struct dp_display_private *dp)
 
 	fsa4480_unreg_notifier(&nb, dp->aux_switch_node);
 end:
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, rc);
 	return rc;
 }
 
@@ -2892,6 +2951,7 @@ static int dp_display_mst_install(struct dp_display *dp_display,
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 
 	if (!mst_install_info->cbs->hpd || !mst_install_info->cbs->hpd_irq) {
 		DP_ERR("invalid mst cbs\n");
@@ -2909,6 +2969,7 @@ static int dp_display_mst_install(struct dp_display *dp_display,
 	dp->mst.drm_registered = true;
 
 	DP_MST_DEBUG("dp mst drm installed\n");
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 
 	return 0;
 }
@@ -2923,6 +2984,7 @@ static int dp_display_mst_uninstall(struct dp_display *dp_display)
 	}
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 
 	if (!dp->mst.drm_registered) {
 		DP_DEBUG("drm mst not registered\n");
@@ -2935,6 +2997,7 @@ static int dp_display_mst_uninstall(struct dp_display *dp_display)
 	dp->mst.drm_registered = false;
 
 	DP_MST_DEBUG("dp mst drm uninstalled\n");
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 
 	return 0;
 }
@@ -2947,6 +3010,7 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 	struct dp_panel *dp_panel;
 	struct dp_display_private *dp;
 	struct dp_mst_connector *mst_connector;
+	struct dp_mst_connector *cached_connector;
 
 	if (!dp_display || !connector) {
 		DP_ERR("invalid input\n");
@@ -2955,12 +3019,13 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
 
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 	mutex_lock(&dp->session_lock);
 
 	if (!dp->mst.drm_registered) {
 		DP_DEBUG("drm mst not registered\n");
-		mutex_unlock(&dp->session_lock);
-		return -EPERM;
+		rc = -EPERM;
+		goto end;
 	}
 
 	panel_in.dev = &dp->pdev->dev;
@@ -2975,8 +3040,7 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 	if (IS_ERR(dp_panel)) {
 		rc = PTR_ERR(dp_panel);
 		DP_ERR("failed to initialize panel, rc = %d\n", rc);
-		mutex_unlock(&dp->session_lock);
-		return rc;
+		goto end;
 	}
 
 	dp_panel->audio = dp_audio_get(dp->pdev, dp_panel, &dp->catalog->audio);
@@ -2984,8 +3048,7 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 		rc = PTR_ERR(dp_panel->audio);
 		DP_ERR("[mst] failed to initialize audio, rc = %d\n", rc);
 		dp_panel->audio = NULL;
-		mutex_unlock(&dp->session_lock);
-		return rc;
+		goto end;
 	}
 
 	DP_MST_DEBUG("dp mst connector installed. conn:%d\n",
@@ -2997,11 +3060,23 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 			GFP_KERNEL);
 	if (!mst_connector) {
 		mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
-		mutex_unlock(&dp->session_lock);
-		return -ENOMEM;
+		rc = -ENOMEM;
+		goto end;
 	}
 
-	mst_connector->debug_en = false;
+	cached_connector = &dp->debug->mst_connector_cache;
+	if (cached_connector->debug_en) {
+		mst_connector->debug_en = true;
+		mst_connector->hdisplay = cached_connector->hdisplay;
+		mst_connector->vdisplay = cached_connector->vdisplay;
+		mst_connector->vrefresh = cached_connector->vrefresh;
+		mst_connector->aspect_ratio = cached_connector->aspect_ratio;
+		memset(cached_connector, 0, sizeof(*cached_connector));
+		dp->debug->set_mst_con(dp->debug, connector->base.id);
+	} else {
+		mst_connector->debug_en = false;
+	}
+
 	mst_connector->conn = connector;
 	mst_connector->con_id = connector->base.id;
 	mst_connector->state = connector_status_unknown;
@@ -3011,9 +3086,11 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 			&dp->debug->dp_mst_connector_list.list);
 
 	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
+end:
 	mutex_unlock(&dp->session_lock);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state, rc);
 
-	return 0;
+	return rc;
 }
 
 static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
@@ -3032,6 +3109,7 @@ static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
 
 	dp = container_of(dp_display, struct dp_display_private, dp_display);
 
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 	mutex_lock(&dp->session_lock);
 
 	if (!dp->mst.drm_registered) {
@@ -3059,6 +3137,15 @@ static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
 	list_for_each_entry_safe(con_to_remove, temp_con,
 			&dp->debug->dp_mst_connector_list.list, list) {
 		if (con_to_remove->conn == connector) {
+			/*
+			 * cache any debug info if enabled that can be applied
+			 * on new connectors.
+			 */
+			if (con_to_remove->debug_en)
+				memcpy(&dp->debug->mst_connector_cache,
+						con_to_remove,
+						sizeof(*con_to_remove));
+
 			list_del(&con_to_remove->list);
 			kfree(con_to_remove);
 		}
@@ -3066,6 +3153,7 @@ static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
 
 	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
 	mutex_unlock(&dp->session_lock);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 
 	return rc;
 }
@@ -3408,6 +3496,8 @@ static void dp_display_set_mst_state(void *dp_display,
 	}
 
 	dp = container_of(g_dp_display, struct dp_display_private, dp_display);
+	SDE_EVT32_EXTERNAL(mst_state, dp->mst.mst_active);
+
 	if (dp->mst.mst_active && dp->mst.cbs.set_drv_state)
 		dp->mst.cbs.set_drv_state(g_dp_display, mst_state);
 }
@@ -3437,6 +3527,7 @@ static int dp_pm_prepare(struct device *dev)
 	struct dp_display_private *dp = container_of(g_dp_display,
 			struct dp_display_private, dp_display);
 
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY);
 	mutex_lock(&dp->session_lock);
 	dp_display_set_mst_state(g_dp_display, PM_SUSPEND);
 
@@ -3456,6 +3547,7 @@ static int dp_pm_prepare(struct device *dev)
 
 	dp_display_state_add(DP_STATE_SUSPENDED);
 	mutex_unlock(&dp->session_lock);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 
 	return 0;
 }
@@ -3465,6 +3557,7 @@ static void dp_pm_complete(struct device *dev)
 	struct dp_display_private *dp = container_of(g_dp_display,
 			struct dp_display_private, dp_display);
 
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY);
 	mutex_lock(&dp->session_lock);
 	dp_display_set_mst_state(g_dp_display, PM_DEFAULT);
 
@@ -3484,6 +3577,7 @@ static void dp_pm_complete(struct device *dev)
 
 	dp_display_state_remove(DP_STATE_SUSPENDED);
 	mutex_unlock(&dp->session_lock);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
 }
 
 static const struct dev_pm_ops dp_pm_ops = {

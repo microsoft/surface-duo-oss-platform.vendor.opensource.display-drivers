@@ -667,6 +667,8 @@ void dsi_phy_hw_v4_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 					struct dsi_phy_cfg *cfg, bool is_master)
 {
 	u32 reg;
+	bool is_cphy = (cfg->phy_type == DSI_PHY_TYPE_CPHY) ?
+			true : false;
 
 	if (is_master) {
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL19,
@@ -692,7 +694,7 @@ void dsi_phy_hw_v4_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 			  cfg->timing.lane_v4[12], cfg->timing.lane_v4[13]);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL26,
 			  DSIPHY_CMN_CTRL_0, DSIPHY_CMN_LANE_CTRL0,
-			  0x7f, 0x1f);
+			  0x7f, is_cphy ? 0x17 : 0x1f);
 
 	} else {
 		reg = DSI_R32(phy, DSIPHY_CMN_CLK_CFG1);
@@ -727,7 +729,7 @@ void dsi_phy_hw_v4_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 			  cfg->timing.lane_v4[13], 0x7f);
 		DSI_DYN_REF_REG_W(phy->dyn_pll_base, DSI_DYN_REFRESH_PLL_CTRL9,
 			  DSIPHY_CMN_LANE_CTRL0, DSIPHY_CMN_CTRL_2,
-			  0x1f, 0x40);
+			  is_cphy ? 0x17 : 0x1f, 0x40);
 		/*
 		 * fill with dummy register writes since controller will blindly
 		 * send these values to DSI PHY.
@@ -736,7 +738,7 @@ void dsi_phy_hw_v4_0_dyn_refresh_config(struct dsi_phy_hw *phy,
 		while (reg <= DSI_DYN_REFRESH_PLL_CTRL29) {
 			DSI_DYN_REF_REG_W(phy->dyn_pll_base, reg,
 				  DSIPHY_CMN_LANE_CTRL0, DSIPHY_CMN_CTRL_0,
-				  0x1f, 0x7f);
+				  is_cphy ? 0x17 : 0x1f, 0x7f);
 			reg += 0x4;
 		}
 
@@ -763,6 +765,23 @@ void dsi_phy_hw_v4_0_dyn_refresh_pipe_delay(struct dsi_phy_hw *phy,
 		    delay->pll_delay);
 }
 
+void dsi_phy_hw_v4_0_dyn_refresh_trigger_sel(struct dsi_phy_hw *phy,
+		bool is_master)
+{
+	u32 reg;
+
+	/*
+	 * Dynamic refresh will take effect at next mdp flush event.
+	 * This makes sure that any update to frame timings together
+	 * with dfps will take effect in one vsync at next mdp flush.
+	 */
+	if (is_master) {
+		reg = DSI_GEN_R32(phy->dyn_pll_base, DSI_DYN_REFRESH_CTRL);
+		reg |= BIT(17);
+		DSI_GEN_W32(phy->dyn_pll_base, DSI_DYN_REFRESH_CTRL, reg);
+	}
+}
+
 void dsi_phy_hw_v4_0_dyn_refresh_helper(struct dsi_phy_hw *phy, u32 offset)
 {
 	u32 reg;
@@ -774,7 +793,7 @@ void dsi_phy_hw_v4_0_dyn_refresh_helper(struct dsi_phy_hw *phy, u32 offset)
 	 */
 	if (!offset) {
 		reg = DSI_GEN_R32(phy->dyn_pll_base, DSI_DYN_REFRESH_CTRL);
-		reg &= ~(BIT(0) | BIT(8));
+		reg &= ~(BIT(0) | BIT(8) | BIT(13) | BIT(16) | BIT(17));
 		DSI_GEN_W32(phy->dyn_pll_base, DSI_DYN_REFRESH_CTRL, reg);
 		wmb(); /* ensure dynamic fps is cleared */
 		return;

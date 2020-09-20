@@ -229,6 +229,19 @@ struct dsi_ctrl_interrupts {
  *                           insert null packet.
  * @modeupdated:	  Boolean to send new roi if mode is updated.
  * @split_link_supported: Boolean to check if hw supports split link.
+ * @enable_cmd_dma_stats: Boolean to indicate the verbose logging during
+ *				CMD transfer.
+ *				count.
+ * @cmd_mode:			Boolean to indicate if panel is running in
+ *				command mode.
+ * @cmd_trigger_line:		unsigned integer that indicates the line at
+ *				which command gets triggered.
+ * @cmd_trigger_frame:		unsigned integer that indicates the frame at
+ *				which command gets triggered.
+ * @cmd_success_line:		unsigned integer that indicates the line at
+ *				which command transfer is successful.
+ * @cmd_success_frame:		unsigned integer that indicates the frame at
+ *				which command transfer is successful.
  */
 struct dsi_ctrl {
 	struct platform_device *pdev;
@@ -289,6 +302,12 @@ struct dsi_ctrl {
 	bool null_insertion_enabled;
 	bool modeupdated;
 	bool split_link_supported;
+	bool enable_cmd_dma_stats;
+	bool cmd_mode;
+	u32 cmd_trigger_line;
+	u32 cmd_trigger_frame;
+	u32 cmd_success_line;
+	u32 cmd_success_frame;
 };
 
 /**
@@ -856,5 +875,12 @@ int dsi_ctrl_wait4dynamic_refresh_done(struct dsi_ctrl *ctrl);
  * Return: error code.
  */
 int dsi_ctrl_get_io_resources(struct msm_io_res *io_res);
+
+/**
+ * dsi_ctrl_mask_overflow() -	API to mask/unmask overflow errors.
+ * @dsi_ctrl:			DSI controller handle.
+ * @enable:			variable to control masking/unmasking.
+ */
+void dsi_ctrl_mask_overflow(struct dsi_ctrl *dsi_ctrl, bool enable);
 
 #endif /* _DSI_CTRL_H_ */

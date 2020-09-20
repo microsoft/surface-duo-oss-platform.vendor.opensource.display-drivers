@@ -232,6 +232,7 @@ struct sde_encoder_virt {
 	u32 misr_frame_count;
 
 	bool idle_pc_enabled;
+	bool input_event_enabled;
 	struct mutex rc_lock;
 	enum sde_enc_rc_states rc_state;
 	struct kthread_delayed_work delayed_off_work;
@@ -334,8 +335,10 @@ void sde_encoder_trigger_kickoff_pending(struct drm_encoder *encoder);
  * @encoder:	encoder pointer
  * @is_error:	whether the current commit needs to be aborted and replaced
  *		with a 'safe' commit
+ * @config_changed: if true new configuration is applied on the control path
  */
-void sde_encoder_kickoff(struct drm_encoder *encoder, bool is_error);
+void sde_encoder_kickoff(struct drm_encoder *encoder, bool is_error,
+		bool config_changed);
 
 /**
  * sde_encoder_wait_for_event - Waits for encoder events

@@ -13,6 +13,7 @@
 #include "dsi_panel.h"
 #include "dsi_ctrl_hw.h"
 #include "dsi_parser.h"
+#include "sde_dbg.h"
 #include "sde_dsc_helper.h"
 #include "sde_vdc_helper.h"
 
@@ -33,7 +34,7 @@
 #define MAX_PANEL_JITTER		10
 #define DEFAULT_PANEL_PREFILL_LINES	25
 #define HIGH_REFRESH_RATE_THRESHOLD_TIME_US	500
-#define MIN_PREFILL_LINES      35
+#define MIN_PREFILL_LINES      40
 
 static void dsi_dce_prepare_pps_header(char *buf, u32 pps_delay_ms)
 {
@@ -207,6 +208,7 @@ int dsi_panel_trigger_esd_attack(struct dsi_panel *panel)
 
 	if (gpio_is_valid(r_config->reset_gpio)) {
 		gpio_set_value(r_config->reset_gpio, 0);
+		SDE_EVT32(SDE_EVTLOG_FUNC_CASE1);
 		DSI_INFO("GPIO pulled low to simulate ESD\n");
 		return 0;
 	}
@@ -356,7 +358,8 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
-	if (gpio_is_valid(panel->reset_config.reset_gpio))
+	if (gpio_is_valid(panel->reset_config.reset_gpio) &&
+					!panel->reset_gpio_always_on)
 		gpio_set_value(panel->reset_config.reset_gpio, 0);
 
 	if (gpio_is_valid(panel->reset_config.lcd_mode_sel_gpio))
@@ -401,6 +404,7 @@ static int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
 	cmds = mode->priv_info->cmd_sets[type].cmds;
 	count = mode->priv_info->cmd_sets[type].count;
 	state = mode->priv_info->cmd_sets[type].state;
+	SDE_EVT32(type, state, count);
 
 	if (count == 0) {
 		DSI_DEBUG("[%s] No commands to be sent for state(%d)\n",
@@ -477,6 +481,14 @@ static int dsi_panel_pinctrl_init(struct dsi_panel *panel)
 		goto error;
 	}
 
+	panel->pinctrl.pwm_pin =
+		pinctrl_lookup_state(panel->pinctrl.pinctrl, "pwm_pin");
+
+	if (IS_ERR_OR_NULL(panel->pinctrl.pwm_pin)) {
+		panel->pinctrl.pwm_pin = NULL;
+		DSI_DEBUG("failed to get pinctrl pwm_pin");
+	}
+
 error:
 	return rc;
 }
@@ -501,7 +513,8 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	u32 bl_lvl)
 {
 	int rc = 0;
-	struct mipi_dsi_device *dsi;
+	unsigned long mode_flags = 0;
+	struct mipi_dsi_device *dsi = NULL;
 
 	if (!panel || (bl_lvl > 0xffff)) {
 		DSI_ERR("invalid params\n");
@@ -509,6 +522,10 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	}
 
 	dsi = &panel->mipi_device;
+	if (unlikely(panel->bl_config.lp_mode)) {
+		mode_flags = dsi->mode_flags;
+		dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	}
 
 	if (panel->bl_config.bl_inverted_dbv)
 		bl_lvl = (((bl_lvl & 0xff) << 8) | (bl_lvl >> 8));
@@ -516,6 +533,9 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 	rc = mipi_dsi_dcs_set_display_brightness(dsi, bl_lvl);
 	if (rc < 0)
 		DSI_ERR("failed to update dcs backlight:%d\n", bl_lvl);
+
+	if (unlikely(panel->bl_config.lp_mode))
+		dsi->mode_flags = mode_flags;
 
 	return rc;
 }
@@ -556,7 +576,7 @@ static int dsi_panel_update_pwm_backlight(struct dsi_panel *panel,
 		return 0;
 	}
 
-	if (!bl->pwm_enabled) {
+	if (bl_lvl != 0 && !bl->pwm_enabled) {
 		rc = pwm_enable(bl->pwm_bl);
 		if (rc) {
 			DSI_ERR("[%s] failed to enable pwm, rc=\n", panel->name,
@@ -647,6 +667,14 @@ static int dsi_panel_pwm_register(struct dsi_panel *panel)
 		DSI_ERR("[%s] failed to request pwm, rc=%d\n", panel->name,
 			rc);
 		return rc;
+	}
+
+	if (panel->pinctrl.pwm_pin) {
+		rc = pinctrl_select_state(panel->pinctrl.pinctrl,
+			panel->pinctrl.pwm_pin);
+		if (rc)
+			DSI_ERR("[%s] failed to set pwm pinctrl, rc=%d\n",
+				panel->name, rc);
 	}
 
 	return 0;
@@ -1045,7 +1073,7 @@ static int dsi_panel_parse_misc_host_config(struct dsi_host_common_cfg *host,
 					    struct dsi_parser_utils *utils,
 					    const char *name)
 {
-	u32 val = 0;
+	u32 val = 0, line_no = 0, window = 0;
 	int rc = 0;
 	bool panel_cphy_mode = false;
 
@@ -1078,6 +1106,22 @@ static int dsi_panel_parse_misc_host_config(struct dsi_host_common_cfg *host,
 	host->phy_type = panel_cphy_mode ? DSI_PHY_TYPE_CPHY
 						: DSI_PHY_TYPE_DPHY;
 
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-dma-schedule-line",
+				  &line_no);
+	if (rc)
+		host->dma_sched_line = 0;
+	else
+		host->dma_sched_line = line_no;
+
+	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-dma-schedule-window",
+				  &window);
+	if (rc)
+		host->dma_sched_window = 0;
+	else
+		host->dma_sched_window = window;
+
+	DSI_DEBUG("[%s] DMA scheduling parameters Line: %d Window: %d\n", name,
+			host->dma_sched_line, host->dma_sched_window);
 	return 0;
 }
 
@@ -1338,7 +1382,6 @@ static int dsi_panel_parse_video_host_config(struct dsi_video_engine_cfg *cfg,
 	const char *traffic_mode;
 	u32 vc_id = 0;
 	u32 val = 0;
-	u32 line_no = 0;
 
 	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-h-sync-pulse", &val);
 	if (rc) {
@@ -1399,17 +1442,6 @@ static int dsi_panel_parse_video_host_config(struct dsi_video_engine_cfg *cfg,
 		cfg->vc_id = 0;
 	} else {
 		cfg->vc_id = vc_id;
-	}
-
-	rc = utils->read_u32(utils->data, "qcom,mdss-dsi-dma-schedule-line",
-				  &line_no);
-	if (rc) {
-		DSI_DEBUG("[%s] set default dma scheduling line no\n", name);
-		cfg->dma_sched_line = 0x1;
-		/* do not fail since we have default value */
-		rc = 0;
-	} else {
-		cfg->dma_sched_line = line_no;
 	}
 
 error:
@@ -1663,7 +1695,7 @@ static int dsi_panel_create_cmd_packets(const char *data,
 		cmd[i].msg.type = data[0];
 		cmd[i].last_command = (data[1] == 1);
 		cmd[i].msg.channel = data[2];
-		cmd[i].msg.flags |= (data[3] == 1 ? MIPI_DSI_MSG_REQ_ACK : 0);
+		cmd[i].msg.flags |= data[3];
 		cmd[i].msg.ctrl = 0;
 		cmd[i].post_wait_ms = cmd[i].msg.wait_ms = data[4];
 		cmd[i].msg.tx_len = ((data[5] << 8) | (data[6]));
@@ -1921,6 +1953,9 @@ static int dsi_panel_parse_misc_features(struct dsi_panel *panel)
 	panel->lp11_init = utils->read_bool(utils->data,
 			"qcom,mdss-dsi-lp11-init");
 
+	panel->reset_gpio_always_on = utils->read_bool(utils->data,
+			"qcom,platform-reset-gpio-always-on");
+
 	panel->spr_info.enable = false;
 	panel->spr_info.pack_type = MSM_DISPLAY_SPR_TYPE_MAX;
 
@@ -1941,7 +1976,6 @@ static int dsi_panel_parse_misc_features(struct dsi_panel *panel)
 		panel->spr_info.enable ? "enable" : "disable",
 		panel->spr_info.enable ?
 		msm_spr_pack_type_str[panel->spr_info.pack_type] : "none");
-
 
 	return 0;
 }
@@ -2013,6 +2047,87 @@ static int dsi_panel_parse_power_cfg(struct dsi_panel *panel)
 	}
 
 error:
+	return rc;
+}
+
+int dsi_panel_get_io_resources(struct dsi_panel *panel,
+		struct msm_io_res *io_res)
+{
+	struct list_head temp_head;
+	struct msm_io_mem_entry *io_mem, *pos, *tmp;
+	struct list_head *mem_list = &io_res->mem;
+	int i, rc = 0, address_count, pin_count;
+	u32 *pins = NULL, *address = NULL;
+	u32 base, size;
+	struct dsi_parser_utils *utils = &panel->utils;
+
+	INIT_LIST_HEAD(&temp_head);
+
+	address_count = utils->count_u32_elems(utils->data,
+				"qcom,dsi-panel-gpio-address");
+	if (address_count != 2) {
+		DSI_DEBUG("panel gpio address not defined\n");
+		return 0;
+	}
+
+	address =  kzalloc(sizeof(u32) * address_count, GFP_KERNEL);
+	if (!address)
+		return -ENOMEM;
+
+	rc = utils->read_u32_array(utils->data, "qcom,dsi-panel-gpio-address",
+				address, address_count);
+	if (rc) {
+		DSI_ERR("panel gpio address not defined correctly\n");
+		goto end;
+	}
+	base = address[0];
+	size = address[1];
+
+	pin_count = utils->count_u32_elems(utils->data,
+				"qcom,dsi-panel-gpio-pins");
+	if (pin_count < 0) {
+		DSI_ERR("panel gpio pins not defined\n");
+		rc = pin_count;
+		goto end;
+	}
+
+	pins =  kzalloc(sizeof(u32) * pin_count, GFP_KERNEL);
+	if (!pins) {
+		rc = -ENOMEM;
+		goto end;
+	}
+
+	rc = utils->read_u32_array(utils->data, "qcom,dsi-panel-gpio-pins",
+				pins, pin_count);
+	if (rc) {
+		DSI_ERR("panel gpio pins not defined correctly\n");
+		goto end;
+	}
+
+	for (i = 0; i < pin_count; i++) {
+		io_mem = kzalloc(sizeof(*io_mem), GFP_KERNEL);
+		if (!io_mem) {
+			rc = -ENOMEM;
+			goto parse_fail;
+		}
+
+		io_mem->base = base + (pins[i] * size);
+		io_mem->size = size;
+
+		list_add(&io_mem->list, &temp_head);
+	}
+
+	list_splice(&temp_head, mem_list);
+	goto end;
+
+parse_fail:
+	list_for_each_entry_safe(pos, tmp, &temp_head, list) {
+		list_del(&pos->list);
+		kzfree(pos);
+	}
+end:
+	kzfree(pins);
+	kzfree(address);
 	return rc;
 }
 
@@ -2124,10 +2239,11 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 {
 	int rc = 0;
 	u32 val = 0;
-	const char *bl_type;
-	const char *data;
+	const char *bl_type = NULL;
+	const char *data = NULL;
+	const char *state = NULL;
 	struct dsi_parser_utils *utils = &panel->utils;
-	char *bl_name;
+	char *bl_name = NULL;
 
 	if (!strcmp(panel->type, "primary"))
 		bl_name = "qcom,mdss-dsi-bl-pmic-control-type";
@@ -2196,6 +2312,15 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
 
 	panel->bl_config.bl_inverted_dbv = utils->read_bool(utils->data,
 		"qcom,mdss-dsi-bl-inverted-dbv");
+
+	state = utils->get_property(utils->data, "qcom,bl-dsc-cmd-state", NULL);
+	if (!state || !strcmp(state, "dsi_hs_mode"))
+		panel->bl_config.lp_mode = false;
+	else if (!strcmp(state, "dsi_lp_mode"))
+		panel->bl_config.lp_mode = true;
+	else
+		DSI_ERR("bl-dsc-cmd-state command state unrecognized-%s\n",
+			state);
 
 	if (panel->bl_config.type == DSI_BACKLIGHT_PWM) {
 		rc = dsi_panel_parse_bl_pwm_config(panel);
@@ -3646,7 +3771,7 @@ void dsi_panel_calc_dsi_transfer_time(struct dsi_host_common_cfg *config,
 	struct dsi_mode_info *timing = &mode->timing;
 	struct dsi_display_mode *display_mode;
 	u32 jitter_numer, jitter_denom, prefill_lines;
-	u32 min_threshold_us, prefill_time_us;
+	u32 min_threshold_us, prefill_time_us, max_transfer_us;
 	u16 bpp;
 
 	/* Packet overlead in bits,2 bytes header + 2 bytes checksum
@@ -3687,6 +3812,26 @@ void dsi_panel_calc_dsi_transfer_time(struct dsi_host_common_cfg *config,
 
 	timing->min_dsi_clk_hz = min_bitclk_hz;
 
+	min_threshold_us = mult_frac(frame_time_us,
+			jitter_numer, (jitter_denom * 100));
+	/*
+	 * Increase the prefill_lines proportionately as recommended
+	 * 35lines for 60fps, 52 for 90fps, 70lines for 120fps.
+	 */
+	prefill_lines = mult_frac(MIN_PREFILL_LINES,
+			timing->refresh_rate, 60);
+
+	prefill_time_us = mult_frac(frame_time_us, prefill_lines,
+			(timing->v_active));
+
+	/*
+	 * Threshold is sum of panel jitter time, prefill line time
+	 * plus 64usec buffer time.
+	 */
+	min_threshold_us = min_threshold_us + 64 + prefill_time_us;
+
+	DSI_DEBUG("min threshold time=%d\n", min_threshold_us);
+
 	if (timing->clk_rate_hz) {
 		/* adjust the transfer time proportionately for bit clk*/
 		dsi_transfer_time_us = frame_time_us * min_bitclk_hz;
@@ -3694,30 +3839,13 @@ void dsi_panel_calc_dsi_transfer_time(struct dsi_host_common_cfg *config,
 		timing->dsi_transfer_time_us = dsi_transfer_time_us;
 
 	} else if (mode->priv_info->mdp_transfer_time_us) {
+		max_transfer_us = frame_time_us - min_threshold_us;
+		mode->priv_info->mdp_transfer_time_us = min(
+				mode->priv_info->mdp_transfer_time_us,
+				max_transfer_us);
 		timing->dsi_transfer_time_us =
 			mode->priv_info->mdp_transfer_time_us;
 	} else {
-
-		min_threshold_us = mult_frac(frame_time_us,
-				jitter_numer, (jitter_denom * 100));
-		/*
-		 * Increase the prefill_lines proportionately as recommended
-		 * 35lines for 60fps, 52 for 90fps, 70lines for 120fps.
-		 */
-		prefill_lines = mult_frac(MIN_PREFILL_LINES,
-				timing->refresh_rate, 60);
-
-		prefill_time_us = mult_frac(frame_time_us, prefill_lines,
-				(timing->v_active));
-
-		/*
-		 * Threshold is sum of panel jitter time, prefill line time
-		 * plus 100usec buffer time.
-		 */
-		min_threshold_us = min_threshold_us + 100 + prefill_time_us;
-
-		DSI_DEBUG("min threshold time=%d\n", min_threshold_us);
-
 		if (min_threshold_us > frame_threshold_us)
 			frame_threshold_us = min_threshold_us;
 
@@ -4251,6 +4379,7 @@ int dsi_panel_send_roi_dcs(struct dsi_panel *panel, int ctrl_idx,
 	}
 	DSI_DEBUG("[%s] send roi x %d y %d w %d h %d\n", panel->name,
 			roi->x, roi->y, roi->w, roi->h);
+	SDE_EVT32(roi->x, roi->y, roi->w, roi->h);
 
 	mutex_lock(&panel->panel_lock);
 

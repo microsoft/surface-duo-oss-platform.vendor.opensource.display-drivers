@@ -82,6 +82,7 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	int rc = 0;
 	struct msm_drm_private *priv;
 	struct sde_kms *sde_kms;
+	struct sde_vm_ops *vm_ops;
 
 	brightness = bd->props.brightness;
 
@@ -113,17 +114,12 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 		return 0;
 	}
 
-	if (sde_kms->vm) {
-		struct sde_vm_ops *vm_ops = &sde_kms->vm->vm_ops;
+	sde_vm_lock(sde_kms);
 
-		mutex_lock(&sde_kms->vm->vm_res_lock);
-
-		if (vm_ops->vm_owns_hw && !vm_ops->vm_owns_hw(sde_kms)) {
-			SDE_DEBUG(
-				"skipping bl update due to HW unavailablity\n");
-			mutex_unlock(&sde_kms->vm->vm_res_lock);
-			return 0;
-		}
+	vm_ops = sde_vm_get_ops(sde_kms);
+	if (vm_ops && vm_ops->vm_owns_hw && !vm_ops->vm_owns_hw(sde_kms)) {
+		SDE_DEBUG("skipping bl update due to HW unavailablity\n");
+		goto done;
 	}
 
 	if (c_conn->ops.set_backlight) {
@@ -139,8 +135,8 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 		c_conn->unset_bl_level = 0;
 	}
 
-	if (sde_kms->vm)
-		mutex_unlock(&sde_kms->vm->vm_res_lock);
+done:
+	sde_vm_unlock(sde_kms);
 
 	return rc;
 }
@@ -1431,9 +1427,6 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 		} else if (!c_state->out_fb && !val) {
 			SDE_DEBUG("cleared fb_id\n");
 			rc = 0;
-		} else {
-			msm_framebuffer_set_kmap(c_state->out_fb,
-					c_conn->fb_kmap);
 		}
 		break;
 	case CONNECTOR_PROP_RETIRE_FENCE:
@@ -2159,12 +2152,6 @@ static int sde_connector_init_debugfs(struct drm_connector *connector)
 				&sde_connector->esd_status_interval);
 	}
 
-	if (!debugfs_create_bool("fb_kmap", 0600, connector->debugfs_entry,
-			&sde_connector->fb_kmap)) {
-		SDE_ERROR("failed to create connector fb_kmap\n");
-		return -ENOMEM;
-	}
-
 	if (sde_connector->ops.cmd_transfer) {
 		if (!debugfs_create_file("tx_cmd", 0600,
 			connector->debugfs_entry,
@@ -2216,6 +2203,10 @@ static int sde_connector_fill_modes(struct drm_connector *connector,
 
 	mode_count = drm_helper_probe_single_connector_modes(connector,
 			max_width, max_height);
+
+	if (sde_conn->ops.set_allowed_mode_switch)
+		sde_conn->ops.set_allowed_mode_switch(connector,
+				sde_conn->display);
 
 	rc = sde_connector_set_blob_data(connector,
 				connector->state,
@@ -2567,6 +2558,9 @@ static int sde_connector_populate_mode_info(struct drm_connector *conn,
 		sde_kms_info_add_keyint(info, "mdp_transfer_time_us",
 			mode_info.mdp_transfer_time_us);
 
+		sde_kms_info_add_keyint(info, "allowed_mode_switch",
+			mode_info.allowed_mode_switches);
+
 		if (!mode_info.roi_caps.num_roi)
 			continue;
 
@@ -2738,10 +2732,8 @@ static int _sde_connector_install_properties(struct drm_device *dev,
 			      sizeof(hdr),
 			      CONNECTOR_PROP_EXT_HDR_INFO);
 
-		/* create and attach colorspace property for DP */
-		if (!drm_mode_create_dp_colorspace_property(connector))
-			drm_object_attach_property(&connector->base,
-				connector->colorspace_property, 0);
+		if (c_conn->ops.install_properties)
+			c_conn->ops.install_properties(display, connector);
 	}
 
 	msm_property_install_volatile_range(&c_conn->property_info,

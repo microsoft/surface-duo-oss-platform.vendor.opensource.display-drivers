@@ -194,6 +194,58 @@ static ssize_t debugfs_reg_dump_read(struct file *file,
 	return len;
 }
 
+static ssize_t debugfs_line_count_read(struct file *file,
+				 char __user *user_buf,
+				 size_t user_len,
+				 loff_t *ppos)
+{
+	struct dsi_ctrl *dsi_ctrl = file->private_data;
+	char *buf;
+	int rc = 0;
+	u32 len = 0;
+	size_t max_len = min_t(size_t, user_len, SZ_4K);
+
+	if (!dsi_ctrl)
+		return -ENODEV;
+
+	if (*ppos)
+		return 0;
+
+	buf = kzalloc(max_len, GFP_KERNEL);
+	if (ZERO_OR_NULL_PTR(buf))
+		return -ENOMEM;
+
+	mutex_lock(&dsi_ctrl->ctrl_lock);
+
+	len += scnprintf(buf, max_len, "Command triggered at line: %04x\n",
+			dsi_ctrl->cmd_trigger_line);
+	len += scnprintf((buf + len), max_len - len,
+			"Command triggered at frame: %04x\n",
+			dsi_ctrl->cmd_trigger_frame);
+	len += scnprintf((buf + len), max_len - len,
+			"Command successful at line: %04x\n",
+			dsi_ctrl->cmd_success_line);
+	len += scnprintf((buf + len), max_len - len,
+			"Command successful at frame: %04x\n",
+			dsi_ctrl->cmd_success_frame);
+
+	mutex_unlock(&dsi_ctrl->ctrl_lock);
+
+	if (len > max_len)
+		len = max_len;
+
+	if (copy_to_user(user_buf, buf, len)) {
+		rc = -EFAULT;
+		goto error;
+	}
+
+	*ppos += len;
+
+error:
+	kfree(buf);
+	return len;
+}
+
 static const struct file_operations state_info_fops = {
 	.open = simple_open,
 	.read = debugfs_state_info_read,
@@ -204,11 +256,16 @@ static const struct file_operations reg_dump_fops = {
 	.read = debugfs_reg_dump_read,
 };
 
+static const struct file_operations cmd_dma_stats_fops = {
+	.open = simple_open,
+	.read = debugfs_line_count_read,
+};
+
 static int dsi_ctrl_debugfs_init(struct dsi_ctrl *dsi_ctrl,
 				 struct dentry *parent)
 {
 	int rc = 0;
-	struct dentry *dir, *state_file, *reg_dump;
+	struct dentry *dir, *state_file, *reg_dump, *cmd_dma_logs;
 	char dbg_name[DSI_DEBUG_NAME_LEN];
 
 	if (!dsi_ctrl || !parent) {
@@ -243,6 +300,30 @@ static int dsi_ctrl_debugfs_init(struct dsi_ctrl *dsi_ctrl,
 	if (IS_ERR_OR_NULL(reg_dump)) {
 		rc = PTR_ERR(reg_dump);
 		DSI_CTRL_ERR(dsi_ctrl, "reg dump file failed, rc=%d\n", rc);
+		goto error_remove_dir;
+	}
+
+	cmd_dma_logs = debugfs_create_bool("enable_cmd_dma_stats",
+				       0600,
+				       dir,
+				       &dsi_ctrl->enable_cmd_dma_stats);
+	if (IS_ERR_OR_NULL(cmd_dma_logs)) {
+		rc = PTR_ERR(cmd_dma_logs);
+		DSI_CTRL_ERR(dsi_ctrl,
+				"enable cmd dma stats failed, rc=%d\n",
+				rc);
+		goto error_remove_dir;
+	}
+
+	cmd_dma_logs = debugfs_create_file("cmd_dma_stats",
+				       0444,
+				       dir,
+				       dsi_ctrl,
+				       &cmd_dma_stats_fops);
+	if (IS_ERR_OR_NULL(cmd_dma_logs)) {
+		rc = PTR_ERR(cmd_dma_logs);
+		DSI_CTRL_ERR(dsi_ctrl, "Line count file failed, rc=%d\n",
+				rc);
 		goto error_remove_dir;
 	}
 
@@ -299,6 +380,7 @@ static void dsi_ctrl_flush_cmd_dma_queue(struct dsi_ctrl *dsi_ctrl)
 		cancel_work_sync(&dsi_ctrl->dma_cmd_wait);
 	} else {
 		flush_workqueue(dsi_ctrl->dma_cmd_workq);
+		SDE_EVT32(SDE_EVTLOG_FUNC_CASE2);
 	}
 }
 
@@ -351,7 +433,7 @@ static int dsi_ctrl_check_state(struct dsi_ctrl *dsi_ctrl,
 	int rc = 0;
 	struct dsi_ctrl_state_info *state = &dsi_ctrl->current_state;
 
-	SDE_EVT32(dsi_ctrl->cell_index, op);
+	SDE_EVT32(dsi_ctrl->cell_index, op, op_state);
 
 	switch (op) {
 	case DSI_CTRL_OP_POWER_STATE_CHANGE:
@@ -939,6 +1021,7 @@ static int dsi_ctrl_update_link_freqs(struct dsi_ctrl *dsi_ctrl,
 	DSI_CTRL_DEBUG(dsi_ctrl, "byte_clk_rate = %llu, byte_intf_clk = %llu\n",
 		  byte_clk_rate, byte_intf_clk_rate);
 	DSI_CTRL_DEBUG(dsi_ctrl, "pclk_rate = %llu\n", pclk_rate);
+	SDE_EVT32(dsi_ctrl->cell_index, bit_rate, byte_clk_rate, pclk_rate);
 
 	dsi_ctrl->clk_freq.byte_clk_rate = byte_clk_rate;
 	dsi_ctrl->clk_freq.byte_intf_clk_rate = byte_intf_clk_rate;
@@ -958,12 +1041,19 @@ static int dsi_ctrl_enable_supplies(struct dsi_ctrl *dsi_ctrl, bool enable)
 	int rc = 0;
 
 	if (enable) {
+		rc = pm_runtime_get_sync(dsi_ctrl->drm_dev->dev);
+		if (rc < 0) {
+			DSI_CTRL_ERR(dsi_ctrl,
+				"Power resource enable failed, rc=%d\n", rc);
+			goto error;
+		}
+
 		if (!dsi_ctrl->current_state.host_initialized) {
 			rc = dsi_pwr_enable_regulator(
 				&dsi_ctrl->pwr_info.host_pwr, true);
 			if (rc) {
 				DSI_CTRL_ERR(dsi_ctrl, "failed to enable host power regs\n");
-				goto error;
+				goto error_get_sync;
 			}
 		}
 
@@ -976,8 +1066,9 @@ static int dsi_ctrl_enable_supplies(struct dsi_ctrl *dsi_ctrl, bool enable)
 						&dsi_ctrl->pwr_info.host_pwr,
 						false
 						);
-			goto error;
+			goto error_get_sync;
 		}
+		return rc;
 	} else {
 		rc = dsi_pwr_enable_regulator(&dsi_ctrl->pwr_info.digital,
 					      false);
@@ -995,7 +1086,11 @@ static int dsi_ctrl_enable_supplies(struct dsi_ctrl *dsi_ctrl, bool enable)
 				goto error;
 			}
 		}
+		pm_runtime_put_sync(dsi_ctrl->drm_dev->dev);
+		return rc;
 	}
+error_get_sync:
+	pm_runtime_put_sync(dsi_ctrl->drm_dev->dev);
 error:
 	return rc;
 }
@@ -1118,6 +1213,7 @@ void dsi_message_setup_tx_mode(struct dsi_ctrl *dsi_ctrl,
 	 * override cmd fetch mode during secure session
 	 */
 	if (dsi_ctrl->secure_mode) {
+		SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_CASE1);
 		*flags &= ~DSI_CTRL_CMD_FETCH_MEMORY;
 		*flags |= DSI_CTRL_CMD_FIFO_STORE;
 		DSI_CTRL_DEBUG(dsi_ctrl,
@@ -1177,6 +1273,60 @@ int dsi_message_validate_tx_mode(struct dsi_ctrl *dsi_ctrl,
 	return rc;
 }
 
+static void dsi_configure_command_scheduling(struct dsi_ctrl *dsi_ctrl,
+		struct dsi_ctrl_cmd_dma_info *cmd_mem)
+{
+	u32 line_no = 0, window = 0, sched_line_no = 0;
+	struct dsi_ctrl_hw_ops dsi_hw_ops = dsi_ctrl->hw.ops;
+	struct dsi_mode_info *timing = &(dsi_ctrl->host_config.video_timing);
+
+	line_no = dsi_ctrl->host_config.common_config.dma_sched_line;
+	window = dsi_ctrl->host_config.common_config.dma_sched_window;
+
+	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY, line_no, window);
+	/*
+	 * In case of command scheduling in video mode, the line at which
+	 * the command is scheduled can revert to the default value i.e. 1
+	 * for the following cases:
+	 *	1) No schedule line defined by the panel.
+	 *	2) schedule line defined is greater than VFP.
+	 */
+	if ((dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE) &&
+		dsi_hw_ops.schedule_dma_cmd &&
+		(dsi_ctrl->current_state.vid_engine_state ==
+					DSI_CTRL_ENGINE_ON)) {
+		sched_line_no = (line_no == 0) ? 1 : line_no;
+
+		if (timing) {
+			if (sched_line_no >= timing->v_front_porch)
+				sched_line_no = 1;
+			sched_line_no += timing->v_back_porch +
+				timing->v_sync_width + timing->v_active;
+		}
+		dsi_hw_ops.schedule_dma_cmd(&dsi_ctrl->hw, sched_line_no);
+	}
+
+	/*
+	 * In case of command scheduling in command mode, the window size
+	 * is reset to zero, if the total scheduling window is greater
+	 * than the panel height.
+	 */
+	if ((dsi_ctrl->host_config.panel_mode == DSI_OP_CMD_MODE) &&
+			dsi_hw_ops.configure_cmddma_window) {
+		sched_line_no = line_no;
+
+		if ((sched_line_no + window) > timing->v_active)
+			window = 0;
+
+		sched_line_no += timing->v_active;
+
+		dsi_hw_ops.configure_cmddma_window(&dsi_ctrl->hw, cmd_mem,
+				sched_line_no, window);
+	}
+	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_EXIT,
+			sched_line_no, window);
+}
+
 static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 				const struct mipi_dsi_msg *msg,
 				struct dsi_ctrl_cmd_dma_fifo_info *cmd,
@@ -1184,27 +1334,21 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 				u32 flags)
 {
 	u32 hw_flags = 0;
-	u32 line_no = 0x1;
-	struct dsi_mode_info *timing;
 	struct dsi_ctrl_hw_ops dsi_hw_ops = dsi_ctrl->hw.ops;
 
-	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY, flags);
+	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY, flags,
+		msg->flags);
+
+	if (dsi_ctrl->hw.reset_trig_ctrl)
+		dsi_hw_ops.reset_trig_ctrl(&dsi_ctrl->hw,
+				&dsi_ctrl->host_config.common_config);
+
 	/* check if custom dma scheduling line needed */
-	if ((dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE) &&
-		(flags & DSI_CTRL_CMD_CUSTOM_DMA_SCHED))
-		line_no = dsi_ctrl->host_config.u.video_engine.dma_sched_line;
+	if (flags & DSI_CTRL_CMD_CUSTOM_DMA_SCHED)
+		dsi_configure_command_scheduling(dsi_ctrl, cmd_mem);
 
-	timing = &(dsi_ctrl->host_config.video_timing);
-	if (timing)
-		line_no += timing->v_back_porch + timing->v_sync_width +
-				timing->v_active;
-	if ((dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE) &&
-		dsi_hw_ops.schedule_dma_cmd &&
-		(dsi_ctrl->current_state.vid_engine_state ==
-					DSI_CTRL_ENGINE_ON))
-		dsi_hw_ops.schedule_dma_cmd(&dsi_ctrl->hw,
-				line_no);
-
+	dsi_ctrl->cmd_mode = (dsi_ctrl->host_config.panel_mode ==
+			DSI_OP_CMD_MODE);
 	hw_flags |= (flags & DSI_CTRL_CMD_DEFER_TRIGGER) ?
 			DSI_CTRL_HW_CMD_WAIT_FOR_TRIGGER : 0;
 
@@ -1233,9 +1377,7 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 
 	if (!(flags & DSI_CTRL_CMD_DEFER_TRIGGER)) {
 		dsi_ctrl_wait_for_video_done(dsi_ctrl);
-		if (dsi_hw_ops.mask_error_intr)
-			dsi_hw_ops.mask_error_intr(&dsi_ctrl->hw,
-					BIT(DSI_FIFO_OVERFLOW), true);
+		dsi_ctrl_mask_overflow(dsi_ctrl, true);
 
 		atomic_set(&dsi_ctrl->dma_irq_trig, 0);
 		dsi_ctrl_enable_status_interrupt(dsi_ctrl,
@@ -1259,6 +1401,17 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 							      cmd,
 							      hw_flags);
 		}
+
+		if (dsi_ctrl->enable_cmd_dma_stats) {
+			u32 reg = dsi_hw_ops.log_line_count(&dsi_ctrl->hw,
+					dsi_ctrl->cmd_mode);
+			dsi_ctrl->cmd_trigger_line = (reg & 0xFFFF);
+			dsi_ctrl->cmd_trigger_frame = ((reg >> 16) & 0xFFFF);
+			SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_CASE1,
+					dsi_ctrl->cmd_trigger_line,
+					dsi_ctrl->cmd_trigger_frame);
+		}
+
 		if (flags & DSI_CTRL_CMD_ASYNC_WAIT) {
 			dsi_ctrl->dma_wait_queued = true;
 			queue_work(dsi_ctrl->dma_cmd_workq,
@@ -1268,9 +1421,8 @@ static void dsi_kickoff_msg_tx(struct dsi_ctrl *dsi_ctrl,
 			dsi_ctrl_dma_cmd_wait_for_done(&dsi_ctrl->dma_cmd_wait);
 		}
 
-		if (dsi_hw_ops.mask_error_intr && !dsi_ctrl->esd_check_underway)
-			dsi_hw_ops.mask_error_intr(&dsi_ctrl->hw,
-					BIT(DSI_FIFO_OVERFLOW), false);
+		dsi_ctrl_mask_overflow(dsi_ctrl, false);
+
 		dsi_hw_ops.reset_cmd_fifo(&dsi_ctrl->hw);
 
 		/*
@@ -1921,6 +2073,9 @@ static int dsi_ctrl_dev_probe(struct platform_device *pdev)
 		goto fail_clks;
 	}
 
+	if (dsi_ctrl->hw.ops.map_mdp_regs)
+		dsi_ctrl->hw.ops.map_mdp_regs(pdev, &dsi_ctrl->hw);
+
 	item->ctrl = dsi_ctrl;
 	sde_dbg_dsi_ctrl_register(dsi_ctrl->hw.base, dsi_ctrl->name);
 
@@ -1966,6 +2121,8 @@ static int dsi_ctrl_dev_remove(struct platform_device *pdev)
 	mutex_unlock(&dsi_ctrl_list_lock);
 
 	mutex_lock(&dsi_ctrl->ctrl_lock);
+
+	dsi_ctrl_isr_configure(dsi_ctrl, false);
 
 	rc = dsi_ctrl_supplies_deinit(dsi_ctrl);
 	if (rc)
@@ -2582,6 +2739,15 @@ static irqreturn_t dsi_ctrl_isr(int irq, void *ptr)
 		dsi_ctrl_handle_error_status(dsi_ctrl, errors);
 
 	if (status & DSI_CMD_MODE_DMA_DONE) {
+		if (dsi_ctrl->enable_cmd_dma_stats) {
+			u32 reg = dsi_ctrl->hw.ops.log_line_count(&dsi_ctrl->hw,
+						dsi_ctrl->cmd_mode);
+			dsi_ctrl->cmd_success_line = (reg & 0xFFFF);
+			dsi_ctrl->cmd_success_frame = ((reg >> 16) & 0xFFFF);
+			SDE_EVT32(dsi_ctrl->cell_index,	SDE_EVTLOG_FUNC_CASE1,
+					dsi_ctrl->cmd_success_line,
+					dsi_ctrl->cmd_success_frame);
+		}
 		atomic_set(&dsi_ctrl->dma_irq_trig, 1);
 		dsi_ctrl_disable_status_interrupt(dsi_ctrl,
 					DSI_SINT_CMD_MODE_DMA_DONE);
@@ -2697,7 +2863,7 @@ void dsi_ctrl_enable_status_interrupt(struct dsi_ctrl *dsi_ctrl,
 			intr_idx >= DSI_STATUS_INTERRUPT_COUNT)
 		return;
 
-	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY);
+	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY, intr_idx);
 	spin_lock_irqsave(&dsi_ctrl->irq_info.irq_lock, flags);
 
 	if (dsi_ctrl->irq_info.irq_stat_refcount[intr_idx] == 0) {
@@ -2730,7 +2896,7 @@ void dsi_ctrl_disable_status_interrupt(struct dsi_ctrl *dsi_ctrl,
 	if (!dsi_ctrl || intr_idx >= DSI_STATUS_INTERRUPT_COUNT)
 		return;
 
-	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY);
+	SDE_EVT32_IRQ(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY, intr_idx);
 	spin_lock_irqsave(&dsi_ctrl->irq_info.irq_lock, flags);
 
 	if (dsi_ctrl->irq_info.irq_stat_refcount[intr_idx])
@@ -3164,6 +3330,28 @@ error:
 }
 
 /**
+ * dsi_ctrl_mask_overflow() -	API to mask/unmask overflow error.
+ * @dsi_ctrl:			DSI controller handle.
+ * @enable:			variable to control masking/unmasking.
+ */
+void dsi_ctrl_mask_overflow(struct dsi_ctrl *dsi_ctrl, bool enable)
+{
+	struct dsi_ctrl_hw_ops dsi_hw_ops;
+
+	dsi_hw_ops = dsi_ctrl->hw.ops;
+
+	if (enable) {
+		if (dsi_hw_ops.mask_error_intr)
+			dsi_hw_ops.mask_error_intr(&dsi_ctrl->hw,
+					BIT(DSI_FIFO_OVERFLOW), true);
+	} else {
+		if (dsi_hw_ops.mask_error_intr && !dsi_ctrl->esd_check_underway)
+			dsi_hw_ops.mask_error_intr(&dsi_ctrl->hw,
+					BIT(DSI_FIFO_OVERFLOW), false);
+	}
+}
+
+/**
  * dsi_ctrl_cmd_tx_trigger() - Trigger a deferred command.
  * @dsi_ctrl:              DSI controller handle.
  * @flags:                 Modifiers.
@@ -3189,15 +3377,22 @@ int dsi_ctrl_cmd_tx_trigger(struct dsi_ctrl *dsi_ctrl, u32 flags)
 
 	mutex_lock(&dsi_ctrl->ctrl_lock);
 
-	if (!(flags & DSI_CTRL_CMD_BROADCAST_MASTER))
+	if (!(flags & DSI_CTRL_CMD_BROADCAST_MASTER)) {
 		dsi_hw_ops.trigger_command_dma(&dsi_ctrl->hw);
+		if (dsi_ctrl->enable_cmd_dma_stats) {
+			u32 reg = dsi_hw_ops.log_line_count(&dsi_ctrl->hw,
+					dsi_ctrl->cmd_mode);
+			dsi_ctrl->cmd_trigger_line = (reg & 0xFFFF);
+			dsi_ctrl->cmd_trigger_frame = ((reg >> 16) & 0xFFFF);
+			SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_CASE1,
+					dsi_ctrl->cmd_trigger_line,
+					dsi_ctrl->cmd_trigger_frame);
+		}
+	}
 
 	if ((flags & DSI_CTRL_CMD_BROADCAST) &&
 		(flags & DSI_CTRL_CMD_BROADCAST_MASTER)) {
 		dsi_ctrl_wait_for_video_done(dsi_ctrl);
-		if (dsi_hw_ops.mask_error_intr)
-			dsi_hw_ops.mask_error_intr(&dsi_ctrl->hw,
-					BIT(DSI_FIFO_OVERFLOW), true);
 		atomic_set(&dsi_ctrl->dma_irq_trig, 0);
 		dsi_ctrl_enable_status_interrupt(dsi_ctrl,
 					DSI_SINT_CMD_MODE_DMA_DONE, NULL);
@@ -3205,6 +3400,17 @@ int dsi_ctrl_cmd_tx_trigger(struct dsi_ctrl *dsi_ctrl, u32 flags)
 
 		/* trigger command */
 		dsi_hw_ops.trigger_command_dma(&dsi_ctrl->hw);
+
+		if (dsi_ctrl->enable_cmd_dma_stats) {
+			u32 reg = dsi_hw_ops.log_line_count(&dsi_ctrl->hw,
+					dsi_ctrl->cmd_mode);
+			dsi_ctrl->cmd_trigger_line = (reg & 0xFFFF);
+			dsi_ctrl->cmd_trigger_frame = ((reg >> 16) & 0xFFFF);
+			SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_CASE1,
+					dsi_ctrl->cmd_trigger_line,
+					dsi_ctrl->cmd_trigger_frame);
+		}
+
 		if (flags & DSI_CTRL_CMD_ASYNC_WAIT) {
 			dsi_ctrl->dma_wait_queued = true;
 			queue_work(dsi_ctrl->dma_cmd_workq,
@@ -3213,11 +3419,6 @@ int dsi_ctrl_cmd_tx_trigger(struct dsi_ctrl *dsi_ctrl, u32 flags)
 			dsi_ctrl->dma_wait_queued = false;
 			dsi_ctrl_dma_cmd_wait_for_done(&dsi_ctrl->dma_cmd_wait);
 		}
-
-		if (dsi_hw_ops.mask_error_intr &&
-				!dsi_ctrl->esd_check_underway)
-			dsi_hw_ops.mask_error_intr(&dsi_ctrl->hw,
-					BIT(DSI_FIFO_OVERFLOW), false);
 
 		if (flags & DSI_CTRL_CMD_NON_EMBEDDED_MODE) {
 			if (dsi_ctrl->version < DSI_CTRL_VERSION_2_4)
@@ -3413,6 +3614,7 @@ int dsi_ctrl_set_host_engine_state(struct dsi_ctrl *dsi_ctrl,
 			dsi_ctrl->hw.ops.ctrl_en(&dsi_ctrl->hw, false);
 	}
 
+	SDE_EVT32(dsi_ctrl->cell_index, state, skip_op);
 	DSI_CTRL_DEBUG(dsi_ctrl, "Set host engine state = %d\n", state);
 	dsi_ctrl_update_state(dsi_ctrl, DSI_CTRL_OP_HOST_ENGINE, state);
 error:
@@ -3456,6 +3658,7 @@ int dsi_ctrl_set_cmd_engine_state(struct dsi_ctrl *dsi_ctrl,
 			dsi_ctrl->hw.ops.cmd_engine_en(&dsi_ctrl->hw, false);
 	}
 
+	SDE_EVT32(dsi_ctrl->cell_index, state, skip_op);
 	DSI_CTRL_DEBUG(dsi_ctrl, "Set cmd engine state:%d, skip_op:%d\n",
 					state, skip_op);
 	dsi_ctrl_update_state(dsi_ctrl, DSI_CTRL_OP_CMD_ENGINE, state);
@@ -3501,10 +3704,11 @@ int dsi_ctrl_set_vid_engine_state(struct dsi_ctrl *dsi_ctrl,
 		dsi_ctrl->hw.ops.video_engine_en(&dsi_ctrl->hw, on);
 
 		/* perform a reset when turning off video engine */
-		if (!on)
+		if (!on && dsi_ctrl->version < DSI_CTRL_VERSION_1_3)
 			dsi_ctrl->hw.ops.soft_reset(&dsi_ctrl->hw);
 	}
 
+	SDE_EVT32(dsi_ctrl->cell_index, state, skip_op);
 	DSI_CTRL_DEBUG(dsi_ctrl, "Set video engine state:%d, skip_op:%d\n",
 					state, skip_op);
 	dsi_ctrl_update_state(dsi_ctrl, DSI_CTRL_OP_VID_ENGINE, state);

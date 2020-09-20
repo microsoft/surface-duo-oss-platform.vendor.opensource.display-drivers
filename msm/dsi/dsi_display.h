@@ -106,13 +106,15 @@ struct dsi_display_boot_param {
  * struct dsi_display_clk_info - dsi display clock source information
  * @src_clks:          Source clocks for DSI display.
  * @mux_clks:          Mux clocks used for DFPS.
- * @shadow_clks:       Used for DFPS.
+ * @shadow_clks:       Used for D-phy clock switch.
+ * @shadow_cphy_clks:  Used for C-phy clock switch.
  */
 struct dsi_display_clk_info {
 	struct dsi_clk_link_set src_clks;
 	struct dsi_clk_link_set mux_clks;
 	struct dsi_clk_link_set cphy_clks;
 	struct dsi_clk_link_set shadow_clks;
+	struct dsi_clk_link_set shadow_cphy_clks;
 };
 
 /**
@@ -737,6 +739,14 @@ enum dsi_pixel_format dsi_display_get_dst_format(
  * Return: Zero on Success
  */
 int dsi_display_cont_splash_config(void *display);
+
+/**
+ * dsi_display_cont_splash_res_disable() - Disable resource votes added in probe
+ * @display:    Pointer to dsi display
+ * Returns:     Zero on success
+ */
+int dsi_display_cont_splash_res_disable(void *display);
+
 /*
  * dsi_display_get_panel_vfp - get panel vsync
  * @display: Pointer to private display structure

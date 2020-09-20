@@ -147,6 +147,7 @@ enum msm_mdp_crtc_property {
 	CRTC_PROP_DEST_SCALER_LUT_ED,
 	CRTC_PROP_DEST_SCALER_LUT_CIR,
 	CRTC_PROP_DEST_SCALER_LUT_SEP,
+	CRTC_PROP_DSPP_INFO,
 
 	/* # of blob properties */
 	CRTC_PROP_BLOBCOUNT,
@@ -369,6 +370,9 @@ struct msm_roi_caps {
  * @dsc_4hsmerge_en:         Using DSC 4HS merge topology
  * @dsc_4hsmerge_padding     4HS merge DSC pair padding value in bytes
  * @dsc_4hsmerge_alignment   4HS merge DSC alignment value in bytes
+ * @half_panel_pu            True For Dual dsc encoders if partial update is
+ *                           enabled and only one encoder needs to be used,
+ *                           False in all other cases
  */
 struct msm_display_dsc_info {
 	struct drm_dsc_config config;
@@ -390,6 +394,7 @@ struct msm_display_dsc_info {
 	bool dsc_4hsmerge_en;
 	u32 dsc_4hsmerge_padding;
 	u32 dsc_4hsmerge_alignment;
+	bool half_panel_pu;
 };
 
 
@@ -676,6 +681,7 @@ struct msm_display_topology {
  * @wide_bus_en:	wide-bus mode cfg for interface module
  * @mdp_transfer_time_us   Specifies the mdp transfer time for command mode
  *                         panels in microseconds.
+ * @allowed_mode_switches: bit mask to indicate supported mode switch.
  */
 struct msm_mode_info {
 	uint32_t frame_rate;
@@ -689,6 +695,7 @@ struct msm_mode_info {
 	struct msm_roi_caps roi_caps;
 	bool wide_bus_en;
 	u32 mdp_transfer_time_us;
+	u32 allowed_mode_switches;
 };
 
 /**
@@ -1099,7 +1106,6 @@ void msm_gem_object_set_name(struct drm_gem_object *bo, const char *fmt, ...);
 
 int msm_gem_delayed_import(struct drm_gem_object *obj);
 
-void msm_framebuffer_set_kmap(struct drm_framebuffer *fb, bool enable);
 void msm_framebuffer_set_keepattrs(struct drm_framebuffer *fb, bool enable);
 int msm_framebuffer_prepare(struct drm_framebuffer *fb,
 		struct msm_gem_address_space *aspace);

@@ -210,7 +210,7 @@ static u32 programmable_fetch_get_num_lines(
 	struct sde_encoder_phys *phys_enc = &vid_enc->base;
 
 	u32 needed_prefill_lines, needed_vfp_lines, actual_vfp_lines;
-	const u32 fixed_prefill_fps = 60;
+	const u32 fixed_prefill_fps = DEFAULT_FPS;
 	u32 default_prefill_lines =
 		phys_enc->hw_intf->cap->prog_fetch_lines_worst_case;
 	u32 start_of_frame_lines =
@@ -1198,6 +1198,7 @@ static u32 sde_encoder_phys_vid_get_underrun_line_count(
 		struct sde_encoder_phys *phys_enc)
 {
 	u32 underrun_linecount = 0xebadebad;
+	u32 intf_intr_status = 0xebadebad;
 	struct intf_status intf_status = {0};
 
 	if (!phys_enc)
@@ -1215,8 +1216,13 @@ static u32 sde_encoder_phys_vid_get_underrun_line_count(
 		  phys_enc->hw_intf->ops.get_underrun_line_count(
 			phys_enc->hw_intf);
 
+	if (phys_enc->hw_intf->ops.get_intr_status)
+		intf_intr_status = phys_enc->hw_intf->ops.get_intr_status(
+				phys_enc->hw_intf);
+
 	SDE_EVT32(DRMID(phys_enc->parent), underrun_linecount,
-		intf_status.frame_count, intf_status.line_count);
+		intf_status.frame_count, intf_status.line_count,
+		intf_intr_status);
 
 	return underrun_linecount;
 }

@@ -35,6 +35,7 @@
  * Override to use async transfer
  */
 #define MIPI_DSI_MSG_ASYNC_OVERRIDE BIT(4)
+#define MIPI_DSI_MSG_CMD_DMA_SCHED BIT(5)
 
 enum dsi_panel_rotation {
 	DSI_PANEL_ROTATE_NONE = 0,
@@ -97,6 +98,7 @@ struct dsi_pinctrl_info {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *active;
 	struct pinctrl_state *suspend;
+	struct pinctrl_state *pwm_pin;
 };
 
 struct dsi_panel_phy_props {
@@ -126,6 +128,9 @@ struct dsi_backlight_config {
 	/* WLED params */
 	struct led_trigger *wled;
 	struct backlight_device *raw_bd;
+
+	/* DCS params */
+	bool lp_mode;
 };
 
 struct dsi_reset_seq {
@@ -221,6 +226,7 @@ struct dsi_panel {
 	bool ulps_feature_enabled;
 	bool ulps_suspend_enabled;
 	bool allow_phy_power_off;
+	bool reset_gpio_always_on;
 	atomic_t esd_recovery_pending;
 
 	bool panel_initialized;
@@ -358,6 +364,9 @@ struct dsi_panel *dsi_panel_ext_bridge_get(struct device *parent,
 int dsi_panel_parse_esd_reg_read_configs(struct dsi_panel *panel);
 
 void dsi_panel_ext_bridge_put(struct dsi_panel *panel);
+
+int dsi_panel_get_io_resources(struct dsi_panel *panel,
+		struct msm_io_res *io_res);
 
 void dsi_panel_calc_dsi_transfer_time(struct dsi_host_common_cfg *config,
 		struct dsi_display_mode *mode, u32 frame_threshold_us);

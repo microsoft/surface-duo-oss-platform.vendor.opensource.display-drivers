@@ -42,9 +42,11 @@
 #define SDE_HW_VER_600	SDE_HW_VER(6, 0, 0) /* kona */
 #define SDE_HW_VER_610	SDE_HW_VER(6, 1, 0) /* sm7250 */
 #define SDE_HW_VER_630	SDE_HW_VER(6, 3, 0) /* bengal */
-#define SDE_HW_VER_700	SDE_HW_VER(7, 0, 0) /* lahaina */
+#define SDE_HW_VER_640	SDE_HW_VER(6, 4, 0) /* lagoon */
+#define SDE_HW_VER_650	SDE_HW_VER(6, 5, 0) /* scuba */
 #define SDE_HW_VER_660	SDE_HW_VER(6, 6, 0) /* holi */
 #define SDE_HW_VER_670	SDE_HW_VER(6, 7, 0) /* shima */
+#define SDE_HW_VER_700	SDE_HW_VER(7, 0, 0) /* lahaina */
 
 /* Avoid using below IS_XXX macros outside catalog, use feature bit instead */
 #define IS_SDE_MAJOR_SAME(rev1, rev2)   \
@@ -64,9 +66,11 @@
 #define IS_KONA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_600)
 #define IS_SAIPAN_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_610)
 #define IS_BENGAL_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_630)
-#define IS_LAHAINA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_700)
+#define IS_LAGOON_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_640)
+#define IS_SCUBA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_650)
 #define IS_HOLI_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_660)
 #define IS_SHIMA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_670)
+#define IS_LAHAINA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_700)
 
 #define SDE_HW_BLK_NAME_LEN	16
 
@@ -468,12 +472,14 @@ enum {
  *                              pixel data arrives to this INTF
  * @SDE_INTF_TE                 INTF block has TE configuration support
  * @SDE_INTF_TE_ALIGN_VSYNC     INTF block has POMS Align vsync support
+ * @SDE_INTF_STATUS             INTF block has INTF_STATUS register
  * @SDE_INTF_MAX
  */
 enum {
 	SDE_INTF_INPUT_CTRL = 0x1,
 	SDE_INTF_TE,
 	SDE_INTF_TE_ALIGN_VSYNC,
+	SDE_INTF_STATUS,
 	SDE_INTF_MAX
 };
 
@@ -1396,6 +1402,7 @@ struct sde_perf_cfg {
  * @ubwc_version       UBWC feature version (0x0 for not supported)
  * @ubwc_bw_calc_version indicate how UBWC BW has to be calculated
  * @has_idle_pc        indicate if idle power collapse feature is supported
+ * @wakeup_with_touch  indicate early wake up display with input touch event
  * @has_hdr            HDR feature support
  * @has_hdr_plus       HDR10+ feature support
  * @dma_formats        Supported formats for dma pipe
@@ -1413,6 +1420,7 @@ struct sde_perf_cfg {
  * @has_3d_merge_reset Supports 3D merge reset
  * @has_decimation     Supports decimation
  * @has_trusted_vm_support	     Supported HW sharing with trusted VM
+ * @rc_lm_flush_override        Support Rounded Corner using layer mixer flush
  * @has_mixer_combined_alpha     Mixer has single register for FG & BG alpha
  * @vbif_disable_inner_outer_shareable     VBIF requires disabling shareables
  * @inline_disable_const_clr     Disable constant color during inline rotate
@@ -1474,6 +1482,7 @@ struct sde_mdss_cfg {
 	u32 ubwc_version;
 	u32 ubwc_bw_calc_version;
 	bool has_idle_pc;
+	bool wakeup_with_touch;
 	u32 vbif_qos_nlvl;
 	u32 ts_prefill_rev;
 	u32 true_inline_rot_rev;
@@ -1490,6 +1499,7 @@ struct sde_mdss_cfg {
 	bool has_base_layer;
 	bool has_demura;
 	bool has_trusted_vm_support;
+	bool rc_lm_flush_override;
 	u32 demura_supported[SSPP_MAX][2];
 	u32 qseed_sw_lib_rev;
 	u32 qseed_hw_version;

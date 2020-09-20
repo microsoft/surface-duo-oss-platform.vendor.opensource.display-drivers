@@ -447,6 +447,8 @@ static ssize_t dp_debug_write_edid_modes_mst(struct file *file,
 				mst_connector->vdisplay = vdisplay;
 				mst_connector->vrefresh = vrefresh;
 				mst_connector->aspect_ratio = aspect_ratio;
+				DP_INFO("Setting %dx%dp%d on conn %d\n",
+					hdisplay, vdisplay, vrefresh, con_id);
 			}
 		}
 
@@ -507,13 +509,24 @@ static ssize_t dp_debug_write_mst_con_id(struct file *file,
 	}
 	mutex_unlock(&debug->dp_debug.dp_mst_connector_list.lock);
 
-	if (!in_list)
+	if (!in_list && status != connector_status_connected) {
 		DP_ERR("invalid connector id %u\n", con_id);
-	else if (status != connector_status_unknown) {
-		debug->dp_debug.mst_hpd_sim = true;
-		debug->hpd->simulate_attention(debug->hpd, vdo);
+		goto end;
 	}
 
+	if (status == connector_status_unknown)
+		goto end;
+
+	debug->dp_debug.mst_hpd_sim = true;
+
+	if (status == connector_status_connected) {
+		DP_INFO("plug mst connector\n", con_id, status);
+		debug->dp_debug.mst_sim_add_con = true;
+	} else {
+		DP_INFO("unplug mst connector %d\n", con_id, status);
+	}
+
+	debug->hpd->simulate_attention(debug->hpd, vdo);
 	goto end;
 clear:
 	DP_DEBUG("clearing mst_con_id\n");
@@ -2362,6 +2375,20 @@ static void dp_debug_abort(struct dp_debug *dp_debug)
 	mutex_unlock(&debug->lock);
 }
 
+static void dp_debug_set_mst_con(struct dp_debug *dp_debug, int con_id)
+{
+	struct dp_debug_private *debug;
+
+	if (!dp_debug)
+		return;
+
+	debug = container_of(dp_debug, struct dp_debug_private, dp_debug);
+	mutex_lock(&debug->lock);
+	debug->mst_con_id = con_id;
+	mutex_unlock(&debug->lock);
+	DP_INFO("Selecting mst connector %d\n", con_id);
+}
+
 struct dp_debug *dp_debug_get(struct dp_debug_in *in)
 {
 	int rc = 0;
@@ -2409,6 +2436,7 @@ struct dp_debug *dp_debug_get(struct dp_debug_in *in)
 	debug->aux->access_lock = &debug->lock;
 	dp_debug->get_edid = dp_debug_get_edid;
 	dp_debug->abort = dp_debug_abort;
+	dp_debug->set_mst_con = dp_debug_set_mst_con;
 
 	INIT_LIST_HEAD(&dp_debug->dp_mst_connector_list.list);
 
@@ -2419,6 +2447,7 @@ struct dp_debug *dp_debug_get(struct dp_debug_in *in)
 	dp_debug->dp_mst_connector_list.con_id = -1;
 	dp_debug->dp_mst_connector_list.conn = NULL;
 	dp_debug->dp_mst_connector_list.debug_en = false;
+	mutex_init(&dp_debug->dp_mst_connector_list.lock);
 
 	dp_debug->max_pclk_khz = debug->parser->max_pclk_khz;
 
@@ -2452,6 +2481,7 @@ void dp_debug_put(struct dp_debug *dp_debug)
 
 	dp_debug_deinit(dp_debug);
 
+	mutex_destroy(&dp_debug->dp_mst_connector_list.lock);
 	mutex_destroy(&debug->lock);
 
 	if (debug->edid)

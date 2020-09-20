@@ -326,6 +326,13 @@ struct sde_connector_ops {
 	int (*cont_splash_config)(void *display);
 
 	/**
+	 * cont_splash_res_disable - Remove any splash resources added in probe
+	 * @display: Pointer to private display handle
+	 * Returns: zero for success, negetive for failure
+	 */
+	int (*cont_splash_res_disable)(void *display);
+
+	/**
 	 * get_panel_vfp - returns original panel vfp
 	 * @display: Pointer to private display handle
 	 * @h_active: width
@@ -351,6 +358,22 @@ struct sde_connector_ops {
 	 */
 	int (*prepare_commit)(void *display,
 		struct msm_display_conn_params *params);
+
+	/**
+	 * install_properties - install connector properties
+	 * @display: Pointer to private display structure
+	 * @conn: Pointer to drm connector structure
+	 * Returns: Zero on success
+	 */
+	int (*install_properties)(void *display, struct drm_connector *conn);
+
+	/**
+	 * set_allowed_mode_switch - set allowed_mode_switch flag
+	 * @connector: Pointer to drm connector structure
+	 * @display: Pointer to private display structure
+	 */
+	void (*set_allowed_mode_switch)(struct drm_connector *connector,
+			void *display);
 };
 
 /**
@@ -421,7 +444,6 @@ struct sde_connector_dyn_hdr_metadata {
  * @blob_dither: Pointer to blob structure for default dither config
  * @blob_mode_info: Pointer to blob structure for mode info
  * @blob_panel_id: Pointer to blob structure for blob_panel_id
- * @fb_kmap: true if kernel mapping of framebuffer is requested
  * @event_table: Array of registered events
  * @event_lock: Lock object for event_table
  * @bl_device: backlight device node
@@ -482,7 +504,6 @@ struct sde_connector {
 	struct drm_property_blob *blob_mode_info;
 	struct drm_property_blob *blob_panel_id;
 
-	bool fb_kmap;
 	struct sde_connector_evt event_table[SDE_CONN_EVENT_COUNT];
 	spinlock_t event_lock;
 

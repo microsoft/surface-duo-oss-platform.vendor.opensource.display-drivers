@@ -422,6 +422,11 @@ void sde_core_perf_crtc_update_llcc(struct drm_crtc *crtc)
 
 	mutex_lock(&sde_core_perf_lock);
 
+	if (!kms->perf.idle_sys_cache_enabled) {
+		SDE_DEBUG("disp system cache is disabled from debugfs\n");
+		new->llcc_active[SDE_SYS_CACHE_DISP] = false;
+	}
+
 	if (_sde_core_perf_crtc_is_power_on(crtc)) {
 		for (i = 0; i < SDE_SYS_CACHE_MAX; i++) {
 			if (new->llcc_active[i] != old->llcc_active[i]) {
@@ -969,8 +974,7 @@ void sde_core_perf_crtc_update(struct drm_crtc *crtc,
 	if (kms->perf.bw_vote_mode == DISP_RSC_MODE &&
 	    ((get_sde_rsc_current_state(SDE_RSC_INDEX) != SDE_RSC_CLK_STATE
 	      && params_changed) ||
-	    (get_sde_rsc_current_state(SDE_RSC_INDEX) == SDE_RSC_CLK_STATE
-	      && update_bus)))
+	    (get_sde_rsc_current_state(SDE_RSC_INDEX) == SDE_RSC_CLK_STATE)))
 		sde_rsc_client_trigger_vote(sde_cstate->rsc_client,
 				update_bus ? true : false);
 
@@ -1211,6 +1215,8 @@ int sde_core_perf_debugfs_init(struct sde_core_perf *perf,
 			&perf->fix_core_ib_vote);
 	debugfs_create_u64("fix_core_ab_vote", 0600, perf->debugfs_root,
 			&perf->fix_core_ab_vote);
+	debugfs_create_bool("idle_sys_cache_enable", 0600, perf->debugfs_root,
+			&perf->idle_sys_cache_enabled);
 
 	debugfs_create_u32("uidle_perf_cnt", 0600, perf->debugfs_root,
 			&sde_kms->catalog->uidle_cfg.debugfs_perf);
@@ -1280,6 +1286,7 @@ int sde_core_perf_init(struct sde_core_perf *perf,
 		SDE_DEBUG("optional max core clk rate, use default\n");
 		perf->max_core_clk_rate = SDE_PERF_DEFAULT_MAX_CORE_CLK_RATE;
 	}
+	perf->idle_sys_cache_enabled = true;
 
 	return 0;
 
