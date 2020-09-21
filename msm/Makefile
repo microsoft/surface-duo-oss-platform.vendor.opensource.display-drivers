@@ -4,6 +4,7 @@ ccflags-y += -I$(srctree)/techpack/display/msm/sde
 ccflags-y += -I$(srctree)/techpack/display/rotator
 ccflags-y += -I$(srctree)/techpack/display/msm/shd
 ccflags-y += -I$(srctree)/techpack/display/msm/shp
+ccflags-y += -I$(srctree)/techpack/display/hdcp
 
 msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_usbpd.o \
 	dp/dp_parser.o \

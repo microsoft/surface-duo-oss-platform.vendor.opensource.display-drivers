@@ -11,8 +11,8 @@
 #include <linux/slab.h>
 #include <linux/stat.h>
 #include <linux/iopoll.h>
-#include <linux/msm_hdcp.h>
 #include <drm/drm_dp_helper.h>
+#include <msm_hdcp.h>
 #include "sde_hdcp.h"
 #include "video/msm_hdmi_hdcp_mgr.h"
 #include "dp/dp_reg.h"
@@ -1035,6 +1035,8 @@ static void sde_hdcp_1x_update_auth_status(struct sde_hdcp_1x *hdcp)
 		hdcp->init_data.notify_status(
 			hdcp->init_data.cb_data,
 			hdcp->hdcp_state);
+		msm_hdcp_notify_status(hdcp->init_data.msm_hdcp_dev,
+				hdcp->hdcp_state, HDCP_VERSION_1X);
 	}
 }
 
@@ -1213,6 +1215,8 @@ static void sde_hdcp_1x_off(void *input)
 	DSS_REG_W(io, isr->int_reg,
 		DSS_REG_R(io, isr->int_reg) & ~HDCP_INT_EN);
 	hdcp->hdcp_state = HDCP_STATE_INACTIVE;
+	msm_hdcp_notify_status(hdcp->init_data.msm_hdcp_dev,
+				HDCP_STATE_INACTIVE, HDCP_VERSION_1X);
 
 	/* complete any wait pending */
 	complete_all(&hdcp->sink_r0_available);
