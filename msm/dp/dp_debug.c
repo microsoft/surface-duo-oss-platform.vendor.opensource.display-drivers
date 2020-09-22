@@ -56,7 +56,7 @@ static int dp_debug_sim_hpd_cb(void *arg, bool hpd, bool hpd_irq)
 	struct dp_debug_private *debug = arg;
 
 	if (hpd_irq)
-		return debug->hpd->simulate_attention(debug->hpd, 0);
+		return debug->hpd->simulate_attention(debug->hpd, 0x180);
 	else
 		return debug->hpd->simulate_connect(debug->hpd, hpd);
 }
