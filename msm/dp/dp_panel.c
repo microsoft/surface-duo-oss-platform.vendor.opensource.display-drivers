@@ -1774,6 +1774,8 @@ skip_dpcd_read:
 
 	link_info->num_lanes = dpcd[DP_MAX_LANE_COUNT] &
 				DP_MAX_LANE_COUNT_MASK;
+	link_info->num_lanes = min_t(unsigned int, link_info->num_lanes,
+			panel->parser->max_lane_count);
 	if (multi_func)
 		link_info->num_lanes = min_t(unsigned int,
 			link_info->num_lanes, 2);
