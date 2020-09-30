@@ -1241,23 +1241,15 @@ static void dp_display_connect_work(struct work_struct *work)
 
 	/*
 	 * Reset panel as link param may change during link training.
-	 * MST panel or SST panel in video test mode will reset immediately.
-	 * SST panel in normal mode will reset by the mode change commit.
 	 */
 	if (dp->active_stream_cnt) {
-		if (IS_BOND_MODE(dp->phy_bond_mode)) {
-			dp->aux->abort(dp->aux, true);
-			dp->ctrl->abort(dp->ctrl, true);
+		if (IS_BOND_MODE(dp->phy_bond_mode))
 			reset_connector = dp->bond_primary;
-		} else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
-				!dp->panel->video_test) {
-			dp->aux->abort(dp->aux, true);
-			dp->ctrl->abort(dp->ctrl, true);
+		else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
+				!dp->panel->video_test)
 			reset_connector = dp->dp_display.base_connector;
-		} else {
-			dp_display_clean(dp);
-			dp_display_host_deinit(dp);
-		}
+		dp_display_clean(dp);
+		dp_display_host_deinit(dp);
 	}
 
 	if (dp->parser->force_connect_mode) {
