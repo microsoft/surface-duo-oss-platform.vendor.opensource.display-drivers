@@ -383,6 +383,8 @@ static ssize_t dp_debug_write_edid_modes(struct file *file,
 	if (*ppos)
 		goto end;
 
+	panel = debug->panel;
+
 	/* Leave room for termination char */
 	len = min_t(size_t, count, SZ_32 - 1);
 	if (copy_from_user(buf, user_buff, len))
@@ -397,7 +399,6 @@ static ssize_t dp_debug_write_edid_modes(struct file *file,
 	if (!hdisplay || !vdisplay || !vrefresh)
 		goto clear;
 
-	panel = debug->panel;
 	panel->mode_override = true;
 	panel->hdisplay = hdisplay;
 	panel->vdisplay = vdisplay;
