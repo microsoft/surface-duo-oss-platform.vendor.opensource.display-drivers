@@ -873,6 +873,13 @@ int sde_connector_helper_reset_custom_properties(
 		struct drm_connector_state *connector_state);
 
 /**
+ * sde_connector_helper_mode_change_commit - null commit with mode changed set
+ * @connector: Pointer to DRM connector object
+ * Returns: 0 on success, negative errno on failure
+ */
+int sde_connector_helper_mode_change_commit(struct drm_connector *conn);
+
+/**
  * sde_connector_get_mode_info - get information of the current mode in the
  *                               given connector state.
  * conn_state: Pointer to the DRM connector state object

@@ -62,8 +62,6 @@ struct dp_panel_private {
 	struct dp_link *link;
 	struct dp_parser *parser;
 	struct dp_catalog_panel *catalog;
-	bool custom_edid;
-	bool custom_dpcd;
 	bool panel_on;
 	bool vsc_supported;
 	bool vscext_supported;
@@ -948,6 +946,7 @@ enum dp_dsc_ratio_type {
 	DSC_8BPC_8BPP,
 	DSC_10BPC_8BPP,
 	DSC_12BPC_8BPP,
+	DSC_10BPC_10BPP,
 	DSC_RATIO_TYPE_MAX
 };
 
@@ -962,6 +961,7 @@ static char dp_dsc_rc_range_min_qp_1_1[][15] = {
 	{0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 13},
 	{0, 4, 5, 5, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 17},
 	{0, 4, 9, 9, 11, 11, 11, 11, 11, 11, 13, 13, 13, 15, 21},
+	{0, 4, 5, 6, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 15},
 	};
 
 /*
@@ -972,6 +972,7 @@ static char dp_dsc_rc_range_min_qp_1_1_scr1[][15] = {
 	{0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 9, 12},
 	{0, 4, 5, 5, 7, 7, 7, 7, 7, 7, 9, 9, 9, 13, 16},
 	{0, 4, 9, 9, 11, 11, 11, 11, 11, 11, 13, 13, 13, 17, 20},
+	{0, 4, 5, 6, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 15},
 	};
 
 /*
@@ -982,6 +983,7 @@ static char dp_dsc_rc_range_max_qp_1_1[][15] = {
 	{4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 11, 12, 13, 13, 15},
 	{8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 15, 16, 17, 17, 19},
 	{12, 12, 13, 14, 15, 15, 15, 16, 17, 18, 19, 20, 21, 21, 23},
+	{7, 8, 9, 10, 11, 11, 11, 12, 13, 13, 14, 14, 15, 15, 16},
 	};
 
 /*
@@ -992,14 +994,19 @@ static char dp_dsc_rc_range_max_qp_1_1_scr1[][15] = {
 	{4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 10, 11, 11, 12, 13},
 	{8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 14, 15, 15, 16, 17},
 	{12, 12, 13, 14, 15, 15, 15, 16, 17, 18, 18, 19, 19, 20, 21},
+	{7, 8, 9, 10, 11, 11, 11, 12, 13, 13, 14, 14, 15, 15, 16},
 	};
 
 /*
  * DSC 1.1 and DSC 1.1 SCR
  * Rate control - bpg offset values
  */
-static char dp_dsc_rc_range_bpg_offset[] = {2, 0, 0, -2, -4, -6, -8, -8,
-		-8, -10, -10, -12, -12, -12, -12};
+static char dp_dsc_rc_range_bpg_offset[][15] = {
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12},
+	};
 
 struct dp_dsc_dto_data {
 	enum msm_display_compression_ratio comp_ratio;
@@ -1329,7 +1336,7 @@ static void dp_panel_dsc_pclk_param_calc(struct dp_panel *dp_panel,
 }
 
 static void dp_panel_dsc_populate_static_params(
-		struct msm_display_dsc_info *dsc)
+		struct msm_display_dsc_info *dsc, struct dp_panel *panel)
 {
 	int bpp, bpc;
 	int mux_words_size;
@@ -1341,6 +1348,7 @@ static void dp_panel_dsc_populate_static_params(
 	int data;
 	int final_value, final_scale;
 	int ratio_index, mod_offset;
+	int line_buf_depth_raw, line_buf_depth;
 
 	dsc->version = 0x11;
 	dsc->scr_rev = 0;
@@ -1363,10 +1371,12 @@ static void dp_panel_dsc_populate_static_params(
 	bpp = dsc->bpp;
 	bpc = dsc->bpc;
 
-	if (bpc == 12)
+	if (bpc == 12 && bpp == 8)
 		ratio_index = DSC_12BPC_8BPP;
-	else if (bpc == 10)
+	else if (bpc == 10 && bpp == 8)
 		ratio_index = DSC_10BPC_8BPP;
+	else if (bpc == 10 && bpp == 10)
+		ratio_index = DSC_10BPC_10BPP;
 	else
 		ratio_index = DSC_8BPC_8BPP;
 
@@ -1379,19 +1389,23 @@ static void dp_panel_dsc_populate_static_params(
 		dsc->range_min_qp = dp_dsc_rc_range_min_qp_1_1[ratio_index];
 		dsc->range_max_qp = dp_dsc_rc_range_max_qp_1_1[ratio_index];
 	}
-	dsc->range_bpg_offset = dp_dsc_rc_range_bpg_offset;
+	dsc->range_bpg_offset = dp_dsc_rc_range_bpg_offset[ratio_index];
 
-	if (bpp <= 10)
+	if (bpp == 8) {
 		dsc->initial_offset = 6144;
-	else
-		dsc->initial_offset = 2048;	/* bpp = 12 */
+		dsc->initial_xmit_delay = 512;
+	} else if (bpp == 10) {
+		dsc->initial_offset = 5632;
+		dsc->initial_xmit_delay = 410;
+	} else {
+		dsc->initial_offset = 2048;
+		dsc->initial_xmit_delay = 341;
+	}
 
-	if (bpc == 12)
-		mux_words_size = 64;
-	else
-		mux_words_size = 48;		/* bpc == 8/10 */
-
-	dsc->line_buf_depth = bpc + 1;
+	line_buf_depth_raw = panel->dsc_dpcd[5] & 0x0f;
+	line_buf_depth = (line_buf_depth_raw == 8) ? 8 :
+			(line_buf_depth_raw + 9);
+	dsc->line_buf_depth = min(line_buf_depth, dsc->bpc + 1);
 
 	if (bpc == 8) {
 		dsc->input_10_bits = 0;
@@ -1399,18 +1413,21 @@ static void dp_panel_dsc_populate_static_params(
 		dsc->max_qp_flatness = 12;
 		dsc->quant_incr_limit0 = 11;
 		dsc->quant_incr_limit1 = 11;
+		mux_words_size = 48;
 	} else if (bpc == 10) { /* 10bpc */
 		dsc->input_10_bits = 1;
 		dsc->min_qp_flatness = 7;
 		dsc->max_qp_flatness = 16;
 		dsc->quant_incr_limit0 = 15;
 		dsc->quant_incr_limit1 = 15;
+		mux_words_size = 48;
 	} else { /* 12 bpc */
 		dsc->input_10_bits = 0;
 		dsc->min_qp_flatness = 11;
 		dsc->max_qp_flatness = 20;
 		dsc->quant_incr_limit0 = 19;
 		dsc->quant_incr_limit1 = 19;
+		mux_words_size = 64;
 	}
 
 	mod_offset = dsc->slice_width % 3;
@@ -1429,8 +1446,6 @@ static void dp_panel_dsc_populate_static_params(
 	}
 
 	dsc->det_thresh_flatness = 2 << (bpc - 8);
-
-	dsc->initial_xmit_delay = dsc->rc_model_size / (2 * bpp);
 
 	groups_per_line = DIV_ROUND_UP(dsc->slice_width, 3);
 
@@ -1489,7 +1504,17 @@ struct dp_dsc_slices_per_line {
 	u8 num_slices;
 };
 
-struct dp_dsc_slices_per_line slice_per_line_tbl[] = {
+struct dp_dsc_peak_throughput {
+	u32 index;
+	u32 peak_throughput;
+};
+
+struct dp_dsc_slice_caps_bit_map {
+	u32 num_slices;
+	u32 bit_index;
+};
+
+const struct dp_dsc_slices_per_line slice_per_line_tbl[] = {
 	{0,     340,    1   },
 	{340,   680,    2   },
 	{680,   1360,   4   },
@@ -1500,16 +1525,81 @@ struct dp_dsc_slices_per_line slice_per_line_tbl[] = {
 	{8000,  9600,   24  }
 };
 
+const struct dp_dsc_peak_throughput peak_throughput_mode_0_tbl[] = {
+	{0, 0},
+	{1, 340},
+	{2, 400},
+	{3, 450},
+	{4, 500},
+	{5, 550},
+	{6, 600},
+	{7, 650},
+	{8, 700},
+	{9, 750},
+	{10, 800},
+	{11, 850},
+	{12, 900},
+	{13, 950},
+	{14, 1000},
+};
+
+const struct dp_dsc_slice_caps_bit_map slice_caps_bit_map_tbl[] = {
+	{1, 0},
+	{2, 1},
+	{4, 3},
+	{6, 4},
+	{8, 5},
+	{10, 6},
+	{12, 7},
+	{16, 0},
+	{20, 1},
+	{24, 2},
+};
+
+static bool dp_panel_check_slice_support(u32 num_slices, u32 raw_data_1,
+		u32 raw_data_2)
+{
+	const struct dp_dsc_slice_caps_bit_map *bcap;
+	u32 raw_data;
+	int i;
+
+	if (num_slices <= 12)
+		raw_data = raw_data_1;
+	else
+		raw_data = raw_data_2;
+
+	for (i = 0; i < ARRAY_SIZE(slice_caps_bit_map_tbl); i++) {
+		bcap = &slice_caps_bit_map_tbl[i];
+
+		if (bcap->num_slices == num_slices) {
+			raw_data &= (1 << bcap->bit_index);
+
+			if (raw_data)
+				return true;
+			else
+				return false;
+		}
+	}
+
+	return false;
+}
+
 static int dp_panel_dsc_prepare_basic_params(
 		struct msm_compression_info *comp_info,
 		const struct dp_display_mode *dp_mode,
 		struct dp_panel *dp_panel)
 {
 	int i;
-	struct dp_dsc_slices_per_line *rec;
-	int slice_width;
+	const struct dp_dsc_slices_per_line *rec;
+	const struct dp_dsc_peak_throughput *tput;
+	u32 slice_width;
 	u32 ppr = dp_mode->timing.pixel_clk_khz/1000;
-	int max_slice_width;
+	u32 max_slice_width;
+	u32 ppr_max_index;
+	u32 peak_throughput;
+	u32 ppr_per_slice;
+	u32 slice_caps_1;
+	u32 slice_caps_2;
 
 	/*
 	 * DSC only support 24/30/36 bpp which is defined in
@@ -1535,11 +1625,35 @@ static int dp_panel_dsc_prepare_basic_params(
 	if (comp_info->dsc_info.slice_per_pkt == 0)
 		return -EINVAL;
 
+	ppr_max_index = dp_panel->dsc_dpcd[11] &= 0xf;
+	if (!ppr_max_index || ppr_max_index >= 15) {
+		pr_debug("Throughput mode 0 not supported");
+		return -EINVAL;
+	}
+
+	tput = &peak_throughput_mode_0_tbl[ppr_max_index];
+	peak_throughput = tput->peak_throughput;
+
 	max_slice_width = dp_panel->dsc_dpcd[12] * 320;
 	slice_width = (dp_mode->timing.h_active /
 				comp_info->dsc_info.slice_per_pkt);
 
-	while (slice_width >= max_slice_width) {
+	ppr_per_slice = ppr/comp_info->dsc_info.slice_per_pkt;
+
+	slice_caps_1 = dp_panel->dsc_dpcd[4];
+	slice_caps_2 = dp_panel->dsc_dpcd[13] & 0x7;
+
+	/*
+	 * There are 3 conditions to check for sink support:
+	 * 1. The slice width cannot exceed the maximum.
+	 * 2. The ppr per slice cannot exceed the maximum.
+	 * 3. The number of slices must be explicitly supported.
+	 */
+	while (slice_width >= max_slice_width ||
+			ppr_per_slice > peak_throughput ||
+			!dp_panel_check_slice_support(
+			comp_info->dsc_info.slice_per_pkt, slice_caps_1,
+			slice_caps_2)) {
 		if (i == ARRAY_SIZE(slice_per_line_tbl))
 			return -EINVAL;
 
@@ -1547,6 +1661,7 @@ static int dp_panel_dsc_prepare_basic_params(
 		comp_info->dsc_info.slice_per_pkt = rec->num_slices;
 		slice_width = (dp_mode->timing.h_active /
 				comp_info->dsc_info.slice_per_pkt);
+		ppr_per_slice = ppr/comp_info->dsc_info.slice_per_pkt;
 		i++;
 	}
 
@@ -1604,11 +1719,6 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 	panel->vscext_supported = false;
 	panel->vscext_chaining_supported = false;
 
-	if (panel->custom_dpcd) {
-		pr_debug("skip dpcd read in debug mode\n");
-		goto skip_dpcd_read;
-	}
-
 	rlen = drm_dp_dpcd_read(drm_aux, DP_TRAINING_AUX_RD_INTERVAL, &temp, 1);
 	if (rlen != 1) {
 		pr_err("error reading DP_TRAINING_AUX_RD_INTERVAL\n");
@@ -1664,6 +1774,8 @@ skip_dpcd_read:
 
 	link_info->num_lanes = dpcd[DP_MAX_LANE_COUNT] &
 				DP_MAX_LANE_COUNT_MASK;
+	link_info->num_lanes = min_t(unsigned int, link_info->num_lanes,
+			panel->parser->max_lane_count);
 	if (multi_func)
 		link_info->num_lanes = min_t(unsigned int,
 			link_info->num_lanes, 2);
@@ -1716,55 +1828,6 @@ static int dp_panel_set_default_link_params(struct dp_panel *dp_panel)
 	return 0;
 }
 
-static int dp_panel_set_edid(struct dp_panel *dp_panel, u8 *edid)
-{
-	struct dp_panel_private *panel;
-
-	if (!dp_panel) {
-		pr_err("invalid input\n");
-		return -EINVAL;
-	}
-
-	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
-
-	if (edid) {
-		dp_panel->edid_ctrl->edid = (struct edid *)edid;
-		panel->custom_edid = true;
-	} else {
-		panel->custom_edid = false;
-		dp_panel->edid_ctrl->edid = NULL;
-	}
-
-	pr_debug("%d\n", panel->custom_edid);
-	return 0;
-}
-
-static int dp_panel_set_dpcd(struct dp_panel *dp_panel, u8 *dpcd)
-{
-	struct dp_panel_private *panel;
-	u8 *dp_dpcd;
-
-	if (!dp_panel) {
-		pr_err("invalid input\n");
-		return -EINVAL;
-	}
-
-	dp_dpcd = dp_panel->dpcd;
-
-	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
-
-	if (dpcd) {
-		memcpy(dp_dpcd, dpcd, DP_RECEIVER_CAP_SIZE + 1);
-		panel->custom_dpcd = true;
-	} else {
-		panel->custom_dpcd = false;
-	}
-
-	pr_debug("%d\n", panel->custom_dpcd);
-
-	return 0;
-}
-
 static int dp_panel_read_edid(struct dp_panel *dp_panel,
 	struct drm_connector *connector)
 {
@@ -1778,11 +1841,6 @@ static int dp_panel_read_edid(struct dp_panel *dp_panel,
 	}
 
 	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
-
-	if (panel->custom_edid) {
-		pr_debug("skip edid read in debug mode\n");
-		goto end;
-	}
 
 	sde_get_edid(connector, &panel->aux->drm_aux->ddc,
 		(void **)&dp_panel->edid_ctrl);
@@ -1800,40 +1858,28 @@ end:
 
 static void dp_panel_decode_dsc_dpcd(struct dp_panel *dp_panel)
 {
-	s64 fec_overhead_fp = drm_fixp_from_fraction(1, 1);
-
-	if (!dp_panel->dsc_feature_enable || !dp_panel->fec_feature_enable) {
-		pr_debug("source dsc is not supported\n");
-		return;
-	}
-
-	if (dp_panel->dsc_dpcd[0] && dp_panel->fec_dpcd) {
+	if (dp_panel->dsc_dpcd[0]) {
 		dp_panel->sink_dsc_caps.dsc_capable = true;
 		dp_panel->sink_dsc_caps.version = dp_panel->dsc_dpcd[1];
 		dp_panel->sink_dsc_caps.block_pred_en =
-			dp_panel->dsc_dpcd[6] ? true : false;
+				dp_panel->dsc_dpcd[6] ? true : false;
+		dp_panel->sink_dsc_caps.color_depth =
+				dp_panel->dsc_dpcd[10];
 
-		if (dp_panel->sink_dsc_caps.version >= 0x11)
+		if (dp_panel->sink_dsc_caps.version >= 0x11) {
 			dp_panel->dsc_en = true;
+			dp_panel->widebus_en = true;
+		}
 	} else {
 		dp_panel->sink_dsc_caps.dsc_capable = false;
 		dp_panel->dsc_en = false;
 	}
-
-	dp_panel->fec_en = dp_panel->dsc_en;
-
-	/* fec_overhead = 1.00 / 0.97582 */
-	if (dp_panel->fec_en)
-		fec_overhead_fp = drm_fixp_from_fraction(100000, 97582);
-
-	dp_panel->fec_overhead_fp = fec_overhead_fp;
 }
 
 static void dp_panel_read_sink_dsc_caps(struct dp_panel *dp_panel)
 {
 	int rlen;
 	struct dp_panel_private *panel;
-	const int fec_cap = 0x90;
 	int dpcd_rev;
 
 	if (!dp_panel) {
@@ -1841,14 +1887,9 @@ static void dp_panel_read_sink_dsc_caps(struct dp_panel *dp_panel)
 		return;
 	}
 
-	dp_panel->dsc_en = false;
-	dp_panel->fec_en = false;
-
 	dpcd_rev = dp_panel->dpcd[DP_DPCD_REV];
 
 	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
-
-	dp_panel->fec_overhead_fp = 0;
 	if (panel->parser->dsc_feature_enable && dpcd_rev >= 0x14) {
 		rlen = drm_dp_dpcd_read(panel->aux->drm_aux, DP_DSC_SUPPORT,
 			dp_panel->dsc_dpcd, (DP_RECEIVER_DSC_CAP_SIZE + 1));
@@ -1861,15 +1902,34 @@ static void dp_panel_read_sink_dsc_caps(struct dp_panel *dp_panel)
 			DUMP_PREFIX_NONE, 8, 1, dp_panel->dsc_dpcd, rlen,
 			false);
 
-		rlen = drm_dp_dpcd_read(panel->aux->drm_aux, fec_cap,
-			&dp_panel->fec_dpcd, 1);
-		if (rlen < 1) {
-			pr_err("fec dpcd read failed, rlen=%d\n", rlen);
-			return;
-		}
-
 		dp_panel_decode_dsc_dpcd(dp_panel);
 	}
+}
+
+static void dp_panel_read_sink_fec_caps(struct dp_panel *dp_panel)
+{
+	int rlen;
+	struct dp_panel_private *panel;
+	s64 fec_overhead_fp = drm_fixp_from_fraction(1, 1);
+
+	if (!dp_panel) {
+		pr_err("invalid input\n");
+		return;
+	}
+
+	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
+	rlen = drm_dp_dpcd_readb(panel->aux->drm_aux, DP_FEC_CAPABILITY,
+			&dp_panel->fec_dpcd);
+	if (rlen < 1) {
+		pr_err("fec capability read failed, rlen=%d\n", rlen);
+		return;
+	}
+
+	dp_panel->fec_en = dp_panel->fec_dpcd & DP_FEC_CAPABLE;
+	if (dp_panel->fec_en)
+		fec_overhead_fp = drm_fixp_from_fraction(100000, 97582);
+
+	dp_panel->fec_overhead_fp = fec_overhead_fp;
 }
 
 static int dp_panel_read_sink_caps(struct dp_panel *dp_panel,
@@ -1933,7 +1993,18 @@ skip_edid:
 	dp_panel->dsc_feature_enable = panel->parser->dsc_feature_enable;
 	dp_panel->fec_feature_enable = panel->parser->fec_feature_enable;
 
-	dp_panel_read_sink_dsc_caps(dp_panel);
+	dp_panel->fec_en = false;
+	dp_panel->dsc_en = false;
+
+	if (dp_panel->fec_feature_enable) {
+		dp_panel_read_sink_fec_caps(dp_panel);
+
+		if (dp_panel->dsc_feature_enable && dp_panel->fec_en)
+			dp_panel_read_sink_dsc_caps(dp_panel);
+	}
+
+	pr_info("fec_en=%d, dsc_en=%d, widebus_en=%d\n", dp_panel->fec_en,
+			dp_panel->dsc_en, dp_panel->widebus_en);
 end:
 	return rc;
 }
@@ -1942,19 +2013,42 @@ static u32 dp_panel_get_supported_bpp(struct dp_panel *dp_panel,
 		u32 mode_edid_bpp, u32 mode_pclk_khz)
 {
 	struct drm_dp_link *link_info;
-	const u32 max_supported_bpp = 30, min_supported_bpp = 18;
+	const u32 max_supported_bpp = 30;
+	u32 min_supported_bpp = 18;
 	u32 bpp = 0, data_rate_khz = 0;
+
+	if (dp_panel->dsc_en)
+		min_supported_bpp = 24;
 
 	bpp = min_t(u32, mode_edid_bpp, max_supported_bpp);
 
 	link_info = &dp_panel->link_info;
 	data_rate_khz = link_info->num_lanes * link_info->rate * 8;
 
-	while (bpp > min_supported_bpp) {
+	for (; bpp > min_supported_bpp; bpp -= 6) {
+		if (dp_panel->dsc_en) {
+			if (bpp == 36 && !(dp_panel->sink_dsc_caps.color_depth
+					& DP_DSC_12_BPC))
+				continue;
+			else if (bpp == 30 &&
+					!(dp_panel->sink_dsc_caps.color_depth &
+					DP_DSC_10_BPC))
+				continue;
+			else if (bpp == 24 &&
+					!(dp_panel->sink_dsc_caps.color_depth &
+					DP_DSC_8_BPC))
+				continue;
+		}
+
 		if (mode_pclk_khz * bpp <= data_rate_khz)
 			break;
-		bpp -= 6;
 	}
+
+	if (bpp < min_supported_bpp)
+		pr_info("bpp %d is below minimum supported bpp %d\n", bpp,
+				min_supported_bpp);
+	if (dp_panel->dsc_en && bpp != 24 && bpp != 30 && bpp != 36)
+		pr_info("bpp %d is not supported when dsc is enabled\n", bpp);
 
 	return bpp;
 }
@@ -2375,7 +2469,7 @@ static int dp_panel_deinit_panel_info(struct dp_panel *dp_panel, u32 flags)
 	panel = container_of(dp_panel, struct dp_panel_private, dp_panel);
 	hdr = &panel->catalog->hdr_data;
 
-	if (!panel->custom_edid && dp_panel->edid_ctrl->edid)
+	if (dp_panel->edid_ctrl->edid)
 		sde_free_edid((void **)&dp_panel->edid_ctrl);
 
 	dp_panel_set_stream_info(dp_panel, DP_STREAM_MAX, 0, 0, 0, 0);
@@ -2559,8 +2653,8 @@ static void dp_panel_config_ctrl(struct dp_panel *dp_panel, bool sync)
 	tbd = panel->link->get_test_bits_depth(panel->link,
 			dp_panel->pinfo.bpp);
 
-	if (tbd == DP_TEST_BIT_DEPTH_UNKNOWN)
-		tbd = DP_TEST_BIT_DEPTH_8;
+	if (tbd == DP_TEST_BIT_DEPTH_UNKNOWN || dp_panel->dsc_en)
+		tbd = (DP_TEST_BIT_DEPTH_8 >> DP_TEST_BIT_DEPTH_SHIFT);
 
 	config |= tbd << 8;
 
@@ -2790,7 +2884,8 @@ static void dp_panel_convert_to_dp_mode(struct dp_panel *dp_panel,
 			return;
 		}
 
-		dp_panel_dsc_populate_static_params(&comp_info->dsc_info);
+		dp_panel_dsc_populate_static_params(&comp_info->dsc_info,
+				dp_panel);
 		dp_panel_dsc_pclk_param_calc(dp_panel,
 				&comp_info->dsc_info,
 				comp_info->comp_ratio,
@@ -2869,8 +2964,6 @@ struct dp_panel *dp_panel_get(struct dp_panel_in *in)
 	dp_panel->get_mode_bpp = dp_panel_get_mode_bpp;
 	dp_panel->get_modes = dp_panel_get_modes;
 	dp_panel->handle_sink_request = dp_panel_handle_sink_request;
-	dp_panel->set_edid = dp_panel_set_edid;
-	dp_panel->set_dpcd = dp_panel_set_dpcd;
 	dp_panel->tpg_config = dp_panel_tpg_config;
 	dp_panel->spd_config = dp_panel_spd_config;
 	dp_panel->setup_hdr = dp_panel_setup_hdr;

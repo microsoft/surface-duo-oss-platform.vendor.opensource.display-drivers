@@ -29,6 +29,7 @@
 #include "dp_display.h"
 #include "sde_hdcp.h"
 #include "dp_debug.h"
+#include "dp_mst_sim.h"
 
 #define DP_MST_DEBUG(fmt, ...) pr_debug(fmt, ##__VA_ARGS__)
 
@@ -74,7 +75,6 @@ struct dp_display_private {
 	struct device_node *aux_switch_node;
 	struct msm_dp_aux_bridge *aux_bridge;
 	struct dentry *root;
-	struct completion notification_comp;
 
 	struct dp_hpd     *hpd;
 	struct dp_parser  *parser;
@@ -117,6 +117,7 @@ struct dp_display_private {
 	u32 phy_idx;
 
 	enum dp_phy_bond_mode phy_bond_mode;
+	struct drm_connector *bond_primary;
 };
 
 static const struct of_device_id dp_dt_match[] = {
@@ -649,9 +650,8 @@ static void dp_display_send_hpd_event(struct dp_display_private *dp)
 			envp);
 }
 
-static int dp_display_send_hpd_notification(struct dp_display_private *dp)
+static void dp_display_send_hpd_notification(struct dp_display_private *dp)
 {
-	int ret = 0;
 	bool hpd = dp->is_connected;
 
 	dp->aux->state |= DP_STATE_NOTIFICATION_SENT;
@@ -661,27 +661,7 @@ static int dp_display_send_hpd_notification(struct dp_display_private *dp)
 	else
 		dp->dp_display.is_sst_connected = false;
 
-	reinit_completion(&dp->notification_comp);
 	dp_display_send_hpd_event(dp);
-
-	if (dp->suspended) {
-		pr_debug("DP in suspend state. Skip wait for notification\n");
-		goto skip_wait;
-	}
-
-	if (hpd && dp->mst.mst_active)
-		goto skip_wait;
-
-	if (!dp->mst.mst_active && (dp->power_on == hpd))
-		goto skip_wait;
-
-	if (!wait_for_completion_timeout(&dp->notification_comp,
-						HZ * 5)) {
-		pr_warn("%s timeout\n", hpd ? "connect" : "disconnect");
-		ret = -EINVAL;
-	}
-skip_wait:
-	return ret;
 }
 
 static void dp_display_update_mst_state(struct dp_display_private *dp,
@@ -772,9 +752,9 @@ static void dp_display_host_init(struct dp_display_private *dp)
 
 	dp->power->init(dp->power, flip);
 	dp->hpd->host_init(dp->hpd, &dp->catalog->hpd);
+	enable_irq(dp->irq);
 	dp->ctrl->init(dp->ctrl, flip, reset);
 	dp->aux->init(dp->aux, dp->parser->aux_cfg);
-	enable_irq(dp->irq);
 	dp->panel->init(dp->panel);
 	dp->core_initialized = true;
 
@@ -850,7 +830,7 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 	dp_display_process_mst_hpd_high(dp, false);
 
 	rc = dp->ctrl->on(dp->ctrl, dp->mst.mst_active,
-				dp->panel->fec_en, false);
+			dp->panel->fec_en, dp->panel->dsc_en, false);
 	if (rc) {
 		dp->is_connected = false;
 		goto end;
@@ -882,9 +862,8 @@ static void dp_display_process_mst_hpd_low(struct dp_display_private *dp)
 	DP_MST_DEBUG("mst_hpd_low. mst_active:%d\n", dp->mst.mst_active);
 }
 
-static int dp_display_process_hpd_low(struct dp_display_private *dp)
+static void dp_display_process_hpd_low(struct dp_display_private *dp)
 {
-	int rc = 0;
 	struct dp_link_hdcp_status *status;
 
 	mutex_lock(&dp->session_lock);
@@ -908,21 +887,9 @@ static int dp_display_process_hpd_low(struct dp_display_private *dp)
 
 	dp_display_process_mst_hpd_low(dp);
 
-	rc = dp_display_send_hpd_notification(dp);
-
-	mutex_lock(&dp->session_lock);
-	/*
-	 * Can't disable the clock for the bond PLL here.
-	 * The clock tear down sequence need to be guaranteed.
-	 * Will be handled in dp_display_unprepare via bond bridge.
-	 */
-	if (!dp->active_stream_cnt && !IS_BOND_MODE(dp->phy_bond_mode))
-		dp->ctrl->off(dp->ctrl);
-	mutex_unlock(&dp->session_lock);
+	dp_display_send_hpd_notification(dp);
 
 	dp->panel->video_test = false;
-
-	return rc;
 }
 
 static int dp_display_usbpd_configure_cb(struct device *dev)
@@ -1001,6 +968,12 @@ static void dp_display_stream_disable(struct dp_display_private *dp,
 		return;
 	}
 
+	if (dp_panel->stream_id == DP_STREAM_MAX ||
+			!dp->active_panels[dp_panel->stream_id]) {
+		pr_err("panel is already disabled\n");
+		return;
+	}
+
 	pr_debug("stream_id=%d, active_stream_cnt=%d\n",
 			dp_panel->stream_id, dp->active_stream_cnt);
 
@@ -1042,37 +1015,34 @@ static void dp_display_clean(struct dp_display_private *dp)
 	dp->ctrl->off(dp->ctrl);
 }
 
-static int dp_display_handle_disconnect(struct dp_display_private *dp)
+static void dp_display_handle_disconnect(struct dp_display_private *dp)
 {
-	int rc;
-
-	rc = dp_display_process_hpd_low(dp);
-	if (rc) {
-		/* cancel any pending request */
-		dp->ctrl->abort(dp->ctrl, false);
-		dp->aux->abort(dp->aux, false);
+	if (dp->parser->force_connect_mode) {
+		/*
+		 * switch from normal mode to simulation mode. update EDID
+		 * and send hotplug to user. this gives user a chance to
+		 * update the mode if simulation EDID is different than
+		 * current EDID.
+		 */
+		mutex_lock(&dp->session_lock);
+		dp_sim_set_sim_mode(dp->aux_bridge, DP_SIM_MODE_ALL);
+		mutex_unlock(&dp->session_lock);
+		dp_display_process_hpd_high(dp);
+		return;
 	}
 
-	/*
-	 * For PLL master, defer the cleanup and deinit.
-	 * The clock tear down sequence need to be guaranteed.
-	 * Will be handled in dp_display_unprepare via bond bridge.
-	 */
-	if (IS_BOND_MODE(dp->phy_bond_mode))
-		goto done;
+	dp_display_process_hpd_low(dp);
+
+	/* cancel any pending request */
+	dp->ctrl->abort(dp->ctrl, false);
+	dp->aux->abort(dp->aux, false);
 
 	mutex_lock(&dp->session_lock);
-	if (dp->power_on)
+	if (!dp->active_stream_cnt && !IS_BOND_MODE(dp->phy_bond_mode)) {
 		dp_display_clean(dp);
-
-	dp->is_connected = false;
-
-	dp_display_host_deinit(dp);
-
+		dp_display_host_deinit(dp);
+	}
 	mutex_unlock(&dp->session_lock);
-
-done:
-	return rc;
 }
 
 static void dp_display_disconnect_sync(struct dp_display_private *dp)
@@ -1158,7 +1128,7 @@ static void dp_display_attention_work(struct work_struct *work)
 
 	mutex_lock(&dp->session_lock);
 
-	if (dp->debug->mst_hpd_sim || !dp->core_initialized) {
+	if (!dp->core_initialized) {
 		mutex_unlock(&dp->session_lock);
 		goto mst_attention;
 	}
@@ -1239,8 +1209,7 @@ static int dp_display_usbpd_attention_cb(struct device *dev)
 
 	if (!dp->hpd->hpd_high)
 		dp_display_disconnect_sync(dp);
-	else if ((dp->hpd->hpd_irq && dp->core_initialized) ||
-			dp->debug->mst_hpd_sim)
+	else if (dp->hpd->hpd_irq && dp->core_initialized)
 		queue_work(dp->wq, &dp->attention_work);
 	else if (dp->process_hpd_connect || !dp->is_connected)
 		queue_work(dp->wq, &dp->connect_work);
@@ -1255,6 +1224,7 @@ static void dp_display_connect_work(struct work_struct *work)
 	int rc = 0;
 	struct dp_display_private *dp = container_of(work,
 			struct dp_display_private, connect_work);
+	struct drm_connector *reset_connector = NULL;
 
 	if (atomic_read(&dp->aborted)) {
 		pr_warn("HPD off requested\n");
@@ -1266,10 +1236,48 @@ static void dp_display_connect_work(struct work_struct *work)
 		return;
 	}
 
+	mutex_lock(&dp->session_lock);
+
+	/*
+	 * Reset panel as link param may change during link training.
+	 * MST panel or SST panel in video test mode will reset immediately.
+	 * SST panel in normal mode will reset by the mode change commit.
+	 */
+	if (dp->active_stream_cnt) {
+		if (IS_BOND_MODE(dp->phy_bond_mode)) {
+			dp->aux->abort(dp->aux, true);
+			dp->ctrl->abort(dp->ctrl, true);
+			reset_connector = dp->bond_primary;
+		} else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
+				!dp->panel->video_test) {
+			dp->aux->abort(dp->aux, true);
+			dp->ctrl->abort(dp->ctrl, true);
+			reset_connector = dp->dp_display.base_connector;
+		} else {
+			dp_display_clean(dp);
+			dp_display_host_deinit(dp);
+		}
+	}
+
+	if (dp->parser->force_connect_mode) {
+		if (!reset_connector) {
+			dp_display_clean(dp);
+			dp_display_host_deinit(dp);
+		}
+		dp->is_connected = false;
+		dp_display_process_mst_hpd_low(dp);
+		dp_sim_set_sim_mode(dp->aux_bridge, 0);
+	}
+
+	mutex_unlock(&dp->session_lock);
+
 	rc = dp_display_process_hpd_high(dp);
 
 	if (!rc && dp->panel->video_test)
 		dp->link->send_test_response(dp->link);
+
+	if (reset_connector)
+		sde_connector_helper_mode_change_commit(reset_connector);
 }
 
 static int dp_display_usb_notifier(struct notifier_block *nb,
@@ -1486,6 +1494,17 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 
 	dp_display_get_usb_extcon(dp);
 
+	if (dp->parser->force_connect_mode) {
+		/*
+		 * always enter simulation first regardless of the actual
+		 * connection state to make connector always connected.
+		 * this will fix the corner case when user tries to read
+		 * connector modes when link training is still running.
+		 */
+		dp_sim_set_sim_mode(dp->aux_bridge, DP_SIM_MODE_ALL);
+		dp_display_process_hpd_high(dp);
+	}
+
 	if (dp->hpd->register_hpd) {
 		rc = dp->hpd->register_hpd(dp->hpd);
 		if (rc) {
@@ -1610,7 +1629,7 @@ static int dp_display_prepare(struct dp_display *dp_display, void *panel)
 	if (dp->power_on)
 		goto end;
 
-	if (!dp_display_is_ready(dp))
+	if (!dp_display_is_ready(dp) && !dp->parser->force_connect_mode)
 		goto end;
 
 	dp_display_host_init(dp);
@@ -1630,7 +1649,8 @@ static int dp_display_prepare(struct dp_display *dp_display, void *panel)
 	 * So, we execute in shallow mode here to do only minimal
 	 * and required things.
 	 */
-	rc = dp->ctrl->on(dp->ctrl, dp->mst.mst_active, dp_panel->fec_en, true);
+	rc = dp->ctrl->on(dp->ctrl, dp->mst.mst_active, dp_panel->fec_en,
+			dp_panel->dsc_en, true);
 	if (rc)
 		goto end;
 
@@ -1784,7 +1804,6 @@ static int dp_display_post_enable(struct dp_display *dp_display, void *panel)
 end:
 	dp->aux->state |= DP_STATE_CTRL_POWERED_ON;
 
-	complete_all(&dp->notification_comp);
 	mutex_unlock(&dp->session_lock);
 	return 0;
 }
@@ -1958,36 +1977,27 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	 * Check if the power off sequence was triggered
 	 * by a source initialated action like framework
 	 * reboot or suspend-resume but not from normal
-	 * hot plug. If connector is in MST mode, skip
+	 * hot plug.
+	 */
+	if (dp_display_is_ready(dp) || dp->parser->force_connect_mode)
+		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
+
+	/*
+	 * If connector is in MST mode, skip
 	 * powering down host as aux need keep alive
 	 * to handle hot-plug sideband message.
 	 */
-	if (dp_display_is_ready(dp) && (dp->suspended || !dp->mst.mst_active))
-		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
-
-	if (dp->active_stream_cnt)
+	if (dp->active_stream_cnt || dp->mst.mst_active)
 		goto end;
 
-	if (flags & DP_PANEL_SRC_INITIATED_POWER_DOWN) {
-		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
-		dp->debug->psm_enabled = true;
+	dp->link->psm_config(dp->link, &dp->panel->link_info, true);
+	dp->debug->psm_enabled = true;
 
-		dp->ctrl->off(dp->ctrl);
-		dp_display_host_deinit(dp);
-	} else if (IS_BOND_MODE(dp->phy_bond_mode)) {
-		/*
-		 * For bond mode, the is_connected will be cleared
-		 * when the cable is disconnected, but the power
-		 * off sequence is skipped. So force run it here.
-		 */
-		dp->ctrl->off(dp->ctrl);
-		dp_display_host_deinit(dp);
-	}
+	dp->ctrl->off(dp->ctrl);
+	dp_display_host_deinit(dp);
 
 	dp->power_on = false;
 	dp->aux->state = DP_STATE_CTRL_POWERED_OFF;
-
-	complete_all(&dp->notification_comp);
 
 	/* log this as it results from user action of cable dis-connection */
 	pr_info("DP%d [OK]", dp->cell_idx);
@@ -2012,11 +2022,8 @@ static enum drm_mode_status dp_display_validate_mode(
 	struct drm_dp_link *link_info;
 	u32 mode_rate_khz = 0, supported_rate_khz = 0, mode_bpp = 0;
 	struct dp_panel *dp_panel;
-	struct dp_debug *debug;
 	enum drm_mode_status mode_status = MODE_BAD;
-	bool in_list = false;
-	struct dp_mst_connector *mst_connector;
-	int hdis, vdis, vref, ar, _hdis, _vdis, _vref, _ar, rate;
+	int rate;
 	struct dp_display_mode dp_mode;
 	bool dsc_en;
 	u32 pclk_khz;
@@ -2041,10 +2048,6 @@ static enum drm_mode_status dp_display_validate_mode(
 	}
 
 	link_info = &dp->panel->link_info;
-
-	debug = dp->debug;
-	if (!debug)
-		goto end;
 
 	dp_display->convert_to_dp_mode(dp_display, panel, mode, &dp_mode);
 
@@ -2090,64 +2093,6 @@ static enum drm_mode_status dp_display_validate_mode(
 			mode->vdisplay, dp_display->max_vdisplay);
 		goto end;
 	}
-
-	/*
-	 * If the connector exists in the mst connector list and if debug is
-	 * enabled for that connector, use the mst connector settings from the
-	 * list for validation. Otherwise, use non-mst default settings.
-	 */
-	mutex_lock(&debug->dp_mst_connector_list.lock);
-
-	if (list_empty(&debug->dp_mst_connector_list.list)) {
-		mutex_unlock(&debug->dp_mst_connector_list.lock);
-		goto verify_default;
-	}
-
-	list_for_each_entry(mst_connector, &debug->dp_mst_connector_list.list,
-			list) {
-		if (mst_connector->con_id == dp_panel->connector->base.id) {
-			in_list = true;
-
-			if (!mst_connector->debug_en) {
-				mode_status = MODE_OK;
-				mutex_unlock(
-				&debug->dp_mst_connector_list.lock);
-				goto end;
-			}
-
-			hdis = mst_connector->hdisplay;
-			vdis = mst_connector->vdisplay;
-			vref = mst_connector->vrefresh;
-			ar = mst_connector->aspect_ratio;
-
-			_hdis = mode->hdisplay;
-			_vdis = mode->vdisplay;
-			_vref = mode->vrefresh;
-			_ar = mode->picture_aspect_ratio;
-
-			if (hdis == _hdis && vdis == _vdis && vref == _vref &&
-					ar == _ar) {
-				mode_status = MODE_OK;
-				mutex_unlock(
-				&debug->dp_mst_connector_list.lock);
-				goto end;
-			}
-
-			break;
-		}
-	}
-
-	mutex_unlock(&debug->dp_mst_connector_list.lock);
-
-	if (in_list)
-		goto end;
-
-verify_default:
-	if (debug->debug_en && (mode->hdisplay != debug->hdisplay ||
-			mode->vdisplay != debug->vdisplay ||
-			mode->vrefresh != debug->vrefresh ||
-			mode->picture_aspect_ratio != debug->aspect_ratio))
-		goto end;
 
 	mode_status = MODE_OK;
 end:
@@ -2407,7 +2352,6 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 	struct dp_panel_in panel_in;
 	struct dp_panel *dp_panel;
 	struct dp_display_private *dp;
-	struct dp_mst_connector *mst_connector;
 
 	if (!dp_display || !connector) {
 		pr_err("invalid input\n");
@@ -2452,26 +2396,6 @@ static int dp_display_mst_connector_install(struct dp_display *dp_display,
 	DP_MST_DEBUG("dp mst connector installed. conn:%d\n",
 			connector->base.id);
 
-	mutex_lock(&dp->debug->dp_mst_connector_list.lock);
-
-	mst_connector = kmalloc(sizeof(struct dp_mst_connector),
-			GFP_KERNEL);
-	if (!mst_connector) {
-		mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
-		mutex_unlock(&dp->session_lock);
-		return -ENOMEM;
-	}
-
-	mst_connector->debug_en = false;
-	mst_connector->conn = connector;
-	mst_connector->con_id = connector->base.id;
-	mst_connector->state = connector_status_unknown;
-	INIT_LIST_HEAD(&mst_connector->list);
-
-	list_add(&mst_connector->list,
-			&dp->debug->dp_mst_connector_list.list);
-
-	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
 	mutex_unlock(&dp->session_lock);
 
 	return 0;
@@ -2484,7 +2408,6 @@ static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
 	struct sde_connector *sde_conn;
 	struct dp_panel *dp_panel;
 	struct dp_display_private *dp;
-	struct dp_mst_connector *con_to_remove, *temp_con;
 
 	if (!dp_display || !connector) {
 		pr_err("invalid input\n");
@@ -2515,52 +2438,9 @@ static int dp_display_mst_connector_uninstall(struct dp_display *dp_display,
 	DP_MST_DEBUG("dp mst connector uninstalled. conn:%d\n",
 			connector->base.id);
 
-	mutex_lock(&dp->debug->dp_mst_connector_list.lock);
-
-	list_for_each_entry_safe(con_to_remove, temp_con,
-			&dp->debug->dp_mst_connector_list.list, list) {
-		if (con_to_remove->conn == connector) {
-			list_del(&con_to_remove->list);
-			kfree(con_to_remove);
-		}
-	}
-
-	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
 	mutex_unlock(&dp->session_lock);
 
 	return rc;
-}
-
-static int dp_display_mst_get_connector_info(struct dp_display *dp_display,
-			struct drm_connector *connector,
-			struct dp_mst_connector *mst_conn)
-{
-	struct dp_display_private *dp;
-	struct dp_mst_connector *conn, *temp_conn;
-
-	if (!connector || !mst_conn) {
-		pr_err("invalid input\n");
-		return -EINVAL;
-	}
-
-	dp = container_of(dp_display, struct dp_display_private, dp_display);
-
-	mutex_lock(&dp->session_lock);
-	if (!dp->mst.drm_registered) {
-		pr_debug("drm mst not registered\n");
-		mutex_unlock(&dp->session_lock);
-		return -EPERM;
-	}
-
-	mutex_lock(&dp->debug->dp_mst_connector_list.lock);
-	list_for_each_entry_safe(conn, temp_conn,
-			&dp->debug->dp_mst_connector_list.list, list) {
-		if (conn->con_id == connector->base.id)
-			memcpy(mst_conn, conn, sizeof(*mst_conn));
-	}
-	mutex_unlock(&dp->debug->dp_mst_connector_list.lock);
-	mutex_unlock(&dp->session_lock);
-	return 0;
 }
 
 static int dp_display_mst_connector_update_edid(struct dp_display *dp_display,
@@ -2782,7 +2662,8 @@ static int dp_display_mst_get_fixed_topology_display_type(
 
 
 static int dp_display_set_phy_bond_mode(struct dp_display *dp_display,
-		enum dp_phy_bond_mode mode)
+		enum dp_phy_bond_mode mode,
+		struct drm_connector *primary_connector)
 {
 	struct dp_display_private *dp;
 
@@ -2811,6 +2692,8 @@ static int dp_display_set_phy_bond_mode(struct dp_display *dp_display,
 
 		dp_display_change_phy_bond_mode(dp, mode);
 	}
+
+	dp->bond_primary = primary_connector;
 
 	mutex_unlock(&dp->session_lock);
 
@@ -2842,8 +2725,6 @@ static int dp_display_probe(struct platform_device *pdev)
 		rc = -ENOMEM;
 		goto bail;
 	}
-
-	init_completion(&dp->notification_comp);
 
 	dp->pdev = pdev;
 	snprintf(dp->name, MAX_DP_NAME_SIZE,
@@ -2900,8 +2781,6 @@ static int dp_display_probe(struct platform_device *pdev)
 	dp_display->set_stream_info = dp_display_set_stream_info;
 	dp_display->update_pps = dp_display_update_pps;
 	dp_display->convert_to_dp_mode = dp_display_convert_to_dp_mode;
-	dp_display->mst_get_connector_info =
-					dp_display_mst_get_connector_info;
 	dp_display->mst_get_fixed_topology_port =
 					dp_display_mst_get_fixed_topology_port;
 	dp_display->wakeup_phy_layer =

@@ -164,6 +164,16 @@ static int dp_parser_misc(struct dp_parser *parser)
 	}
 
 	rc = of_property_read_u32(of_node,
+		"qcom,max-lane-count", &parser->max_lane_count);
+	if (rc) {
+		pr_debug("No qcom,max-lane-count defined, fallback to default 4-lanes");
+		parser->max_lane_count = 4;
+	} else if (parser->max_lane_count < 1 || parser->max_lane_count > 4) {
+		pr_warn("Invalid qcom,max-lane-count, fallback to default 4-lanes");
+		parser->max_lane_count = 4;
+	}
+
+	rc = of_property_read_u32(of_node,
 		"qcom,max-pclk-frequency-khz", &parser->max_pclk_khz);
 	if (rc)
 		parser->max_pclk_khz = DP_MAX_PIXEL_CLK_KHZ;
@@ -186,6 +196,9 @@ static int dp_parser_misc(struct dp_parser *parser)
 
 	parser->force_bond_mode = of_property_read_bool(of_node,
 			"qcom,dp-force-bond-mode");
+
+	parser->force_connect_mode = of_property_read_bool(of_node,
+			"qcom,dp-force-connect-mode");
 
 	return 0;
 }

@@ -1056,6 +1056,18 @@ static inline void __exit msm_lease_drm_unregister(void)
 }
 #endif /* CONFIG_DRM_MSM_LEASE */
 
+#if IS_ENABLED(CONFIG_HDCP_QSEECOM)
+void __init msm_hdcp_register(void);
+void __exit msm_hdcp_unregister(void);
+#else
+static inline void __init msm_hdcp_register(void)
+{
+}
+static inline void __exit msm_hdcp_unregister(void)
+{
+}
+#endif /* CONFIG_HDCP_QSEECOM */
+
 struct clk *msm_clk_get(struct platform_device *pdev, const char *name);
 void __iomem *msm_ioremap(struct platform_device *pdev, const char *name,
 		const char *dbgname);

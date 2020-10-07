@@ -1453,6 +1453,60 @@ int sde_connector_helper_reset_custom_properties(
 	return 0;
 }
 
+int sde_connector_helper_mode_change_commit(struct drm_connector *conn)
+{
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_atomic_state *state;
+	struct drm_crtc_state *crtc_state;
+	struct drm_connector_state *conn_state;
+	int ret;
+
+	state = drm_atomic_state_alloc(conn->dev);
+	if (!state)
+		return -ENOMEM;
+
+	drm_modeset_acquire_init(&ctx, 0);
+	state->acquire_ctx = &ctx;
+retry:
+	conn_state = drm_atomic_get_connector_state(state, conn);
+	if (IS_ERR(conn_state)) {
+		ret = PTR_ERR(conn_state);
+		goto end;
+	}
+
+	if (!conn_state->crtc) {
+		ret = 0;
+		goto end;
+	}
+
+	crtc_state = drm_atomic_get_crtc_state(state, conn_state->crtc);
+	if (IS_ERR(crtc_state)) {
+		ret = PTR_ERR(crtc_state);
+		goto end;
+	}
+
+	if (!crtc_state->active) {
+		ret = 0;
+		goto end;
+	}
+
+	crtc_state->mode_changed = true;
+
+	ret = drm_atomic_commit(state);
+end:
+	if (ret == -EDEADLK) {
+		drm_atomic_state_clear(state);
+		drm_modeset_backoff(&ctx);
+		goto retry;
+	}
+
+	drm_atomic_state_put(state);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+
+	return ret;
+}
+
 int sde_connector_get_panel_vfp(struct drm_connector *connector,
 	struct drm_display_mode *mode)
 {
