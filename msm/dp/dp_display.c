@@ -1163,6 +1163,17 @@ static void dp_display_attention_work(struct work_struct *work)
 		goto mst_attention;
 	}
 
+	/*
+	 * This is for GPIO based HPD only, that if HPD low is detected
+	 * as HPD_IRQ, we need to handle TEST_EDID_READ in this function.
+	 */
+	if ((dp->parser->no_aux_switch && !dp->parser->lphw_hpd) &&
+			(dp->link->sink_request & DP_TEST_LINK_EDID_READ)) {
+		dp_display_handle_disconnect(dp);
+		queue_work(dp->wq, &dp->connect_work);
+		goto mst_attention;
+	}
+
 	if ((dp->link->sink_request & DP_TEST_LINK_PHY_TEST_PATTERN) ||
 			(dp->link->sink_request & DP_TEST_LINK_TRAINING) ||
 			(dp->link->sink_request & DP_LINK_STATUS_UPDATED)) {
