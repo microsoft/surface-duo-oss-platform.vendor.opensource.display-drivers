@@ -242,20 +242,12 @@ static int dp_ctrl_read_link_status(struct dp_ctrl_private *ctrl,
 					u8 *link_status)
 {
 	int ret = 0, len;
-	u32 const offset = DP_LANE_ALIGN_STATUS_UPDATED - DP_LANE0_1_STATUS;
-	u32 link_status_read_max_retries = 100;
 
-	while (--link_status_read_max_retries) {
-		len = drm_dp_dpcd_read_link_status(ctrl->aux->drm_aux,
-			link_status);
-		if (len != DP_LINK_STATUS_SIZE) {
-			pr_err("DP link status read failed, err: %d\n", len);
-			ret = len;
-			break;
-		}
-
-		if (!(link_status[offset] & DP_LINK_STATUS_UPDATED))
-			break;
+	len = drm_dp_dpcd_read_link_status(ctrl->aux->drm_aux,
+		link_status);
+	if (len != DP_LINK_STATUS_SIZE) {
+		pr_err("DP link status read failed, err: %d\n", len);
+		ret = len;
 	}
 
 	return ret;
