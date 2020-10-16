@@ -180,7 +180,7 @@ static void dp_bridge_pre_enable(struct drm_bridge *drm_bridge)
 	 * set non-bond mode to the display
 	 */
 	if (bridge->base.encoder->crtc != NULL)
-		dp->set_phy_bond_mode(dp, DP_PHY_BOND_MODE_NONE);
+		dp->set_phy_bond_mode(dp, DP_PHY_BOND_MODE_NONE, NULL);
 
 	/* By this point mode should have been validated through mode_fixup */
 	rc = dp->set_mode(dp, bridge->dp_panel, &bridge->dp_mode);
@@ -485,7 +485,8 @@ static void dp_bond_bridge_pre_enable(struct drm_bridge *drm_bridge)
 		}
 		if (bridge->bridges[i]->display)
 			bridge->bridges[i]->display->set_phy_bond_mode(
-					bridge->bridges[i]->display, mode);
+					bridge->bridges[i]->display, mode,
+					bridge->display->base_connector);
 	}
 
 	/* In the order of from master PHY to slave PHY */
@@ -1221,6 +1222,7 @@ enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
 {
 	struct dp_display *dp_disp;
 	struct sde_connector *sde_conn;
+	struct dp_panel *dp_panel;
 
 	if (!mode || !display || !connector) {
 		pr_err("invalid params\n");
@@ -1234,7 +1236,14 @@ enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
 	}
 
 	dp_disp = display;
+	dp_panel = sde_conn->drv_panel;
 	mode->vrefresh = drm_mode_vrefresh(mode);
+
+	if (dp_panel->mode_override && (mode->hdisplay != dp_panel->hdisplay ||
+			mode->vdisplay != dp_panel->vdisplay ||
+			mode->vrefresh != dp_panel->vrefresh ||
+			mode->picture_aspect_ratio != dp_panel->aspect_ratio))
+		return MODE_BAD;
 
 	if (dp_bond_is_tile_mode(mode)) {
 		struct drm_display_mode tmp;
@@ -1514,8 +1523,31 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 
 	crtc_state = drm_atomic_get_new_crtc_state(state, old_crtc);
 
-	if (drm_atomic_crtc_needs_modeset(crtc_state) &&
-			!new_conn_state->crtc) {
+	if (drm_atomic_crtc_needs_modeset(crtc_state)) {
+		if (new_conn_state->crtc) {
+			struct dp_display *dp;
+			int i;
+
+			/* no check for single display */
+			if (new_conn_state->best_encoder ==
+					dp_display->bridge->base.encoder)
+				return 0;
+
+			bond_bridge = to_dp_bond_bridge(
+				new_conn_state->best_encoder->bridge);
+
+			for (i = 0; i < bond_bridge->bridge_num; i++) {
+				dp = bond_bridge->bridges[i]->display;
+				if (!dp->is_sst_connected) {
+					pr_err("bond dp %d disconnected\n",
+						DRMID(dp->base_connector));
+					return -EINVAL;
+				}
+			}
+
+			return 0;
+		}
+
 		bond_info = dp_display->dp_bond_prv_info;
 		bond_state = dp_bond_get_mgr_atomic_state(state,
 				bond_info->bond_mgr);

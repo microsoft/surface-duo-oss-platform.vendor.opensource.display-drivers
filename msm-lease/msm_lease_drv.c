@@ -627,6 +627,7 @@ static void msm_lease_parse_remain_objs(void)
 	struct msm_lease *lease, *target = NULL;
 	struct drm_device *dev;
 	struct drm_plane *plane;
+	struct drm_encoder *encoder;
 	struct drm_connector *connector;
 	struct drm_connector_list_iter conn_iter;
 	struct drm_crtc *crtc;
@@ -634,6 +635,8 @@ static void msm_lease_parse_remain_objs(void)
 	int object_count = 0;
 	const char *name;
 	int count, rc, i;
+	int crtc_count;
+	bool found;
 
 	list_for_each_entry(lease, &g_lease_list, head) {
 		if (!lease->minor)
@@ -685,6 +688,81 @@ static void msm_lease_parse_remain_objs(void)
 				break;
 		}
 	} else {
+		/*
+		 * we'll add dedicated crtc first to make sure they
+		 * have valid primary plane to support legacy drm call.
+		 */
+		drm_for_each_crtc(crtc, dev) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(crtc->base.id,
+					object_ids, object_count))
+				continue;
+
+			found = false;
+			drm_for_each_encoder(encoder, dev) {
+				if ((encoder->possible_crtcs &
+						drm_crtc_mask(crtc)) &&
+						(encoder->possible_crtcs !=
+						drm_crtc_mask(crtc))) {
+					found = true;
+					break;
+				}
+			}
+
+			/*
+			 * if there are encoders not dedicated to crtc,
+			 * we leave it to the next round of leasing
+			 */
+			if (found)
+				continue;
+
+			drm_for_each_plane(plane, dev) {
+				if (plane == crtc->primary) {
+					found = true;
+					break;
+				}
+			}
+
+			/*
+			 * if crtc's primary plane is not available,
+			 * do not lease it.
+			 */
+			if (!found)
+				continue;
+
+			object_ids[object_count++] = crtc->base.id;
+		}
+
+		drm_for_each_crtc(crtc, dev) {
+			if (object_count >= MAX_LEASE_OBJECT_COUNT)
+				break;
+
+			if (_obj_is_leased(crtc->base.id,
+					object_ids, object_count))
+				continue;
+
+			found = false;
+			drm_for_each_plane(plane, dev) {
+				if (plane == crtc->primary) {
+					found = true;
+					break;
+				}
+			}
+
+			/*
+			 * if crtc's primary plane is not available,
+			 * do not lease it.
+			 */
+			if (!found)
+				continue;
+
+			object_ids[object_count++] = crtc->base.id;
+		}
+
+		crtc_count = object_count;
+
 		drm_connector_list_iter_begin(dev, &conn_iter);
 		drm_for_each_connector_iter(connector, &conn_iter) {
 			if (object_count >= MAX_LEASE_OBJECT_COUNT)
@@ -694,19 +772,35 @@ static void msm_lease_parse_remain_objs(void)
 					object_ids, object_count))
 				continue;
 
+			encoder = drm_encoder_find(dev, NULL,
+					connector->encoder_ids[0]);
+			if (!encoder)
+				continue;
+
+			found = false;
+			for (i = 0; i < crtc_count; i++) {
+				crtc = drm_crtc_find(dev, NULL, object_ids[i]);
+				if (!crtc)
+					continue;
+
+				if (!(encoder->possible_crtcs &
+						drm_crtc_mask(crtc)))
+					continue;
+
+				found = true;
+				break;
+			}
+
+			/*
+			 * if there is no valid crtc for connector,
+			 * do not lease it.
+			 */
+			if (!found)
+				continue;
+
 			object_ids[object_count++] = connector->base.id;
 		}
 		drm_connector_list_iter_end(&conn_iter);
-		drm_for_each_crtc(crtc, dev) {
-			if (object_count >= MAX_LEASE_OBJECT_COUNT)
-				break;
-
-			if (_obj_is_leased(crtc->base.id,
-					object_ids, object_count))
-				continue;
-
-			object_ids[object_count++] = crtc->base.id;
-		}
 	}
 
 	target->obj_cnt = object_count;
