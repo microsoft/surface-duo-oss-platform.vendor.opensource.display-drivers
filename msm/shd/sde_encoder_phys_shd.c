@@ -278,7 +278,9 @@ static int _sde_encoder_phys_shd_rm_reserve(
 			break;
 		}
 		shd_enc->num_mixers++;
+	}
 
+	for (i = 0; i < shd_enc->num_mixers; i++) {
 		/* reserve pingpong */
 		if (!sde_rm_get_hw(rm, &pp_iter))
 			break;
@@ -295,7 +297,9 @@ static int _sde_encoder_phys_shd_rm_reserve(
 			SDE_ERROR("failed to create & reserve pingpong\n");
 			break;
 		}
+	}
 
+	for (i = 0; i < shd_enc->num_mixers; i++) {
 		/* reserve roi_misr */
 		if (!sde_rm_get_hw(rm, &roi_misr_iter))
 			break;

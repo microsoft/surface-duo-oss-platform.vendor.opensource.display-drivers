@@ -12,8 +12,6 @@
 #include <drm/sde_drm.h>
 #include "dp_panel.h"
 
-#define DP_MST_SIM_MAX_PORTS	2
-
 #define MAX_DP_ACTIVE_DISPLAY	3
 
 enum dp_drv_state {
@@ -49,19 +47,6 @@ struct dp_mst_caps {
 	u32 max_streams_supported;
 	u32 max_dpcd_transaction_bytes;
 	struct drm_dp_aux *drm_aux;
-};
-
-struct dp_mst_connector {
-	bool debug_en;
-	int con_id;
-	int hdisplay;
-	int vdisplay;
-	int vrefresh;
-	int aspect_ratio;
-	struct drm_connector *conn;
-	struct mutex lock;
-	struct list_head list;
-	enum drm_connector_status state;
 };
 
 struct dp_display {
@@ -111,9 +96,6 @@ struct dp_display {
 			struct edid *edid);
 	int (*mst_connector_update_link_info)(struct dp_display *dp_display,
 			struct drm_connector *connector);
-	int (*mst_get_connector_info)(struct dp_display *dp_display,
-			struct drm_connector *connector,
-			struct dp_mst_connector *mst_conn);
 	int (*mst_get_fixed_topology_port)(struct dp_display *dp_display,
 			u32 strm_id, u32 *port_num);
 	int (*get_mst_caps)(struct dp_display *dp_display,
@@ -134,7 +116,8 @@ struct dp_display {
 			struct dp_display *dp_display, u32 strm_id,
 			const char **display_type);
 	int (*set_phy_bond_mode)(struct dp_display *dp_display,
-			enum dp_phy_bond_mode mode);
+			enum dp_phy_bond_mode mode,
+			struct drm_connector *primary_connector);
 };
 
 #if IS_ENABLED(CONFIG_DRM_MSM_DP)

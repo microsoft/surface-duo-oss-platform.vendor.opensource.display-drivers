@@ -1,5 +1,4 @@
-/*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2020 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -9,16 +8,21 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
  */
 
-#ifndef _SHP_DRM_H_
-#define _SHP_DRM_H_
+#ifndef __MSM_HDCP_H_
+#define __MSM_HDCP_H_
 
-#include <linux/types.h>
-#include <drm/drmP.h>
-#include <drm/drm_crtc.h>
-#include <drm/drm_plane.h>
-#include "msm_drv.h"
+#include <linux/msm_hdcp.h>
 
-#endif /* _SHP_DRM_H_ */
+#if IS_ENABLED(CONFIG_HDCP_QSEECOM)
+void msm_hdcp_notify_status(struct device *dev, int state,
+		int version);
+#else
+static inline void msm_hdcp_notify_status(struct device *dev, int state,
+		int version)
+{
+}
+#endif
+
+#endif

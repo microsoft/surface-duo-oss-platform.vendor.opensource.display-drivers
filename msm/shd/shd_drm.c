@@ -22,6 +22,7 @@
 #include <linux/of_irq.h>
 #include <linux/kthread.h>
 #include <linux/sched/types.h>
+#include <linux/backlight.h>
 #include "sde_connector.h"
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_uapi.h>
@@ -538,13 +539,16 @@ static int shd_display_atomic_check(struct msm_kms *kms,
 	struct shd_crtc *shd_crtc;
 	struct shd_display *display;
 	struct shd_display_base *base;
-	u32 base_mask = 0, enable_mask = 0, disable_mask = 0;
+	u32 base_mask = 0, enable_mask = 0, disable_mask = 0, change_mask = 0;
 	u32 crtc_mask, active_mask;
 	bool active;
 	int i, rc;
 
 	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state,
 			new_crtc_state, i) {
+		if (new_crtc_state->mode_changed && new_crtc_state->active)
+			change_mask |= drm_crtc_mask(crtc);
+
 		if (crtc->helper_private->atomic_check !=
 				shd_crtc_atomic_check)
 			continue;
@@ -561,6 +565,29 @@ static int shd_display_atomic_check(struct msm_kms *kms,
 			enable_mask |= drm_crtc_mask(crtc);
 		else
 			disable_mask |= drm_crtc_mask(crtc);
+	}
+
+	/*
+	 * when base display has mode change set, all shared displays should
+	 * also set mode change flag.
+	 */
+	if (change_mask) {
+		list_for_each_entry(base, &g_base_list, head) {
+			if (!(drm_crtc_mask(base->crtc) & change_mask))
+				continue;
+
+			list_for_each_entry(display, &base->disp_list, head) {
+				new_crtc_state = drm_atomic_get_crtc_state(
+						state, display->crtc);
+				if (IS_ERR(new_crtc_state))
+					return PTR_ERR(new_crtc_state);
+
+				if (new_crtc_state->active)
+					new_crtc_state->mode_changed = true;
+			}
+
+			base_mask |= drm_crtc_mask(base->crtc);
+		}
 	}
 
 	if (!base_mask)
@@ -752,7 +779,7 @@ end:
 static int shd_drm_update_edid_name(struct edid *edid, const char *name)
 {
 	u8 *dtd = (u8 *)&edid->detailed_timings[3];
-	u8 standard_header[] = {0x00, 0x00, 0x00, 0xFE, 0x00};
+	u8 standard_header[] = {0x00, 0x00, 0x00, 0xFC, 0x00};
 	u32 dtd_size = 18;
 	u32 header_size = sizeof(standard_header);
 
@@ -1090,6 +1117,41 @@ static void shd_drm_bridge_deinit(void *data)
 	kfree(bridge);
 }
 
+static int shd_backlight_device_update_status(struct backlight_device *bd)
+{
+	return 0;
+}
+
+static int shd_backlight_device_get_brightness(struct backlight_device *bd)
+{
+	return 0;
+}
+
+static const struct backlight_ops shd_backlight_device_ops = {
+	.update_status = shd_backlight_device_update_status,
+	.get_brightness = shd_backlight_device_get_brightness,
+};
+
+static int shd_display_create_backlight(struct drm_connector *connector)
+{
+	struct sde_connector *c_conn = to_sde_connector(connector);
+	struct backlight_properties props;
+	char bl_node_name[32];
+
+	memset(&props, 0, sizeof(props));
+	props.type = BACKLIGHT_RAW;
+	props.power = FB_BLANK_UNBLANK;
+	props.max_brightness = 255;
+	props.brightness = 255;
+	snprintf(bl_node_name, sizeof(bl_node_name), "panel%u-backlight",
+			connector->connector_type_id - 1);
+	c_conn->bl_device = backlight_device_register(bl_node_name,
+			connector->dev->dev,
+			c_conn, &shd_backlight_device_ops, &props);
+
+	return 0;
+}
+
 static int shd_drm_obj_init(struct shd_display *display)
 {
 	struct msm_drm_private *priv;
@@ -1198,6 +1260,9 @@ static int shd_drm_obj_init(struct shd_display *display)
 	if (display->name)
 		connector->name = kasprintf(GFP_KERNEL, "%s", display->name);
 
+	if (info.intf_type == DRM_MODE_CONNECTOR_DSI)
+		shd_display_create_backlight(connector);
+
 	SDE_DEBUG("create connector %d\n", DRMID(connector));
 
 	crtc = sde_crtc_init(dev, primary);
@@ -1286,6 +1351,8 @@ static int shd_drm_base_init(struct drm_device *ddev,
 	if (!g_shd_kms) {
 		priv = ddev->dev_private;
 		g_shd_kms = kzalloc(sizeof(*g_shd_kms), GFP_KERNEL);
+		if (!g_shd_kms)
+			return -ENOMEM;
 		g_shd_kms->funcs = *priv->kms->funcs;
 		g_shd_kms->orig_funcs = priv->kms->funcs;
 		g_shd_kms->funcs.atomic_check = shd_display_atomic_check;

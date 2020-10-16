@@ -39,6 +39,7 @@ enum dsi_dsc_ratio_type {
 	DSC_8BPC_8BPP,
 	DSC_10BPC_8BPP,
 	DSC_12BPC_8BPP,
+	DSC_10BPC_10BPP,
 	DSC_RATIO_TYPE_MAX
 };
 
@@ -53,6 +54,7 @@ static char dsi_dsc_rc_range_min_qp_1_1[][15] = {
 	{0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 7, 13},
 	{0, 4, 5, 5, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 17},
 	{0, 4, 9, 9, 11, 11, 11, 11, 11, 11, 13, 13, 13, 15, 21},
+	{0, 4, 5, 6, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 15},
 	};
 
 /*
@@ -63,6 +65,7 @@ static char dsi_dsc_rc_range_min_qp_1_1_scr1[][15] = {
 	{0, 0, 1, 1, 3, 3, 3, 3, 3, 3, 5, 5, 5, 9, 12},
 	{0, 4, 5, 5, 7, 7, 7, 7, 7, 7, 9, 9, 9, 13, 16},
 	{0, 4, 9, 9, 11, 11, 11, 11, 11, 11, 13, 13, 13, 17, 20},
+	{0, 4, 5, 6, 7, 7, 7, 7, 7, 7, 9, 9, 9, 11, 15},
 	};
 
 /*
@@ -73,6 +76,7 @@ static char dsi_dsc_rc_range_max_qp_1_1[][15] = {
 	{4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 11, 12, 13, 13, 15},
 	{4, 8, 9, 10, 11, 11, 11, 12, 13, 14, 15, 16, 17, 17, 19},
 	{12, 12, 13, 14, 15, 15, 15, 16, 17, 18, 19, 20, 21, 21, 23},
+	{7, 8, 9, 10, 11, 11, 11, 12, 13, 13, 14, 14, 15, 15, 16},
 	};
 
 /*
@@ -83,14 +87,19 @@ static char dsi_dsc_rc_range_max_qp_1_1_scr1[][15] = {
 	{4, 4, 5, 6, 7, 7, 7, 8, 9, 10, 10, 11, 11, 12, 13},
 	{8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 14, 15, 15, 16, 17},
 	{12, 12, 13, 14, 15, 15, 15, 16, 17, 18, 18, 19, 19, 20, 23},
+	{7, 8, 9, 10, 11, 11, 11, 12, 13, 13, 14, 14, 15, 15, 16},
 	};
 
 /*
  * DSC 1.1 and DSC 1.1 SCR
  * Rate control - bpg offset values
  */
-static char dsi_dsc_rc_range_bpg_offset[] = {2, 0, 0, -2, -4, -6, -8, -8,
-		-8, -10, -10, -12, -12, -12, -12};
+static char dsi_dsc_rc_range_bpg_offset[][15] = {
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12},
+	{2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12},
+	};
 
 int dsi_dsc_create_pps_buf_cmd(struct msm_display_dsc_info *dsc, char *buf,
 				int pps_id)
@@ -2414,10 +2423,12 @@ int dsi_dsc_populate_static_param(struct msm_display_dsc_info *dsc)
 	bpp = dsc->bpp;
 	bpc = dsc->bpc;
 
-	if (bpc == 12)
+	if ((bpc == 12) && (bpp == 8))
 		ratio_index = DSC_12BPC_8BPP;
-	else if (bpc == 10)
+	else if ((bpc == 10) && (bpp == 8))
 		ratio_index = DSC_10BPC_8BPP;
+	else if ((bpc == 10) && (bpp == 10))
+		ratio_index = DSC_10BPC_10BPP;
 	else
 		ratio_index = DSC_8BPC_8BPP;
 
@@ -2430,17 +2441,18 @@ int dsi_dsc_populate_static_param(struct msm_display_dsc_info *dsc)
 		dsc->range_min_qp = dsi_dsc_rc_range_min_qp_1_1[ratio_index];
 		dsc->range_max_qp = dsi_dsc_rc_range_max_qp_1_1[ratio_index];
 	}
-	dsc->range_bpg_offset = dsi_dsc_rc_range_bpg_offset;
+	dsc->range_bpg_offset = dsi_dsc_rc_range_bpg_offset[ratio_index];
 
-	if (bpp <= 10)
+	if (bpp == 8) {
 		dsc->initial_offset = 6144;
-	else
-		dsc->initial_offset = 2048;	/* bpp = 12 */
-
-	if (bpc == 12)
-		mux_words_size = 64;
-	else
-		mux_words_size = 48;		/* bpc == 8/10 */
+		dsc->initial_xmit_delay = 512;
+	} else if (bpp == 10) {
+		dsc->initial_offset = 5632;
+		dsc->initial_xmit_delay = 410;
+	} else {
+		dsc->initial_offset = 2048;
+		dsc->initial_xmit_delay = 341;
+	}
 
 	dsc->line_buf_depth = bpc + 1;
 
@@ -2450,18 +2462,21 @@ int dsi_dsc_populate_static_param(struct msm_display_dsc_info *dsc)
 		dsc->max_qp_flatness = 12;
 		dsc->quant_incr_limit0 = 11;
 		dsc->quant_incr_limit1 = 11;
+		mux_words_size = 48;
 	} else if (bpc == 10) { /* 10bpc */
 		dsc->input_10_bits = 1;
 		dsc->min_qp_flatness = 7;
 		dsc->max_qp_flatness = 16;
 		dsc->quant_incr_limit0 = 15;
 		dsc->quant_incr_limit1 = 15;
+		mux_words_size = 48;
 	} else { /* 12 bpc */
 		dsc->input_10_bits = 0;
 		dsc->min_qp_flatness = 11;
 		dsc->max_qp_flatness = 20;
 		dsc->quant_incr_limit0 = 19;
 		dsc->quant_incr_limit1 = 19;
+		mux_words_size = 64;
 	}
 
 	mod_offset = dsc->slice_width % 3;
@@ -2480,8 +2495,6 @@ int dsi_dsc_populate_static_param(struct msm_display_dsc_info *dsc)
 	}
 
 	dsc->det_thresh_flatness = 2 << (bpc - 8);
-
-	dsc->initial_xmit_delay = dsc->rc_model_size / (2 * bpp);
 
 	groups_per_line = DIV_ROUND_UP(dsc->slice_width, 3);
 

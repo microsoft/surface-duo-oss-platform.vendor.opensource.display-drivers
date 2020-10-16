@@ -1910,6 +1910,7 @@ static int __init msm_drm_register(void)
 	mdss_pll_driver_init();
 	sde_rsc_register();
 	dsi_display_register();
+	msm_hdcp_register();
 	dp_display_register();
 	dp_sim_register();
 	msm_smmu_driver_init();
@@ -1931,6 +1932,7 @@ static void __exit msm_drm_unregister(void)
 	msm_smmu_driver_cleanup();
 	dp_sim_unregister();
 	dp_display_unregister();
+	msm_hdcp_unregister();
 	dsi_display_unregister();
 	sde_rsc_unregister();
 	mdss_pll_driver_deinit();

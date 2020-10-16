@@ -15,35 +15,21 @@
 
 /**
  * struct dp_debug
- * @debug_en: specifies whether debug mode enabled
  * @hdcp_wait_sink_sync: used to wait for sink synchronization before HDCP auth
- * @vdisplay: used to filter out vdisplay value
- * @hdisplay: used to filter out hdisplay value
- * @vrefresh: used to filter out vrefresh value
  * @tpg_state: specifies whether tpg feature is enabled
  * @max_pclk_khz: max pclk supported
  * @force_encryption: enable/disable forced encryption for HDCP 2.2
  */
 struct dp_debug {
-	bool debug_en;
 	bool sim_mode;
 	bool psm_enabled;
 	bool hdcp_disabled;
 	bool hdcp_wait_sink_sync;
-	int aspect_ratio;
-	int vdisplay;
-	int hdisplay;
-	int vrefresh;
 	bool tpg_state;
 	u32 max_pclk_khz;
 	bool force_encryption;
 	char hdcp_status[SZ_128];
-	struct dp_mst_connector dp_mst_connector_list;
-	bool mst_hpd_sim;
 	bool force_bond_mode;
-	u32 mst_port_cnt;
-
-	u8 *(*get_edid)(struct dp_debug *dp_debug);
 	void (*abort)(struct dp_debug *dp_debug);
 };
 

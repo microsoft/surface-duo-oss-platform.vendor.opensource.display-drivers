@@ -26,6 +26,7 @@
 #include "msm_gem.h"
 #include "msm_mmu.h"
 #include "sde_dbg.h"
+#include "sde_recovery_manager.h"
 
 struct msm_smmu_client {
 	struct device *dev;
@@ -438,6 +439,8 @@ static int msm_smmu_fault_handler(struct iommu_domain *domain,
 	DRM_ERROR("trigger dump, iova=0x%08lx, flags=0x%x\n", iova, flags);
 	DRM_ERROR("SMMU device:%s", client->dev ? client->dev->kobj.name : "");
 
+	sde_recovery_set_event(dev_get_drvdata(client->dev),
+			DRM_EVENT_SDE_SMMUFAULT, NULL);
 	/*
 	 * return -ENOSYS to allow smmu driver to dump out useful
 	 * debug info.

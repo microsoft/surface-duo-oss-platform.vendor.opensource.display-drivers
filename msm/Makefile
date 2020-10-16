@@ -6,6 +6,7 @@ ccflags-y += -I$(srctree)/techpack/display/msm/shd
 ccflags-y += -I$(srctree)/techpack/display/msm/shp
 ccflags-y += -I$(srctree)/techpack/display/pll
 ccflags-y += -I$(srctree)/drivers/clk/qcom
+ccflags-y += -I$(srctree)/techpack/display/hdcp
 
 msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 	dp/dp_parser.o \
@@ -79,10 +80,15 @@ msm_drm-$(CONFIG_DRM_MSM_SDE) += sde/sde_crtc.o \
 	sde/sde_hw_ds.o \
 	sde/sde_fence.o \
 	sde/sde_hw_qdss.o \
-	sde/sde_hw_roi_misr.o
+	sde/sde_hw_roi_misr.o \
+	sde/sde_fence_file.o \
+	sde/sde_fence_helper.o \
+	sde/sde_fence_post_commit.o \
 
 msm_drm-$(CONFIG_DRM_SDE_ROI_MISR) += sde/sde_roi_misr.o \
 	sde/sde_fence_misr.o
+
+msm_drm-$(CONFIG_SDE_RECOVERY_MANAGER) += sde_recovery_manager.o \
 
 msm_drm-$(CONFIG_DEBUG_FS) += sde_dbg.o \
 	sde_dbg_evtlog.o
@@ -154,6 +160,8 @@ msm_drm-$(CONFIG_DRM_MSM) += \
 	msm_gem_vma.o \
 	msm_smmu.o \
 	msm_prop.o
+
+msm_drm-$(CONFIG_HDCP_QSEECOM) += ../hdcp/msm_hdcp.o \
 
 obj-$(CONFIG_DRM_MSM_BUILD)	+= msm_drm.o
 

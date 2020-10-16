@@ -42,6 +42,7 @@
 #include "sde_core_perf.h"
 #include "sde_trace.h"
 #include "sde_roi_misr_helper.h"
+#include "sde_recovery_manager.h"
 
 #define SDE_PSTATES_MAX (SDE_STAGE_MAX * 4)
 #define SDE_MULTIRECT_PLANE_MAX (SDE_STAGE_MAX * 2)
@@ -2854,6 +2855,10 @@ static void sde_crtc_frame_event_cb(void *data, u32 event)
 			}
 		}
 	}
+
+	if (event & SDE_ENCODER_FRAME_EVENT_ERROR)
+		sde_recovery_set_event(crtc->dev, DRM_EVENT_SDE_VSYNC_MISS,
+				crtc);
 
 	fevent->event = event;
 	fevent->crtc = crtc;
@@ -7124,6 +7129,10 @@ static int _sde_crtc_event_enable(struct sde_kms *kms,
 			break;
 		}
 	}
+
+	/* Try recovery manager */
+	if (!node)
+		node = sde_recovery_get_event_handler(kms->dev, event);
 
 	if (!node) {
 		SDE_ERROR("unsupported event %x\n", event);
