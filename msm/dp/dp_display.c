@@ -1145,8 +1145,10 @@ static void dp_display_attention_work(struct work_struct *work)
 		if (dp_display_is_sink_count_zero(dp)) {
 			dp_display_handle_disconnect(dp);
 		} else {
-			if (!dp->mst.mst_active)
+			if (!dp->mst.mst_active) {
+				dp_display_handle_disconnect(dp);
 				queue_work(dp->wq, &dp->connect_work);
+			}
 		}
 
 		goto mst_attention;
@@ -1158,6 +1160,17 @@ static void dp_display_attention_work(struct work_struct *work)
 		dp->panel->video_test = true;
 		queue_work(dp->wq, &dp->connect_work);
 
+		goto mst_attention;
+	}
+
+	/*
+	 * This is for GPIO based HPD only, that if HPD low is detected
+	 * as HPD_IRQ, we need to handle TEST_EDID_READ in this function.
+	 */
+	if ((dp->parser->no_aux_switch && !dp->parser->lphw_hpd) &&
+			(dp->link->sink_request & DP_TEST_LINK_EDID_READ)) {
+		dp_display_handle_disconnect(dp);
+		queue_work(dp->wq, &dp->connect_work);
 		goto mst_attention;
 	}
 
@@ -1174,7 +1187,19 @@ static void dp_display_attention_work(struct work_struct *work)
 			dp->link->send_test_response(dp->link);
 			dp->ctrl->link_maintenance(dp->ctrl);
 		} else if (dp->link->sink_request & DP_LINK_STATUS_UPDATED) {
-			dp->ctrl->link_maintenance(dp->ctrl);
+			/*
+			 * This is for GPIO based HPD only, that if HPD low is
+			 * detected as HPD_IRQ, we need to treat
+			 * LINK_STATUS_UPDATED as HPD high.
+			 */
+			if (dp->parser->no_aux_switch &&
+					!dp->parser->lphw_hpd) {
+				dp_display_handle_disconnect(dp);
+				queue_work(dp->wq, &dp->connect_work);
+				goto mst_attention;
+			} else {
+				dp->ctrl->link_maintenance(dp->ctrl);
+			}
 		}
 
 		mutex_lock(&dp->session_lock);
@@ -1241,23 +1266,15 @@ static void dp_display_connect_work(struct work_struct *work)
 
 	/*
 	 * Reset panel as link param may change during link training.
-	 * MST panel or SST panel in video test mode will reset immediately.
-	 * SST panel in normal mode will reset by the mode change commit.
 	 */
 	if (dp->active_stream_cnt) {
-		if (IS_BOND_MODE(dp->phy_bond_mode)) {
-			dp->aux->abort(dp->aux, true);
-			dp->ctrl->abort(dp->ctrl, true);
+		if (IS_BOND_MODE(dp->phy_bond_mode))
 			reset_connector = dp->bond_primary;
-		} else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
-				!dp->panel->video_test) {
-			dp->aux->abort(dp->aux, true);
-			dp->ctrl->abort(dp->ctrl, true);
+		else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
+				!dp->panel->video_test)
 			reset_connector = dp->dp_display.base_connector;
-		} else {
-			dp_display_clean(dp);
-			dp_display_host_deinit(dp);
-		}
+		dp_display_clean(dp);
+		dp_display_host_deinit(dp);
 	}
 
 	if (dp->parser->force_connect_mode) {
