@@ -2133,8 +2133,15 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	if (dp->active_stream_cnt || dp->mst.mst_active)
 		goto end;
 
-	dp->link->psm_config(dp->link, &dp->panel->link_info, true);
-	dp->debug->psm_enabled = true;
+	/*
+	 * There are monitors that can't resume from D3 mode after reboot,
+	 * and we need to skip psm_config for these monitors. This option
+	 * should only be used for non-pluggable monitors.
+	 */
+	if (!dp->parser->no_power_down) {
+		dp->link->psm_config(dp->link, &dp->panel->link_info, true);
+		dp->debug->psm_enabled = true;
+	}
 
 	dp->ctrl->off(dp->ctrl);
 	dp_display_host_deinit(dp);

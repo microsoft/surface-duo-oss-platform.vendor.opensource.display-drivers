@@ -253,6 +253,7 @@ static inline char *dp_phy_aux_config_type_to_string(u32 cfg_type)
  * @max_hdisplay: maximum supported horizontal display by the platform for dp
  * @max_vdisplay: maximum supported vertical display by the platform for dp
  * @no_mst_encoder: zero mst encoders should be initialised for platform
+ * @no_power_down: do not set monitor power state to d3
  * @hw_cfg: DP HW specific settings
  * @has_mst: MST feature enable status
  * @has_mst_sideband: MST sideband feature enable status
@@ -293,6 +294,7 @@ struct dp_parser {
 	u32 max_hdisplay;
 	u32 max_vdisplay;
 	bool no_mst_encoder;
+	bool no_power_down;
 	struct dp_hw_cfg hw_cfg;
 	bool has_mst;
 	bool has_mst_sideband;

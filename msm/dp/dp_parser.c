@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
@@ -188,6 +188,9 @@ static int dp_parser_misc(struct dp_parser *parser)
 
 	rc = of_property_read_u32(of_node,
 		"qcom,max-vdisplay", &parser->max_vdisplay);
+
+	parser->no_power_down = of_property_read_bool(of_node,
+			"qcom,no-power-down");
 
 	parser->display_type = of_get_property(of_node,
 					"qcom,display-type", NULL);
