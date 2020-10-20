@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1013,6 +1013,49 @@ static int shd_conn_set_property(struct drm_connector *connector,
 	return 0;
 }
 
+static int shd_conn_atomic_check(struct drm_connector *connector,
+		void *display, struct drm_atomic_state *state)
+{
+	struct drm_connector_state *old_conn_state;
+	struct drm_crtc_state *crtc_state;
+	struct msm_drm_private *priv;
+	struct sde_kms *sde_kms;
+
+	if (!connector) {
+		SDE_ERROR("invalid connector\n");
+		return -EINVAL;
+	}
+
+	/* free up previous rm resources */
+	old_conn_state = drm_atomic_get_old_connector_state(state, connector);
+	if (old_conn_state && old_conn_state->crtc) {
+		crtc_state = drm_atomic_get_new_crtc_state(state,
+				old_conn_state->crtc);
+		if (crtc_state && drm_atomic_crtc_needs_modeset(crtc_state)) {
+			priv = connector->dev->dev_private;
+			sde_kms = to_sde_kms(priv->kms);
+			sde_rm_ext_blk_destroy(&sde_kms->rm, state,
+					old_conn_state->best_encoder);
+		}
+	}
+
+	return 0;
+}
+
+static struct drm_encoder *
+shd_conn_atomic_best_encoder(struct drm_connector *connector,
+			void *display, struct drm_connector_state *state)
+{
+	struct sde_connector *c_conn = to_sde_connector(connector);
+
+	if (!connector) {
+		SDE_ERROR("invalid connector\n");
+		return NULL;
+	}
+
+	return c_conn->encoder;
+}
+
 static inline
 int shd_bridge_attach(struct drm_bridge *shd_bridge)
 {
@@ -1174,6 +1217,8 @@ static int shd_drm_obj_init(struct shd_display *display)
 		.get_info =     shd_connector_get_info,
 		.get_mode_info = shd_connector_get_mode_info,
 		.set_property = shd_conn_set_property,
+		.atomic_check = shd_conn_atomic_check,
+		.atomic_best_encoder = shd_conn_atomic_best_encoder,
 	};
 
 	static const struct sde_encoder_ops enc_ops = {
