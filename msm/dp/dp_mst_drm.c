@@ -36,6 +36,8 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_dp_mst_helper.h>
 #include <drm/drm_fixed.h>
+#include <drm/drm_connector.h>
+#include <drm/drm_dp_helper.h>
 
 #include "msm_drv.h"
 #include "msm_kms.h"
@@ -122,6 +124,7 @@ struct dp_mst_private {
 	struct dp_display *dp_display;
 	const struct dp_drm_mst_fw_helper_ops *mst_fw_cbs;
 	struct mutex mst_lock;
+	struct mutex edid_lock;
 	enum dp_drv_state state;
 	bool mst_session_state;
 	struct workqueue_struct *wq;
@@ -1327,23 +1330,49 @@ static int dp_mst_connector_get_modes(struct drm_connector *connector,
 	struct sde_connector *c_conn = to_sde_connector(connector);
 	struct dp_display *dp_display = display;
 	struct dp_mst_private *mst = dp_display->dp_mst_prv_info;
-	struct edid *edid;
 	int rc = 0;
+	struct edid *edid = NULL;
 
 	DP_MST_DEBUG("enter:\n");
 
-	edid = mst->mst_fw_cbs->get_edid(connector, &mst->mst_mgr,
-			c_conn->mst_port);
+	mutex_lock(&mst->edid_lock);
 
-	if (edid)
-		rc = dp_display->mst_connector_update_edid(dp_display,
-				connector, edid);
+	if (c_conn->cached_edid)
+		goto duplicate_edid;
+
+	mutex_unlock(&mst->edid_lock);
+
+	edid = mst->mst_fw_cbs->get_edid(connector,
+			&mst->mst_mgr, c_conn->mst_port);
+
+	if (!edid) {
+		DP_MST_DEBUG("get edid failed. id: %d\n",
+				connector->base.id);
+		goto end;
+	}
+
+	mutex_lock(&mst->edid_lock);
+	c_conn->cached_edid = edid;
+
+duplicate_edid:
+
+	edid = drm_edid_duplicate(c_conn->cached_edid);
+
+	mutex_unlock(&mst->edid_lock);
+
+	if (IS_ERR(edid)) {
+		rc = PTR_ERR(edid);
+		DP_MST_DEBUG("edid duplication failed. id: %d\n",
+				connector->base.id);
+		goto end;
+	}
+
+	rc = dp_display->mst_connector_update_edid(dp_display,
+			connector, edid);
 
 	dp_mst_fixup_tile_mode(connector);
-
-	DP_MST_DEBUG("mst connector get modes. id: %d\n", connector->base.id);
-
-	DP_MST_DEBUG("exit:\n");
+end:
+	DP_MST_DEBUG("exit: id: %d rc: %d\n", connector->base.id, rc);
 
 	return rc;
 }
@@ -1800,8 +1829,13 @@ static void dp_mst_connector_pre_destroy(struct drm_connector *connector,
 		void *display)
 {
 	struct dp_display *dp_display = display;
+	struct sde_connector *c_conn = to_sde_connector(connector);
 
 	DP_MST_DEBUG("enter:\n");
+
+	kfree(c_conn->cached_edid);
+	c_conn->cached_edid = NULL;
+
 	dp_display->mst_connector_uninstall(dp_display, connector);
 	DP_MST_DEBUG("exit:\n");
 }
@@ -2197,6 +2231,8 @@ dp_mst_find_fixed_connector(struct dp_mst_private *dp_mst,
 			dp_display->mst_connector_update_link_info(dp_display,
 					connector);
 			dp_mst->mst_bridge[i].fixed_port_added = true;
+			kfree(c_conn->cached_edid);
+			c_conn->cached_edid = NULL;
 			DP_MST_DEBUG("found fixed connector %d\n",
 					DRMID(connector));
 			break;
@@ -2493,6 +2529,9 @@ static void dp_mst_display_hpd_irq(void *dp_display)
 	u8 esi[14];
 	unsigned int esi_res = DP_SINK_COUNT_ESI + 1;
 	bool handled;
+	struct drm_connector_list_iter conn_iter;
+	struct drm_connector *conn;
+	struct sde_connector *c_conn;
 
 	if (!mst->mst_session_state) {
 		pr_err("mst_hpd_irq received before mst session start\n");
@@ -2517,6 +2556,23 @@ static void dp_mst_display_hpd_irq(void *dp_display)
 	/* ack the request */
 	if (handled) {
 		rc = drm_dp_dpcd_write(mst->caps.drm_aux, esi_res, &esi[1], 3);
+
+		if (esi[1] & DP_UP_REQ_MSG_RDY) {
+			drm_connector_list_iter_begin(dp->drm_dev, &conn_iter);
+			drm_for_each_connector_iter(conn, &conn_iter) {
+
+				c_conn = to_sde_connector(conn);
+				if (!c_conn->mst_port ||
+						c_conn->display != dp_display)
+					continue;
+
+				mutex_lock(&mst->edid_lock);
+				kfree(c_conn->cached_edid);
+				c_conn->cached_edid = NULL;
+				mutex_unlock(&mst->edid_lock);
+			}
+			drm_connector_list_iter_end(&conn_iter);
+		}
 
 		if (rc != 3)
 			pr_err("dpcd esi_res failed. rlen=%d\n", rc);
@@ -2601,6 +2657,7 @@ int dp_mst_init(struct dp_display *dp_display)
 	dp_mst->dp_display = dp_display;
 
 	mutex_init(&dp_mst->mst_lock);
+	mutex_init(&dp_mst->edid_lock);
 
 	ret = drm_dp_mst_topology_mgr_init(&dp_mst->mst_mgr, dev,
 					dp_mst->caps.drm_aux,
@@ -2631,6 +2688,7 @@ int dp_mst_init(struct dp_display *dp_display)
 
 error:
 	mutex_destroy(&dp_mst->mst_lock);
+	mutex_destroy(&dp_mst->edid_lock);
 	return ret;
 }
 
@@ -2657,6 +2715,7 @@ void dp_mst_deinit(struct dp_display *dp_display)
 	destroy_workqueue(mst->wq);
 
 	mutex_destroy(&mst->mst_lock);
+	mutex_destroy(&mst->edid_lock);
 
 	DP_MST_INFO_LOG("dp drm mst topology manager deinit completed\n");
 }
