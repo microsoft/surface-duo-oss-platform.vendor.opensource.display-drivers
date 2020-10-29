@@ -10,6 +10,7 @@
 #include "sde_formats.h"
 #include "dsi_display.h"
 #include "sde_trace.h"
+#include "sde_roi_misr_helper.h"
 
 #define SDE_DEBUG_VIDENC(e, fmt, ...) SDE_DEBUG("enc%d intf%d " fmt, \
 		(e) && (e)->base.parent ? \
@@ -645,7 +646,7 @@ static void sde_encoder_phys_vid_roi_misr_irq(void *arg, int irq_idx)
 	 * update fence data and check event should be
 	 * sent or not
 	 */
-	event_status = sde_encoder_helper_roi_misr_update_fence(phys_enc,
+	event_status = sde_roi_misr_update_fence(phys_enc,
 			phys_enc->parent);
 
 	if (event_status && phys_enc->parent_ops.handle_roi_misr_virt)
@@ -674,7 +675,7 @@ static void _sde_encoder_phys_vid_setup_irq_hw_idx(
 		irq->hw_idx = phys_enc->intf_idx;
 
 	if (sde_encoder_phys_vid_is_master(phys_enc))
-		sde_encoder_helper_roi_misr_setup_irq_hw_idx(phys_enc,
+		sde_roi_misr_setup_irq_hw_idx(phys_enc,
 				phys_enc->parent);
 }
 
@@ -819,14 +820,14 @@ static int sde_encoder_phys_vid_control_roi_misr_irq(
 	if (!sde_encoder_phys_vid_is_master(phys_enc))
 		return 0;
 
-	num_roi_misr = sde_encoder_get_roi_misr_num(phys_enc->parent);
+	num_roi_misr = sde_roi_misr_get_num(phys_enc->parent);
 
 	for (i = 0; i < num_roi_misr; i++) {
 		base_irq_idx = MISR_ROI_MISMATCH_BASE_IDX
 			+ i * ROI_MISR_MAX_ROIS_PER_MISR;
 
 		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; j++) {
-			ret = sde_encoder_helper_roi_misr_irq_enable(phys_enc,
+			ret = sde_roi_misr_irq_control(phys_enc,
 				base_irq_idx, j, enable);
 			if (ret)
 				return ret;
@@ -1208,7 +1209,7 @@ static void sde_encoder_phys_vid_disable(struct sde_encoder_phys *phys_enc)
 		return;
 	}
 
-	sde_encoder_helper_roi_misr_reset(phys_enc, phys_enc->parent);
+	sde_roi_misr_hw_reset(phys_enc, phys_enc->parent);
 
 	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
 	phys_enc->hw_intf->ops.enable_timing(phys_enc->hw_intf, 0);

@@ -7,6 +7,7 @@
 #define _SDE_HW_DSPP_H
 
 #include "sde_hw_blk.h"
+#include "sde_hw_util.h"
 
 struct sde_hw_dspp;
 
