@@ -346,7 +346,7 @@ static inline void sde_hdcp_2x_send_message(struct sde_hdcp_2x_ctrl *hdcp)
 
 	cdata.context = hdcp->client_data;
 	cdata.transaction_delay = hdcp->app_data.timeout;
-	cdata.buf_len = hdcp->app_data.response.length;
+	cdata.buf_len = hdcp->app_data.response.length - 1;
 
 	/* ignore the first byte as it contains the message id */
 	cdata.buf = hdcp->app_data.response.data + 1;
@@ -473,7 +473,7 @@ static void sde_hdcp_2x_send_type(struct sde_hdcp_2x_ctrl *hdcp)
 	hdcp->app_data.response.data[0] = SKE_SEND_TYPE_ID;
 	hdcp->app_data.response.data[1] =
 		sde_hdcp_2x_stream_type(hdcp->min_enc_level);
-	hdcp->app_data.response.length = 1;
+	hdcp->app_data.response.length = 2;
 	hdcp->app_data.timeout = 100;
 
 	if (!atomic_read(&hdcp->hdcp_off))
@@ -598,7 +598,7 @@ static void sde_hdcp_2x_msg_sent(struct sde_hdcp_2x_ctrl *hdcp)
 			hdcp->app_data.response.data[0] = SKE_SEND_TYPE_ID;
 			hdcp->app_data.response.data[1] =
 				sde_hdcp_2x_stream_type(hdcp->min_enc_level);
-			hdcp->app_data.response.length = 1;
+			hdcp->app_data.response.length = 2;
 			hdcp->app_data.timeout = 100;
 
 			sde_hdcp_2x_send_message(hdcp);
@@ -817,7 +817,7 @@ static void sde_hdcp_2x_msg_recvd(struct sde_hdcp_2x_ctrl *hdcp)
 				sde_hdcp_2x_message_name(out_msg));
 		cdata.cmd = HDCP_TRANSPORT_CMD_SEND_MESSAGE;
 		cdata.buf = hdcp->app_data.response.data + 1;
-		cdata.buf_len = hdcp->app_data.response.length;
+		cdata.buf_len = hdcp->app_data.response.length - 1;
 		cdata.transaction_delay = hdcp->app_data.timeout;
 	}
 exit:
