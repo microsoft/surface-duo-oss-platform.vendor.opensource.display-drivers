@@ -128,9 +128,8 @@ static int dp_hdcp2p2_copy_buf(struct dp_hdcp2p2_ctrl *ctrl,
 		mutex_unlock(&ctrl->msg_lock);
 		return 0;
 	}
-
 	ctrl->response.data = data->buf;
-	ctrl->response.length = ctrl->total_message_length;
+	ctrl->response.length = data->buf_len;
 	ctrl->request.data = data->buf;
 	ctrl->request.length = ctrl->total_message_length;
 
