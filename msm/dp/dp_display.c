@@ -2005,14 +2005,6 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	if (dp->active_stream_cnt || dp->mst.mst_active)
 		goto end;
 
-	/*
-	 * If connector is still connected to active crtc, no need to
-	 * power down host.
-	 */
-	if (dp_display->base_connector->state->crtc &&
-			dp_display->base_connector->state->crtc->state->active)
-		goto end;
-
 	dp->link->psm_config(dp->link, &dp->panel->link_info, true);
 	dp->debug->psm_enabled = true;
 
@@ -2022,15 +2014,15 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	dp->power_on = false;
 	dp->aux->state = DP_STATE_CTRL_POWERED_OFF;
 
+	/* log this as it results from user action of cable dis-connection */
+	pr_info("DP%d [OK]", dp->cell_idx);
+end:
 	/*
 	 * Once the DP driver is turned off, set to non-bond mode.
 	 * If bond mode is required afterwards, call set_phy_bond_mode.
 	 */
 	dp_display_change_phy_bond_mode(dp, DP_PHY_BOND_MODE_NONE);
 
-	/* log this as it results from user action of cable dis-connection */
-	pr_info("DP%d [OK]", dp->cell_idx);
-end:
 	dp_panel->deinit(dp_panel, flags);
 	mutex_unlock(&dp->session_lock);
 
