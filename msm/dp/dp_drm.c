@@ -1532,6 +1532,12 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 			struct dp_display *dp;
 			int i;
 
+			/* check new crtc's active state */
+			crtc_state = drm_atomic_get_new_crtc_state(state,
+					new_conn_state->crtc);
+			if (!crtc_state->active)
+				goto disable_check;
+
 			/* no check for single display */
 			if (new_conn_state->best_encoder ==
 					dp_display->bridge->base.encoder)
@@ -1552,6 +1558,7 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 			return 0;
 		}
 
+disable_check:
 		bond_info = dp_display->dp_bond_prv_info;
 		bond_state = dp_bond_get_mgr_atomic_state(state,
 				bond_info->bond_mgr);
