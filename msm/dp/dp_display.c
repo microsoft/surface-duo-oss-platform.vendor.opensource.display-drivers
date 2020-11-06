@@ -1144,8 +1144,10 @@ static void dp_display_attention_work(struct work_struct *work)
 		if (dp_display_is_sink_count_zero(dp)) {
 			dp_display_handle_disconnect(dp);
 		} else {
-			if (!dp->mst.mst_active)
+			if (!dp->mst.mst_active) {
+				dp_display_handle_disconnect(dp);
 				queue_work(dp->wq, &dp->connect_work);
+			}
 		}
 
 		goto mst_attention;
@@ -1157,6 +1159,17 @@ static void dp_display_attention_work(struct work_struct *work)
 		dp->panel->video_test = true;
 		queue_work(dp->wq, &dp->connect_work);
 
+		goto mst_attention;
+	}
+
+	/*
+	 * This is for GPIO based HPD only, that if HPD low is detected
+	 * as HPD_IRQ, we need to handle TEST_EDID_READ in this function.
+	 */
+	if ((dp->parser->no_aux_switch && !dp->parser->lphw_hpd) &&
+			(dp->link->sink_request & DP_TEST_LINK_EDID_READ)) {
+		dp_display_handle_disconnect(dp);
+		queue_work(dp->wq, &dp->connect_work);
 		goto mst_attention;
 	}
 
@@ -1173,7 +1186,19 @@ static void dp_display_attention_work(struct work_struct *work)
 			dp->link->send_test_response(dp->link);
 			dp->ctrl->link_maintenance(dp->ctrl);
 		} else if (dp->link->sink_request & DP_LINK_STATUS_UPDATED) {
-			dp->ctrl->link_maintenance(dp->ctrl);
+			/*
+			 * This is for GPIO based HPD only, that if HPD low is
+			 * detected as HPD_IRQ, we need to treat
+			 * LINK_STATUS_UPDATED as HPD high.
+			 */
+			if (dp->parser->no_aux_switch &&
+					!dp->parser->lphw_hpd) {
+				dp_display_handle_disconnect(dp);
+				queue_work(dp->wq, &dp->connect_work);
+				goto mst_attention;
+			} else {
+				dp->ctrl->link_maintenance(dp->ctrl);
+			}
 		}
 
 		mutex_lock(&dp->session_lock);
