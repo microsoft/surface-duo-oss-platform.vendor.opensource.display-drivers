@@ -737,21 +737,20 @@ struct sde_roi_misr_usr_cfg {
 
 /**
  * struct sde_roi_misr_hw_cfg - Struct contains parameters to configure
- * @roi_num: the number of MSIR ROI should be enabled
- * @orig_order: the original order of user setting rectangle
+ * @roi_mask: the bitmask is used for indicating which MISR ROIs are enabled
  * @misr_roi_rect: the rectangle info of every MISR ROI
- * @dspp_roi_num: the number of dspp ROI should be enabled
+ * @dspp_roi_mask: the bitmask of DSPP ROI to indicate which
+ *                 ROI should be enabled
  * @dspp_roi_rect: the rectangle info of every DSPP bypass ROI
- *                 the number of dspp should be twice misr's
+ *                 the number of DSPP should be twice misr's
  *                 counts for 3Dmux case
  * @golden_value: the golden value be calculated by software
  * @frame_count: number of frames to run before capturing
  */
 struct sde_roi_misr_hw_cfg {
-	uint32_t roi_num;
-	uint32_t orig_order[ROI_MISR_MAX_ROIS_PER_MISR];
+	uint32_t roi_mask;
 	struct sde_rect misr_roi_rect[ROI_MISR_MAX_ROIS_PER_MISR];
-	uint32_t dspp_roi_num;
+	uint32_t dspp_roi_mask;
 	struct sde_rect dspp_roi_rect[ROI_MISR_MAX_ROIS_PER_MISR];
 	uint32_t golden_value[ROI_MISR_MAX_ROIS_PER_MISR];
 	uint8_t frame_count[ROI_MISR_MAX_ROIS_PER_MISR];

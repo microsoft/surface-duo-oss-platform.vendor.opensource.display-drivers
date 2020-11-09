@@ -15,6 +15,7 @@
 
 #include "sde_encoder_phys.h"
 #include "sde_crtc.h"
+#include "sde_fence_helper.h"
 
 #if defined(CONFIG_DRM_SDE_ROI_MISR)
 
@@ -25,10 +26,10 @@
 void sde_roi_misr_init(struct sde_crtc *sde_crtc);
 
 /**
- * sde_roi_misr_fence_cleanup - clean up fence instance
+ * sde_roi_misr_deinit - destroy roi misr related data
  * @sde_crtc: Pointer to sde crtc
  */
-void sde_roi_misr_fence_cleanup(struct sde_crtc *sde_crtc);
+void sde_roi_misr_deinit(struct sde_crtc *sde_crtc);
 
 /**
  * sde_roi_misr_prepare_fence - create a fence instance
@@ -62,30 +63,17 @@ int sde_roi_misr_check_rois(struct drm_crtc_state *state);
 void sde_roi_misr_setup(struct drm_crtc *crtc);
 
 /**
- * sde_roi_misr_get_num - get roi misr number
- * @drm_enc: Pointer to drm encoder structure
- */
-unsigned int sde_roi_misr_get_num(
-		struct drm_encoder *drm_enc);
-
-/**
  * sde_roi_misr_hw_reset - reset roi misr register values
  * @phys_enc: Pointer to physical encoder structure
- * @base_drm_enc: Pointer to base drm encoder structure
  */
-void sde_roi_misr_hw_reset(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc);
+void sde_roi_misr_hw_reset(struct sde_encoder_phys *phys_enc);
 
 /**
  * sde_roi_misr_setup_irq_hw_idx - setup irq hardware
  *		index for master physical encoder
  * @phys_enc: Pointer to physical encoder structure
- * @base_drm_enc: Pointer to base drm encoder structure
  */
-void sde_roi_misr_setup_irq_hw_idx(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc);
+void sde_roi_misr_setup_irq_hw_idx(struct sde_encoder_phys *phys_enc);
 
 /**
  * sde_roi_misr_irq_control - enable or disable all irqs
@@ -100,15 +88,23 @@ int sde_roi_misr_irq_control(struct sde_encoder_phys *phys_enc,
 		int base_irq_idx, int roi_idx, bool enable);
 
 /**
+ * sde_roi_misr_read_signature - get signatures from the signature queue
+ * @sde_crtc: Pointer to sde crtc structure
+ * @signature: Pointer to the input buffer
+ * @len: the length of the input buffer
+ * @Return: 0 or the length of copied data
+ */
+uint32_t sde_roi_misr_read_signature(struct sde_crtc *sde_crtc,
+		uint32_t *signature, uint32_t len);
+
+/**
  * sde_roi_misr_update_fence - update fence data
- * @phys_enc: Pointer to physical encoder structure
- * @base_drm_enc: Pointer to base drm encoder structure
+ * @sde_crtc: Pointer to sde crtc structure
+ * @force: force to trigger the last fence
  * @Return: true for all signature are ready
  *          false for all signature are not ready
  */
-bool sde_roi_misr_update_fence(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc);
+bool sde_roi_misr_update_fence(struct sde_crtc *sde_crtc, bool force);
 
 #else
 
@@ -118,7 +114,7 @@ void sde_roi_misr_init(struct sde_crtc *sde_crtc)
 }
 
 static inline
-void sde_roi_misr_fence_cleanup(struct sde_crtc *sde_crtc)
+void sde_roi_misr_deinit(struct sde_crtc *sde_crtc)
 {
 }
 
@@ -147,20 +143,12 @@ void sde_roi_misr_setup(struct drm_crtc *crtc)
 }
 
 static inline
-unsigned int sde_roi_misr_get_num(struct drm_encoder *drm_enc)
-{
-	return 0;
-}
-
-static inline
-void sde_roi_misr_hw_reset(struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc)
+void sde_roi_misr_hw_reset(struct sde_encoder_phys *phys_enc)
 {
 }
 
 static inline
-void sde_roi_misr_setup_irq_hw_idx(struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc)
+void sde_roi_misr_setup_irq_hw_idx(struct sde_encoder_phys *phys_enc)
 {
 }
 
@@ -172,10 +160,16 @@ int sde_roi_misr_irq_control(struct sde_encoder_phys *phys_enc,
 }
 
 static inline
-bool sde_roi_misr_update_fence(struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc)
+uint32_t sde_roi_misr_read_signature(struct sde_crtc *sde_crtc,
+		uint32_t *signature, uint32_t len)
 {
-	return true;
+	return 0;
+}
+
+static inline
+bool sde_roi_misr_update_fence(struct sde_crtc *sde_crtc, bool force)
+{
+	return false;
 }
 
 #endif

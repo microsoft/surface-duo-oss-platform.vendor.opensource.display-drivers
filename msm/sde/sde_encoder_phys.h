@@ -18,7 +18,6 @@
 #include "sde_hw_cdm.h"
 #include "sde_encoder.h"
 #include "sde_connector.h"
-#include "sde_roi_misr.h"
 
 #define SDE_ENCODER_NAME_MAX	16
 
@@ -81,8 +80,7 @@ struct sde_encoder_virt_ops {
 			struct sde_encoder_phys *phys);
 	void (*handle_underrun_virt)(struct drm_encoder *,
 			struct sde_encoder_phys *phys);
-	void (*handle_roi_misr_virt)(struct drm_encoder *,
-			u32 event);
+	void (*handle_roi_misr_virt)(struct drm_encoder *);
 	void (*handle_frame_done)(struct drm_encoder *,
 			struct sde_encoder_phys *phys, u32 event);
 	void (*get_qsync_fps)(struct drm_encoder *,
@@ -220,6 +218,14 @@ struct sde_encoder_phys_ops {
  * @INTR_IDX_MISR_ROI13_MISMATCH: mismatch interrupt for MISR ROI 13
  * @INTR_IDX_MISR_ROI14_MISMATCH: mismatch interrupt for MISR ROI 14
  * @INTR_IDX_MISR_ROI15_MISMATCH: mismatch interrupt for MISR ROI 15
+ * @INTR_IDX_MISR_ROI16_MISMATCH: mismatch interrupt for MISR ROI 16
+ * @INTR_IDX_MISR_ROI17_MISMATCH: mismatch interrupt for MISR ROI 17
+ * @INTR_IDX_MISR_ROI18_MISMATCH: mismatch interrupt for MISR ROI 18
+ * @INTR_IDX_MISR_ROI19_MISMATCH: mismatch interrupt for MISR ROI 19
+ * @INTR_IDX_MISR_ROI20_MISMATCH: mismatch interrupt for MISR ROI 20
+ * @INTR_IDX_MISR_ROI21_MISMATCH: mismatch interrupt for MISR ROI 21
+ * @INTR_IDX_MISR_ROI22_MISMATCH: mismatch interrupt for MISR ROI 22
+ * @INTR_IDX_MISR_ROI23_MISMATCH: mismatch interrupt for MISR ROI 23
  */
 enum sde_intr_idx {
 	INTR_IDX_VSYNC,
@@ -250,6 +256,14 @@ enum sde_intr_idx {
 	INTR_IDX_MISR_ROI13_MISMATCH,
 	INTR_IDX_MISR_ROI14_MISMATCH,
 	INTR_IDX_MISR_ROI15_MISMATCH,
+	INTR_IDX_MISR_ROI16_MISMATCH,
+	INTR_IDX_MISR_ROI17_MISMATCH,
+	INTR_IDX_MISR_ROI18_MISMATCH,
+	INTR_IDX_MISR_ROI19_MISMATCH,
+	INTR_IDX_MISR_ROI20_MISMATCH,
+	INTR_IDX_MISR_ROI21_MISMATCH,
+	INTR_IDX_MISR_ROI22_MISMATCH,
+	INTR_IDX_MISR_ROI23_MISMATCH,
 	INTR_IDX_MAX,
 };
 
@@ -293,6 +307,8 @@ struct sde_encoder_irq {
  * @hw_qdss:		Hardware interface to the qdss registers
  * @cdm_cfg:		Chroma-down hardware configuration
  * @hw_pp:		Hardware interface to the ping pong registers
+ * @hw_roi_misr:	Hardware interface to the roi misr registers
+ * @roi_misr_num:	The number of roi misr in this phys_enc
  * @sde_kms:		Pointer to the sde_kms top level
  * @cached_mode:	DRM mode cached at mode_set time, acted on in enable
  * @enabled:		Whether the encoder has enabled and running a mode
@@ -345,6 +361,8 @@ struct sde_encoder_phys {
 	struct sde_hw_qdss *hw_qdss;
 	struct sde_hw_cdm_cfg cdm_cfg;
 	struct sde_hw_pingpong *hw_pp;
+	struct sde_hw_roi_misr *hw_roi_misr[MAX_CHANNELS_PER_ENC];
+	u32 roi_misr_num;
 	struct sde_kms *sde_kms;
 	struct drm_display_mode cached_mode;
 	enum sde_enc_split_role split_role;

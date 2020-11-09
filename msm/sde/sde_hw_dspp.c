@@ -20,7 +20,7 @@
 #define ROI_SIZE_VAL(w, h)                     ((w) | ((h) << 16))
 
 static void sde_setup_dspp_roi_misr(struct sde_hw_dspp *ctx,
-		int roi_num, struct sde_rect *roi_cfg)
+		uint32_t roi_mask, struct sde_rect *roi_cfg)
 {
 	uint32_t op_mode = 0;
 	int i;
@@ -31,8 +31,9 @@ static void sde_setup_dspp_roi_misr(struct sde_hw_dspp *ctx,
 		return;
 	}
 
-	for (i = 0; i < roi_num; i++) {
-		op_mode |= ROI_MISR_OP_MODE(i);
+	for (i = 0; i < ROI_MISR_MAX_ROIS_PER_MISR; i++) {
+		if (roi_mask & BIT(i))
+			op_mode |= ROI_MISR_OP_MODE(i);
 
 		SDE_REG_WRITE(&ctx->hw, ctx->cap->sblk->roi_misr.base
 			+ ROI_MISR_ROI_POSITION(i),
