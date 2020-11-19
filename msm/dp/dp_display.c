@@ -479,6 +479,7 @@ static int dp_display_initialize_hdcp(struct dp_display_private *dp)
 	parser = dp->parser;
 
 	hdcp_init_data.client_id     = HDCP_CLIENT_DP;
+	hdcp_init_data.client_index  = dp->cell_idx;
 	hdcp_init_data.drm_aux       = dp->aux->drm_aux;
 	hdcp_init_data.cb_data       = (void *)dp;
 	hdcp_init_data.workq         = dp->wq;
