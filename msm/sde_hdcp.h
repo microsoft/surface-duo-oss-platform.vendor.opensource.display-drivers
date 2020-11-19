@@ -71,6 +71,7 @@ struct sde_hdcp_init_data {
 	u32 phy_addr;
 	bool sec_access;
 	enum sde_hdcp_client_id client_id;
+	u8 client_index;
 };
 
 struct sde_hdcp_ops {

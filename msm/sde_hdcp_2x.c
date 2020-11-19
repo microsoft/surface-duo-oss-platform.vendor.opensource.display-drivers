@@ -739,8 +739,8 @@ static void sde_hdcp_2x_msg_recvd(struct sde_hdcp_2x_ctrl *hdcp)
 		goto exit;
 	}
 
-	if (hdcp->device_type == HDCP_TXMTR_DP ||
-			hdcp->device_type == HDCP_TXMTR_DP_MST) {
+	if (hdcp->device_type >= HDCP_TXMTR_DP ||
+			hdcp->device_type < HDCP_TXMTR_MAX) {
 		msg[0] = hdcp->last_msg;
 		message_id_bytes = 1;
 	}
