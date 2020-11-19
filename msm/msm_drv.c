@@ -1264,24 +1264,28 @@ static int msm_ioctl_register_event(struct drm_device *dev, void *data,
 	 * calls add to client list and return.
 	 */
 	count = msm_event_client_count(dev, req_event, false);
-	/* Add current client to list */
-	spin_lock_irqsave(&dev->event_lock, flag);
-	list_add_tail(&client->base.link, &priv->client_event_list);
-	spin_unlock_irqrestore(&dev->event_lock, flag);
+	if (count) {
+		/* Add current client to list */
+		spin_lock_irqsave(&dev->event_lock, flag);
+		list_add_tail(&client->base.link, &priv->client_event_list);
+		spin_unlock_irqrestore(&dev->event_lock, flag);
 
-	if (count)
 		return 0;
+	}
 
 	ret = msm_register_event(dev, req_event, file, true);
 	if (ret) {
 		DRM_ERROR("failed to enable event %x object %x object id %d\n",
 			req_event->event, req_event->object_type,
 			req_event->object_id);
-		spin_lock_irqsave(&dev->event_lock, flag);
-		list_del(&client->base.link);
-		spin_unlock_irqrestore(&dev->event_lock, flag);
 		kfree(client);
+	} else {
+		/* Add current client to list */
+		spin_lock_irqsave(&dev->event_lock, flag);
+		list_add_tail(&client->base.link, &priv->client_event_list);
+		spin_unlock_irqrestore(&dev->event_lock, flag);
 	}
+
 	return ret;
 }
 
@@ -2038,7 +2042,7 @@ static void __exit msm_drm_unregister(void)
 	msm_smmu_driver_cleanup();
 }
 
-module_init(msm_drm_register);
+early_module_init(msm_drm_register, EARLY_SUBSYS_2, EARLY_INIT_LEVEL4);
 module_exit(msm_drm_unregister);
 
 MODULE_AUTHOR("Rob Clark <robdclark@gmail.com");
