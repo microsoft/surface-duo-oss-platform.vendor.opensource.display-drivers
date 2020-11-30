@@ -1672,20 +1672,6 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 			goto end;
 		}
 
-		c_conn = to_sde_connector(connector);
-		slots = bridge_state->num_slots;
-		if (slots > 0) {
-			rc = mst->mst_fw_cbs->atomic_release_vcpi_slots(state,
-				&mst->mst_mgr, c_conn->mst_port);
-			if (rc) {
-				pr_err("failed releasing %d vcpi slots %d\n",
-						slots, rc);
-				goto end;
-			}
-		}
-
-		bridge_state->num_slots = 0;
-
 		if (!new_conn_state->crtc && mst->state != PM_SUSPEND) {
 			bridge_state->connector = NULL;
 			bridge_state->dp_panel = NULL;
@@ -1699,6 +1685,32 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 
 			DP_MST_DEBUG("clear best encoder:%d\n", bridge->id);
 		}
+
+		/*
+		 * 5.4 upstream doesn't allow atomic_release_vcpi_slots to be
+		 * called if atomic_find_vcpi_slots is called in the same
+		 * commit.
+		 */
+		if (new_conn_state->crtc) {
+			crtc_state = drm_atomic_get_new_crtc_state(state,
+					new_conn_state->crtc);
+			if (crtc_state->active)
+				goto mode_set;
+		}
+
+		c_conn = to_sde_connector(connector);
+		slots = bridge_state->num_slots;
+		if (slots > 0) {
+			rc = mst->mst_fw_cbs->atomic_release_vcpi_slots(state,
+				&mst->mst_mgr, c_conn->mst_port);
+			if (rc) {
+				pr_err("failed releasing %d vcpi slots %d\n",
+						slots, rc);
+				goto end;
+			}
+		}
+
+		bridge_state->num_slots = 0;
 	}
 
 mode_set:
@@ -1725,11 +1737,6 @@ mode_set:
 		}
 
 		if (WARN_ON(bridge_state->connector != connector)) {
-			rc = -EINVAL;
-			goto end;
-		}
-
-		if (WARN_ON(bridge_state->num_slots)) {
 			rc = -EINVAL;
 			goto end;
 		}
