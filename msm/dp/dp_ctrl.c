@@ -762,14 +762,6 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 
 		dp_ctrl_configure_source_link_params(ctrl, true);
 
-		if (!(--link_train_max_retries % 10)) {
-			struct dp_link_params *link = &ctrl->link->link_params;
-
-			link->lane_count = ctrl->initial_lane_count;
-			link->bw_code = ctrl->initial_bw_code;
-			downgrade = true;
-		}
-
 		dp_ctrl_select_training_pattern(ctrl, downgrade);
 
 		rc = dp_ctrl_setup_main_link(ctrl);
@@ -793,6 +785,14 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 
 		if (!link_train_max_retries || atomic_read(&ctrl->aborted))
 			break;
+
+		if (!(--link_train_max_retries % 10)) {
+			struct dp_link_params *link = &ctrl->link->link_params;
+
+			link->lane_count = ctrl->initial_lane_count;
+			link->bw_code = ctrl->initial_bw_code;
+			downgrade = true;
+		}
 
 		/* hw recommended delays before retrying link training */
 		msleep(20);
