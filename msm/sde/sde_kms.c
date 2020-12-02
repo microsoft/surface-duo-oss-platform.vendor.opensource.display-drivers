@@ -2803,6 +2803,21 @@ static int sde_kms_get_mixer_count(const struct msm_kms *kms,
 	return 0;
 }
 
+static uint64_t sde_kms_get_resource_mask(const struct msm_kms *kms,
+			struct drm_atomic_state *state)
+{
+	struct sde_kms *sde_kms;
+
+	if (!kms || !state) {
+		SDE_ERROR("invalid input args\n");
+		return 0;
+	}
+
+	sde_kms = to_sde_kms(kms);
+
+	return sde_rm_atomic_get_resource_mask(&sde_kms->rm, state);
+}
+
 static void _sde_kms_null_commit(struct drm_device *dev,
 		struct drm_encoder *enc)
 {
@@ -3154,6 +3169,7 @@ static const struct msm_kms_funcs kms_funcs = {
 	.postopen = _sde_kms_post_open,
 	.check_for_splash = sde_kms_check_for_splash,
 	.get_mixer_count = sde_kms_get_mixer_count,
+	.get_resource_mask = sde_kms_get_resource_mask,
 };
 
 /* the caller api needs to turn on clock before calling it */

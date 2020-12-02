@@ -114,14 +114,14 @@ struct sde_rm_topology_def {
  * @obj: DRM private state object
  * @hw_mdp: hardware object for mdp_top
  * @lm_max_width: cached layer mixer maximum width
- * @rsvp_next_seq: sequence number for next reservation for debugging purposes
+ * @next_uuid: sequence number for next HW uuid
  */
 struct sde_rm {
 	struct drm_device *dev;
 	struct drm_private_obj obj;
 	struct sde_hw_mdp *hw_mdp;
 	uint32_t lm_max_width;
-	uint32_t rsvp_next_seq;
+	uint32_t next_uuid;
 	const struct sde_rm_topology_def *topology_tbl;
 };
 
@@ -362,4 +362,14 @@ int sde_rm_ext_blk_create_reserve(struct sde_rm *rm,
 				struct drm_atomic_state *state,
 				struct sde_hw_blk *hw,
 				struct drm_encoder *enc);
+
+/**
+ * sde_rm_atomic_get_resource_mask - returns resource mask
+ * @rm: sde rm object
+ * @state: Proposed Atomic DRM State handle
+ * @Return: resource bitmask
+ */
+uint64_t sde_rm_atomic_get_resource_mask(struct sde_rm *rm,
+		struct drm_atomic_state *state);
+
 #endif /* __SDE_RM_H__ */

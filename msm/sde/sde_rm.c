@@ -96,6 +96,7 @@ struct sde_rm_requirements {
  * @id:		Hardware ID number, within it's own space, ie. LM_X
  * @catalog:	Pointer to the hardware catalog entry for this block
  * @hw:		Pointer to the hardware register access object for this block
+ * @uuid:	HW unique id
  */
 struct sde_rm_hw_blk {
 	struct list_head list;
@@ -104,6 +105,7 @@ struct sde_rm_hw_blk {
 	enum sde_hw_blk_type type;
 	uint32_t id;
 	struct sde_hw_blk *hw;
+	uint32_t uuid;
 };
 
 /**
@@ -218,6 +220,58 @@ static struct sde_rm_state *sde_rm_get_atomic_state(
 
 	return to_sde_rm_priv_state(
 			drm_atomic_get_private_obj_state(state, &rm->obj));
+}
+
+static uint64_t sde_rm_get_enc_res_mask(struct sde_rm *rm,
+		struct sde_rm_state *state,
+		struct drm_encoder *drm_enc)
+{
+	struct sde_rm_hw_blk *hw_blk;
+	uint64_t mask = 0LL;
+	int i;
+
+	for (i = 0; i < SDE_HW_BLK_MAX; i++) {
+		list_for_each_entry(hw_blk, &state->hw_blks[i], list) {
+			if (drm_enc->base.id == hw_blk->enc_id &&
+					!hw_blk->ext_hw)
+				mask |= 1LL << hw_blk->uuid;
+		}
+	}
+
+	return mask;
+}
+
+uint64_t sde_rm_atomic_get_resource_mask(struct sde_rm *rm,
+		struct drm_atomic_state *state)
+{
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
+	struct drm_encoder *encoder;
+	struct sde_rm_state *old_rm_state, *new_rm_state;
+	uint64_t mask = 0;
+	int i;
+
+	for_each_oldnew_crtc_in_state(state, crtc, old_crtc_state, new_crtc_state, i) {
+		if (!drm_atomic_crtc_needs_modeset(new_crtc_state))
+			continue;
+
+		new_rm_state = sde_rm_get_atomic_state(state, rm);
+		if (IS_ERR(new_rm_state))
+			return 0;
+		old_rm_state = to_sde_rm_priv_state(rm->obj.state);
+
+		drm_for_each_encoder_mask(encoder, state->dev,
+				new_crtc_state->encoder_mask)
+			mask |= sde_rm_get_enc_res_mask(rm, new_rm_state,
+				encoder);
+
+		drm_for_each_encoder_mask(encoder, state->dev,
+				old_crtc_state->encoder_mask)
+			mask |= sde_rm_get_enc_res_mask(rm, old_rm_state,
+				encoder);
+	}
+
+	return mask;
 }
 
 struct sde_hw_mdp *sde_rm_get_mdp(struct sde_rm *rm)
@@ -547,7 +601,11 @@ static int _sde_rm_hw_blk_create(
 	blk->type = type;
 	blk->id = id;
 	blk->hw = hw;
+	blk->uuid = rm->next_uuid++;
 	list_add_tail(&blk->list, &state->hw_blks[type]);
+
+	/* we're using uint64_t to store uuid mask */
+	WARN_ON(rm->next_uuid >= 64);
 
 	return 0;
 }
