@@ -26,6 +26,7 @@
 #include <linux/dma-buf.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_dp_mst_helper.h>
 
 #include "msm_drv.h"
 #include "msm_mmu.h"
@@ -2323,6 +2324,11 @@ static int sde_kms_atomic_check(struct msm_kms *kms,
 	ret = drm_atomic_helper_check(dev, state);
 	if (ret)
 		goto end;
+
+	ret = drm_dp_mst_atomic_check(state);
+	if (ret)
+		goto end;
+
 	/*
 	 * Check if any secure transition(moving CRTC between secure and
 	 * non-secure state and vice-versa) is allowed or not. when moving
