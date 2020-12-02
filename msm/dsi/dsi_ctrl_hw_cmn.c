@@ -22,6 +22,8 @@
 #define DSI_CTRL_DMA_LINK_SEL             (BIT(12)|BIT(13))
 #define DSI_CTRL_MDP0_LINK_SEL            (BIT(20)|BIT(22))
 
+#define DSI_VSYNC_CLK_KHZ                 19200
+
 /* Unsupported formats default to RGB888 */
 static const u8 cmd_mode_format_map[DSI_PIXEL_FORMAT_MAX] = {
 	0x6, 0x7, 0x8, 0x8, 0x0, 0x3, 0x4 };
@@ -284,7 +286,7 @@ void dsi_ctrl_hw_cmn_set_video_timing(struct dsi_ctrl_hw *ctrl,
 	u32 hs_end, active_h_start, active_h_end, h_total, width = 0;
 	u32 vs_start = 0, vs_end = 0;
 	u32 vpos_start = 0, vpos_end, active_v_start, active_v_end, v_total;
-
+	u32 hs_timeout, timer_resolution = 0, hs_timer_ctrl;
 	if (mode->dsc_enabled && mode->dsc) {
 		width = mode->dsc->pclk_per_line;
 		reg = mode->dsc->bytes_per_pkt << 16;
@@ -337,8 +339,24 @@ void dsi_ctrl_hw_cmn_set_video_timing(struct dsi_ctrl_hw *ctrl,
 	reg = ((vpos_end & 0xFFFF) << 16) | (vpos_start & 0xFFFF);
 	DSI_W32(ctrl, DSI_VIDEO_MODE_VSYNC_VPOS, reg);
 
-	/* TODO: HS TIMER value? */
-	DSI_W32(ctrl, DSI_HS_TIMER_CTRL, 0x3FD08);
+	//High speed timer timeout value is calculated in escclk unit.
+	//The link has to go to stop state once per frame.
+	if (mode->refresh_rate) {
+		hs_timeout = (DSI_VSYNC_CLK_KHZ * 1000) / mode->refresh_rate;
+		//Since the timeout count can be atmost 16 bits, if the
+		//timer counter is greater then 16 bit, increase the timer
+		//resolution.
+		while (hs_timeout > 0xFFFF) {
+			hs_timeout >>= 1;
+			timer_resolution++;
+		}
+		hs_timer_ctrl = (timer_resolution << 16 | hs_timeout);
+	} else {
+		//Setting the High speed timer timeout value to highest.
+		hs_timer_ctrl = 0xFFFFF;
+	}
+	DSI_W32(ctrl, DSI_HS_TIMER_CTRL, hs_timer_ctrl);
+
 	DSI_W32(ctrl, DSI_MISR_VIDEO_CTRL, 0x10100);
 	DSI_W32(ctrl, DSI_DSI_TIMING_FLUSH, 0x1);
 	pr_debug("[DSI_%d] ctrl video parameters updated\n", ctrl->index);
