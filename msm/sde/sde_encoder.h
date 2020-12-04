@@ -23,7 +23,6 @@
 
 #include "msm_prop.h"
 #include "sde_hw_mdss.h"
-#include "sde_fence_misr.h"
 
 #define MAX_CHANNELS_PER_ENC 6
 #define SDE_ENCODER_FRAME_EVENT_DONE			BIT(0)
@@ -31,8 +30,6 @@
 #define SDE_ENCODER_FRAME_EVENT_PANEL_DEAD		BIT(2)
 #define SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE	BIT(3)
 #define SDE_ENCODER_FRAME_EVENT_SIGNAL_RETIRE_FENCE	BIT(4)
-
-#define SDE_ENCODER_MISR_EVENT_SIGNAL_ROI_MSIR_FENCE	BIT(0)
 
 #define IDLE_POWERCOLLAPSE_DURATION	(66 - 16/2)
 #define IDLE_POWERCOLLAPSE_IN_EARLY_WAKEUP (200 - 16/2)
@@ -124,8 +121,7 @@ void sde_encoder_register_vblank_callback(struct drm_encoder *encoder,
  * @roi_misr_data: user data provided to callback
  */
 void sde_encoder_register_roi_misr_callback(struct drm_encoder *drm_enc,
-		void (*roi_misr_cb)(void *, u32 event),
-		void *roi_misr_data);
+		void (*roi_misr_cb)(void *), void *roi_misr_data);
 
 /**
  * sde_encoder_register_frame_event_callback - provide callback to encoder that
@@ -364,21 +360,5 @@ int sde_encoder_in_cont_splash(struct drm_encoder *enc);
  * @Return:     non zero value if ctl start timeout occurred
  */
 int sde_encoder_get_ctlstart_timeout_state(struct drm_encoder *enc);
-
-/**
- * sde_encoder_get_fence_object - get fence object from CRTC
- * @drm_enc:	Pointer to drm encoder structure
- * @Return:	Pointer of fence object
- */
-struct sde_misr_fence *sde_encoder_get_fence_object(
-		struct drm_encoder *encoder);
-
-/**
- * sde_encoder_get_misr_data - get misr data of virtual encoder
- * @drm_enc:	Pointer to drm encoder structure
- * @Return:	Pointer of misr data
- */
-struct sde_misr_enc_data *sde_encoder_get_misr_data(
-		struct drm_encoder *encoder);
 
 #endif /* __SDE_ENCODER_H__ */

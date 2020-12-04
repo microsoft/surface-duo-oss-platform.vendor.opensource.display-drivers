@@ -891,6 +891,8 @@ static void sde_crtc_destroy(struct drm_crtc *crtc)
 	msm_property_destroy(&sde_crtc->property_info);
 	sde_cp_crtc_destroy_properties(crtc);
 
+	sde_roi_misr_deinit(sde_crtc);
+
 	sde_fence_deinit(sde_crtc->output_fence);
 	_sde_crtc_deinit_events(sde_crtc);
 
@@ -2860,6 +2862,9 @@ static void sde_crtc_frame_event_cb(void *data, u32 event)
 		sde_recovery_set_event(crtc->dev, DRM_EVENT_SDE_VSYNC_MISS,
 				crtc);
 
+	if (event & SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE)
+		sde_roi_misr_update_fence(sde_crtc, true);
+
 	fevent->event = event;
 	fevent->crtc = crtc;
 	fevent->connector = cb_data->connector;
@@ -3602,6 +3607,7 @@ static void _sde_crtc_setup_mixer_for_encoder(
 		struct drm_encoder *enc)
 {
 	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+	struct sde_crtc_state *sde_crtc_state = to_sde_crtc_state(crtc->state);
 	struct sde_kms *sde_kms = _sde_crtc_get_kms(crtc);
 	struct sde_rm *rm = &sde_kms->rm;
 	struct sde_crtc_mixer *mixer;
@@ -3609,12 +3615,16 @@ static void _sde_crtc_setup_mixer_for_encoder(
 	int i;
 	struct sde_rm_hw_iter lm_iter, ctl_iter, dspp_iter, ds_iter;
 	struct sde_rm_hw_iter roi_misr_iter;
+	bool is_right_mixer;
+	bool is_3dmux_case;
 
 	sde_rm_init_hw_iter(&lm_iter, enc->base.id, SDE_HW_BLK_LM);
 	sde_rm_init_hw_iter(&ctl_iter, enc->base.id, SDE_HW_BLK_CTL);
 	sde_rm_init_hw_iter(&dspp_iter, enc->base.id, SDE_HW_BLK_DSPP);
 	sde_rm_init_hw_iter(&ds_iter, enc->base.id, SDE_HW_BLK_DS);
 	sde_rm_init_hw_iter(&roi_misr_iter, enc->base.id, SDE_HW_BLK_ROI_MISR);
+
+	is_3dmux_case = sde_rm_is_3dmux_case(sde_crtc_state->topology_name);
 
 	/* Set up all the mixers and ctls reserved by this encoder */
 	for (i = sde_crtc->num_mixers; i < ARRAY_SIZE(sde_crtc->mixers); i++) {
@@ -3650,8 +3660,16 @@ static void _sde_crtc_setup_mixer_for_encoder(
 		(void) sde_rm_get_hw(rm, &ds_iter);
 		mixer->hw_ds = (struct sde_hw_ds *)ds_iter.hw;
 
-		(void) sde_rm_get_hw(rm, &roi_misr_iter);
-		mixer->hw_roi_misr = (struct sde_hw_roi_misr *)roi_misr_iter.hw;
+		/**
+		 * In 3dmux case, only reserve roi misr for left mixer.
+		 * Otherwise, reserve roi misr for every mixer.
+		 */
+		is_right_mixer = i % MAX_MIXERS_PER_LAYOUT;
+		if (!(is_3dmux_case && is_right_mixer)) {
+			(void) sde_rm_get_hw(rm, &roi_misr_iter);
+			mixer->hw_roi_misr =
+				(struct sde_hw_roi_misr *)roi_misr_iter.hw;
+		}
 
 		mixer->encoder = enc;
 
@@ -4972,8 +4990,6 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 			sde_connector_commit_reset(cstate->connectors[i],
 					ktime_get());
 	}
-
-	sde_roi_misr_fence_cleanup(sde_crtc);
 
 	memset(sde_crtc->mixers, 0, sizeof(sde_crtc->mixers));
 	sde_crtc->num_mixers = 0;

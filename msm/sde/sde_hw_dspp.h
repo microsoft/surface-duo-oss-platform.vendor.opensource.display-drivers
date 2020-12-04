@@ -162,10 +162,10 @@ struct sde_hw_dspp_ops {
 	/**
 	 * setup_roi_misr - update the roi misr property
 	 * @ctx: Pointer to dspp context
-	 * @roi_num: The number of roi should be set
+	 * @roi_mask: The bitmask of roi should be set
 	 * @roi_cfg: Pointer to roi configuration
 	 */
-	void (*setup_roi_misr)(struct sde_hw_dspp *ctx, int roi_num,
+	void (*setup_roi_misr)(struct sde_hw_dspp *ctx, uint32_t roi_mask,
 			struct sde_rect *roi_cfg);
 
 };

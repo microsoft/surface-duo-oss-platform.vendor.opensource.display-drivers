@@ -1597,71 +1597,6 @@ static int dsi_ctrl_drv_state_init(struct dsi_ctrl *dsi_ctrl)
 	return rc;
 }
 
-static int dsi_ctrl_buffer_deinit(struct dsi_ctrl *dsi_ctrl)
-{
-	struct msm_gem_address_space *aspace = NULL;
-
-	if (dsi_ctrl->tx_cmd_buf) {
-		aspace = dsi_ctrl_get_aspace(dsi_ctrl,
-				MSM_SMMU_DOMAIN_UNSECURE);
-		if (!aspace) {
-			pr_err("failed to get address space\n");
-			return -ENOMEM;
-		}
-
-		msm_gem_put_iova(dsi_ctrl->tx_cmd_buf, aspace);
-
-		mutex_lock(&dsi_ctrl->drm_dev->struct_mutex);
-		msm_gem_free_object(dsi_ctrl->tx_cmd_buf);
-		mutex_unlock(&dsi_ctrl->drm_dev->struct_mutex);
-		dsi_ctrl->tx_cmd_buf = NULL;
-	}
-
-	return 0;
-}
-
-int dsi_ctrl_buffer_init(struct dsi_ctrl *dsi_ctrl)
-{
-	int rc = 0;
-	u64 iova = 0;
-	struct msm_gem_address_space *aspace = NULL;
-
-	aspace = dsi_ctrl_get_aspace(dsi_ctrl, MSM_SMMU_DOMAIN_UNSECURE);
-	if (!aspace) {
-		pr_err("failed to get address space\n");
-		return -ENOMEM;
-	}
-
-	dsi_ctrl->tx_cmd_buf = msm_gem_new(dsi_ctrl->drm_dev,
-					   SZ_4K,
-					   MSM_BO_UNCACHED);
-
-	if (IS_ERR(dsi_ctrl->tx_cmd_buf)) {
-		rc = PTR_ERR(dsi_ctrl->tx_cmd_buf);
-		pr_err("failed to allocate gem, rc=%d\n", rc);
-		dsi_ctrl->tx_cmd_buf = NULL;
-		goto error;
-	}
-
-	dsi_ctrl->cmd_buffer_size = SZ_4K;
-
-	rc = msm_gem_get_iova(dsi_ctrl->tx_cmd_buf, aspace, &iova);
-	if (rc) {
-		pr_err("failed to get iova, rc=%d\n", rc);
-		(void)dsi_ctrl_buffer_deinit(dsi_ctrl);
-		goto error;
-	}
-
-	if (iova & 0x07) {
-		pr_err("Tx command buffer is not 8 byte aligned\n");
-		rc = -ENOTSUPP;
-		(void)dsi_ctrl_buffer_deinit(dsi_ctrl);
-		goto error;
-	}
-error:
-	return rc;
-}
-
 static int dsi_enable_io_clamp(struct dsi_ctrl *dsi_ctrl,
 		bool enable, bool ulps_enabled)
 {
@@ -2000,9 +1935,7 @@ int dsi_ctrl_drv_deinit(struct dsi_ctrl *dsi_ctrl)
 	if (rc)
 		pr_err("failed to release debugfs root, rc=%d\n", rc);
 
-	rc = dsi_ctrl_buffer_deinit(dsi_ctrl);
-	if (rc)
-		pr_err("Failed to free cmd buffers, rc=%d\n", rc);
+	dsi_ctrl->tx_cmd_buf = NULL;
 
 	mutex_unlock(&dsi_ctrl->ctrl_lock);
 	return rc;

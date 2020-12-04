@@ -41,7 +41,6 @@
  * struct sde_encoder_phys_shd - sub-class of sde_encoder_phys to handle shared
  *	mode specific operations
  * @base:	Baseclass physical encoder structure
- * @base_drm_enc: Parent drm encoder structure pointer
  * @hw_lm:	HW LM blocks created by this shared encoder
  * @hw_ctl:	HW CTL blocks created by this shared encoder
  * @hw_roi_misr:	HW ROI MISR blocks created by this shared encoder
@@ -51,7 +50,6 @@
  */
 struct sde_encoder_phys_shd {
 	struct sde_encoder_phys base;
-	struct drm_encoder *base_drm_enc;
 	struct sde_hw_mixer *hw_lm[MAX_MIXERS_PER_CRTC];
 	struct sde_hw_ctl *hw_ctl[MAX_MIXERS_PER_CRTC];
 	struct sde_hw_roi_misr *hw_roi_misr[MAX_MIXERS_PER_CRTC];
@@ -149,26 +147,12 @@ not_flushed:
 static void sde_encoder_phys_shd_roi_misr_irq(void *arg, int irq_idx)
 {
 	struct sde_encoder_phys *phys_enc = arg;
-	struct sde_encoder_phys_shd *shd_enc;
-	bool event_status;
 
 	if (!phys_enc || !sde_encoder_phys_shd_is_master(phys_enc))
 		return;
 
-	shd_enc = to_sde_encoder_phys_shd(phys_enc);
-
-	/**
-	 * call helper function to collect signature,
-	 * update fence data and check event should be
-	 * sent or not
-	 */
-	event_status = sde_roi_misr_update_fence(phys_enc,
-			shd_enc->base_drm_enc);
-
-	if (event_status && phys_enc->parent_ops.handle_roi_misr_virt)
-		phys_enc->parent_ops.handle_roi_misr_virt(
-			phys_enc->parent,
-			SDE_ENCODER_MISR_EVENT_SIGNAL_ROI_MSIR_FENCE);
+	if (phys_enc->parent_ops.handle_roi_misr_virt)
+		phys_enc->parent_ops.handle_roi_misr_virt(phys_enc->parent);
 }
 
 static int _sde_encoder_phys_shd_register_irq(
@@ -196,28 +180,31 @@ void _sde_encoder_phys_shd_setup_irq_hw_idx(
 
 	if (irq->irq_idx < 0)
 		irq->hw_idx = phys_enc->intf_idx;
+
+	if (sde_encoder_phys_shd_is_master(phys_enc))
+		sde_roi_misr_setup_irq_hw_idx(phys_enc);
 }
 
 static int sde_encoder_phys_shd_control_roi_misr_irq(
 		struct sde_encoder_phys *phys_enc, bool enable)
 {
-	struct sde_encoder_phys_shd *shd_enc;
 	int base_irq_idx;
+	int hw_idx;
 	int ret;
 	int i, j;
 
 	if (!sde_encoder_phys_shd_is_master(phys_enc))
 		return 0;
 
-	shd_enc = to_sde_encoder_phys_shd(phys_enc);
-
-	for (i = 0; i < shd_enc->num_roi_misrs; i++) {
+	for (i = 0; i < phys_enc->roi_misr_num; i++) {
+		hw_idx = phys_enc->hw_roi_misr[i]->idx;
 		base_irq_idx = MISR_ROI_MISMATCH_BASE_IDX
-			+ i * ROI_MISR_MAX_ROIS_PER_MISR;
+				+ SDE_ROI_MISR_GET_INTR_OFFSET(hw_idx)
+				* ROI_MISR_MAX_ROIS_PER_MISR;
 
 		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; j++) {
 			ret = sde_roi_misr_irq_control(phys_enc,
-				base_irq_idx, j, enable);
+					base_irq_idx, j, enable);
 			if (ret)
 				return ret;
 		}
@@ -348,8 +335,6 @@ static int _sde_encoder_phys_shd_rm_reserve(
 		shd_enc->num_ctls++;
 	}
 
-	shd_enc->base_drm_enc = encoder;
-
 	return rc;
 }
 
@@ -375,6 +360,7 @@ static void sde_encoder_phys_shd_mode_set(
 	struct sde_rm_hw_iter iter;
 	struct sde_rm *rm;
 	uint64_t top_name;
+	int i;
 
 	SDE_DEBUG("%d\n", phys_enc->parent->base.id);
 
@@ -426,11 +412,21 @@ static void sde_encoder_phys_shd_mode_set(
 		return;
 	}
 
-	_sde_encoder_phys_shd_setup_irq_hw_idx(phys_enc);
+	phys_enc->roi_misr_num = 0;
+	if (sde_encoder_phys_shd_is_master(phys_enc)) {
+		sde_rm_init_hw_iter(&iter, DRMID(phys_enc->parent),
+				SDE_HW_BLK_ROI_MISR);
+		for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
+			if (!sde_rm_get_hw(rm, &iter))
+				break;
 
-	if (sde_encoder_phys_shd_is_master(phys_enc))
-		sde_roi_misr_setup_irq_hw_idx(phys_enc,
-				encoder);
+			phys_enc->hw_roi_misr[i] =
+					(struct sde_hw_roi_misr *)iter.hw;
+			phys_enc->roi_misr_num++;
+		}
+	}
+
+	_sde_encoder_phys_shd_setup_irq_hw_idx(phys_enc);
 
 	/* update to base connector's topology name */
 	top_name = sde_connector_get_topology_name(display->base->connector);
@@ -668,7 +664,7 @@ static void sde_encoder_phys_shd_disable(struct sde_encoder_phys *phys_enc)
 
 	shd_enc = to_sde_encoder_phys_shd(phys_enc);
 
-	sde_roi_misr_hw_reset(phys_enc, shd_enc->base_drm_enc);
+	sde_roi_misr_hw_reset(phys_enc);
 
 	sde_encoder_helper_reset_mixers(phys_enc, NULL);
 
