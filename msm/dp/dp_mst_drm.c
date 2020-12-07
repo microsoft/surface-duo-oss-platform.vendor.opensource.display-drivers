@@ -1628,6 +1628,13 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 
 	DP_MST_DEBUG("enter:\n");
 
+	/*
+	 * Skip atomic check during mst suspend, to avoid mismanagement of
+	 * available vcpi slots.
+	 */
+	if (mst->state == PM_SUSPEND)
+		return rc;
+
 	if (!new_conn_state)
 		return rc;
 
