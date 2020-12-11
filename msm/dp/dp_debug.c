@@ -1837,6 +1837,12 @@ static int dp_debug_init(struct dp_debug *dp_debug)
 	struct dentry *dir, *file;
 	char debug_name[16];
 
+	if (!IS_ENABLED(CONFIG_DEBUG_FS)) {
+		pr_debug("Skip creating debugfs\n");
+		debug->root = NULL;
+		return 0;
+	}
+
 	if (!debug->index)
 		strlcpy(debug_name, DEBUG_NAME, sizeof(debug_name));
 	else
