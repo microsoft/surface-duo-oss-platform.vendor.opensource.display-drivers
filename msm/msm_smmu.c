@@ -454,8 +454,9 @@ static int msm_smmu_fault_handler(struct iommu_domain *domain,
 
 	/* generate dump, but no panic */
 	SDE_DBG_DUMP("all", "dbg_bus", "vbif_dbg_bus");
-	sde_recovery_set_event(dev_get_drvdata(client->dev),
-			DRM_EVENT_SDE_SMMUFAULT, NULL);
+	if (client->dev)
+		sde_recovery_set_event(dev_get_drvdata(client->dev),
+				DRM_EVENT_SDE_SMMUFAULT, NULL);
 	/*
 	 * return -ENOSYS to allow smmu driver to dump out useful
 	 * debug info.
