@@ -81,7 +81,7 @@ void sde_roi_misr_prepare_fence(struct sde_crtc *sde_crtc,
 	kms = _sde_misr_get_kms(&sde_crtc->base);
 	roi_misr_cfg = &cstate->misr_state.roi_misr_cfg;
 
-	if (!kms->catalog->has_roi_misr)
+	if (!kms || !kms->catalog->has_roi_misr)
 		return;
 
 	/**
@@ -656,7 +656,7 @@ void sde_roi_misr_setup(struct drm_crtc *crtc)
 	roi_misr_cfg = &cstate->misr_state.roi_misr_cfg;
 	misr_fence = sde_crtc->roi_misr_data.misr_fence;
 
-	if (!kms->catalog->has_roi_misr)
+	if (!kms || !kms->catalog->has_roi_misr)
 		return;
 
 	/* do nothing if user didn't set misr */

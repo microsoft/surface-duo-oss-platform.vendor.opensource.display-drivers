@@ -1663,9 +1663,11 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 		return rc;
 
 	new_conn_state = drm_atomic_get_new_connector_state(state, connector);
+	if (!new_conn_state)
+		return rc;
 
 	old_conn_state = drm_atomic_get_old_connector_state(state, connector);
-	if (!old_conn_state || !new_conn_state)
+	if (!old_conn_state)
 		goto mode_set;
 
 	old_crtc = old_conn_state->crtc;

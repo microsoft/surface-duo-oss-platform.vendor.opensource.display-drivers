@@ -1795,7 +1795,7 @@ static int _sde_encoder_dsc_2_lm_2_enc_2_intf(struct sde_encoder_virt *sde_enc,
 	SDE_DEBUG_ENC(sde_enc, "pic_w: %d pic_h: %d mode:%d\n",
 			roi->w, roi->h, dsc_common_mode);
 
-	for (i = 0; i < sde_enc->num_phys_encs; i++) {
+	for (i = 0; i < params->num_channels; i++) {
 		bool active = !!((1 << i) & params->affected_displays);
 
 		SDE_EVT32(DRMID(&sde_enc->base), roi->w, roi->h,
@@ -2015,7 +2015,7 @@ static int _sde_encoder_dsc_3_lm_3_enc_3_intf(struct sde_encoder_virt *sde_enc,
 	SDE_DEBUG_ENC(sde_enc, "pic_w: %d pic_h: %d mode:%d\n",
 			roi->w, roi->h, dsc_common_mode);
 
-	for (i = 0; i < sde_enc->num_phys_encs; i++) {
+	for (i = 0; i < params->num_channels; i++) {
 		bool active = !!((1 << i) & params->affected_displays);
 
 		SDE_EVT32(DRMID(&sde_enc->base), roi->w, roi->h,
