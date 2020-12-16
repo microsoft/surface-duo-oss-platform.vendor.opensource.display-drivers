@@ -65,6 +65,11 @@ void msm_hdcp_notify_status(struct device *dev,
 	char *envp[2];
 	struct msm_hdcp *hdcp = NULL;
 
+	if (!dev) {
+		pr_err("invalid device pointer\n");
+		return;
+	}
+
 	hdcp = dev_get_drvdata(dev);
 	if (!hdcp) {
 		pr_err("invalid driver pointer\n");
