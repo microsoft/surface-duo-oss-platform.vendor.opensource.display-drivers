@@ -128,9 +128,8 @@ static int dp_hdcp2p2_copy_buf(struct dp_hdcp2p2_ctrl *ctrl,
 		mutex_unlock(&ctrl->msg_lock);
 		return 0;
 	}
-
 	ctrl->response.data = data->buf;
-	ctrl->response.length = ctrl->total_message_length;
+	ctrl->response.length = data->buf_len;
 	ctrl->request.data = data->buf;
 	ctrl->request.length = ctrl->total_message_length;
 
@@ -952,7 +951,7 @@ void *sde_dp_hdcp2p2_init(struct sde_hdcp_init_data *init_data)
 		goto error;
 	}
 
-	if (IS_ENABLED(CONFIG_HDCP_QSEECOM))
+	if (IS_ENABLED(CONFIG_HDCP_QSEECOM) && init_data->msm_hdcp_dev)
 		msm_hdcp_register_cb(init_data->msm_hdcp_dev, ctrl,
 				dp_hdcp2p2_min_level_change);
 

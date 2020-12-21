@@ -636,23 +636,12 @@ static void sde_encoder_phys_vid_underrun_irq(void *arg, int irq_idx)
 static void sde_encoder_phys_vid_roi_misr_irq(void *arg, int irq_idx)
 {
 	struct sde_encoder_phys *phys_enc = arg;
-	bool event_status;
 
 	if (!phys_enc || !sde_encoder_phys_vid_is_master(phys_enc))
 		return;
 
-	/**
-	 * call helper function to collect signature,
-	 * update fence data and check event should be
-	 * sent or not
-	 */
-	event_status = sde_roi_misr_update_fence(phys_enc,
-			phys_enc->parent);
-
-	if (event_status && phys_enc->parent_ops.handle_roi_misr_virt)
-		phys_enc->parent_ops.handle_roi_misr_virt(
-			phys_enc->parent,
-			SDE_ENCODER_MISR_EVENT_SIGNAL_ROI_MSIR_FENCE);
+	if (phys_enc->parent_ops.handle_roi_misr_virt)
+		phys_enc->parent_ops.handle_roi_misr_virt(phys_enc->parent);
 }
 
 static void _sde_encoder_phys_vid_setup_irq_hw_idx(
@@ -675,8 +664,7 @@ static void _sde_encoder_phys_vid_setup_irq_hw_idx(
 		irq->hw_idx = phys_enc->intf_idx;
 
 	if (sde_encoder_phys_vid_is_master(phys_enc))
-		sde_roi_misr_setup_irq_hw_idx(phys_enc,
-				phys_enc->parent);
+		sde_roi_misr_setup_irq_hw_idx(phys_enc);
 }
 
 static void sde_encoder_phys_vid_cont_splash_mode_set(
@@ -747,6 +735,20 @@ static void sde_encoder_phys_vid_mode_set(
 		return;
 	}
 
+	phys_enc->roi_misr_num = 0;
+	if (sde_encoder_phys_vid_is_master(phys_enc)) {
+		sde_rm_init_hw_iter(&iter, phys_enc->parent->base.id,
+				SDE_HW_BLK_ROI_MISR);
+		for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
+			if (!sde_rm_get_hw(rm, &iter))
+				break;
+
+			phys_enc->hw_roi_misr[i] =
+					(struct sde_hw_roi_misr *)iter.hw;
+			phys_enc->roi_misr_num++;
+		}
+	}
+
 	_sde_encoder_phys_vid_setup_irq_hw_idx(phys_enc);
 }
 
@@ -813,22 +815,22 @@ static int sde_encoder_phys_vid_control_roi_misr_irq(
 		struct sde_encoder_phys *phys_enc, bool enable)
 {
 	int base_irq_idx;
-	unsigned int num_roi_misr;
+	int hw_idx;
 	int ret;
 	int i, j;
 
 	if (!sde_encoder_phys_vid_is_master(phys_enc))
 		return 0;
 
-	num_roi_misr = sde_roi_misr_get_num(phys_enc->parent);
-
-	for (i = 0; i < num_roi_misr; i++) {
+	for (i = 0; i < phys_enc->roi_misr_num; i++) {
+		hw_idx = phys_enc->hw_roi_misr[i]->idx;
 		base_irq_idx = MISR_ROI_MISMATCH_BASE_IDX
-			+ i * ROI_MISR_MAX_ROIS_PER_MISR;
+				+ SDE_ROI_MISR_GET_INTR_OFFSET(hw_idx)
+				* ROI_MISR_MAX_ROIS_PER_MISR;
 
 		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; j++) {
 			ret = sde_roi_misr_irq_control(phys_enc,
-				base_irq_idx, j, enable);
+					base_irq_idx, j, enable);
 			if (ret)
 				return ret;
 		}
@@ -1209,7 +1211,7 @@ static void sde_encoder_phys_vid_disable(struct sde_encoder_phys *phys_enc)
 		return;
 	}
 
-	sde_roi_misr_hw_reset(phys_enc, phys_enc->parent);
+	sde_roi_misr_hw_reset(phys_enc);
 
 	spin_lock_irqsave(phys_enc->enc_spinlock, lock_flags);
 	phys_enc->hw_intf->ops.enable_timing(phys_enc->hw_intf, 0);

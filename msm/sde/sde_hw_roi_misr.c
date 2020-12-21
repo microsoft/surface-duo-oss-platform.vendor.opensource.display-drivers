@@ -43,7 +43,6 @@ static void sde_hw_roi_misr_setup(struct sde_hw_roi_misr *ctx,
 	struct sde_hw_blk_reg_map *roi_misr_c = &ctx->hw;
 	struct sde_roi_misr_hw_cfg *roi_info = cfg;
 	uint32_t ctrl_val = 0;
-	uint32_t op_mode = 0;
 	int i;
 
 	ctrl_val = ROI_MISR_CTRL_RUN_MODE
@@ -53,7 +52,7 @@ static void sde_hw_roi_misr_setup(struct sde_hw_roi_misr *ctx,
 	spin_lock(&ctx->spin_lock);
 
 	for (i = 0; i < ROI_MISR_MAX_ROIS_PER_MISR; ++i) {
-		if (i < roi_info->roi_num) {
+		if (roi_info->roi_mask & BIT(i)) {
 			ctrl_val |= cfg->frame_count[i];
 			SDE_REG_WRITE(roi_misr_c, ROI_MISR_POSITION(i),
 				ROI_POSITION_VAL(roi_info->misr_roi_rect[i].x,
@@ -67,8 +66,6 @@ static void sde_hw_roi_misr_setup(struct sde_hw_roi_misr *ctx,
 				roi_info->golden_value[i]);
 
 			SDE_REG_WRITE(roi_misr_c, ROI_MISR_CTRL(i), ctrl_val);
-
-			op_mode |= ROI_EN(i);
 		} else {
 			SDE_REG_WRITE(roi_misr_c, ROI_MISR_POSITION(i), 0x0);
 			SDE_REG_WRITE(roi_misr_c, ROI_MISR_SIZE(i), 0x0);
@@ -77,7 +74,7 @@ static void sde_hw_roi_misr_setup(struct sde_hw_roi_misr *ctx,
 		}
 	}
 
-	SDE_REG_WRITE(roi_misr_c, ROI_MISR_OP_MODE, op_mode);
+	SDE_REG_WRITE(roi_misr_c, ROI_MISR_OP_MODE, roi_info->roi_mask);
 
 	spin_unlock(&ctx->spin_lock);
 }

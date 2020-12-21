@@ -119,6 +119,8 @@ struct dp_display_private {
 
 	enum dp_phy_bond_mode phy_bond_mode;
 	struct drm_connector *bond_primary;
+
+	struct device *msm_hdcp_dev;
 };
 
 static const struct of_device_id dp_dt_match[] = {
@@ -492,7 +494,7 @@ static int dp_display_initialize_hdcp(struct dp_display_private *dp)
 	hdcp_init_data.hdcp_io       = &parser->get_io(parser,
 						"hdcp_physical")->io;
 	hdcp_init_data.revision      = &dp->panel->link_info.revision;
-	hdcp_init_data.msm_hdcp_dev  = dp->parser->msm_hdcp_dev;
+	hdcp_init_data.msm_hdcp_dev  = dp->msm_hdcp_dev;
 
 	fd = sde_hdcp_1x_init(&hdcp_init_data);
 	if (IS_ERR_OR_NULL(fd)) {
@@ -1266,15 +1268,23 @@ static void dp_display_connect_work(struct work_struct *work)
 
 	/*
 	 * Reset panel as link param may change during link training.
+	 * MST panel or SST panel in video test mode will reset immediately.
+	 * SST panel in normal mode will reset by the mode change commit.
 	 */
 	if (dp->active_stream_cnt) {
-		if (IS_BOND_MODE(dp->phy_bond_mode))
+		if (IS_BOND_MODE(dp->phy_bond_mode)) {
+			dp->aux->abort(dp->aux, true);
+			dp->ctrl->abort(dp->ctrl, true);
 			reset_connector = dp->bond_primary;
-		else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
-				!dp->panel->video_test)
+		} else if (dp->active_panels[DP_STREAM_0] == dp->panel &&
+				!dp->panel->video_test) {
+			dp->aux->abort(dp->aux, true);
+			dp->ctrl->abort(dp->ctrl, true);
 			reset_connector = dp->dp_display.base_connector;
-		dp_display_clean(dp);
-		dp_display_host_deinit(dp);
+		} else {
+			dp_display_clean(dp);
+			dp_display_host_deinit(dp);
+		}
 	}
 
 	if (dp->parser->force_connect_mode) {
@@ -2005,14 +2015,6 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	if (dp->active_stream_cnt || dp->mst.mst_active)
 		goto end;
 
-	/*
-	 * If connector is still connected to active crtc, no need to
-	 * power down host.
-	 */
-	if (dp_display->base_connector->state->crtc &&
-			dp_display->base_connector->state->crtc->state->active)
-		goto end;
-
 	dp->link->psm_config(dp->link, &dp->panel->link_info, true);
 	dp->debug->psm_enabled = true;
 
@@ -2022,15 +2024,15 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	dp->power_on = false;
 	dp->aux->state = DP_STATE_CTRL_POWERED_OFF;
 
+	/* log this as it results from user action of cable dis-connection */
+	pr_info("DP%d [OK]", dp->cell_idx);
+end:
 	/*
 	 * Once the DP driver is turned off, set to non-bond mode.
 	 * If bond mode is required afterwards, call set_phy_bond_mode.
 	 */
 	dp_display_change_phy_bond_mode(dp, DP_PHY_BOND_MODE_NONE);
 
-	/* log this as it results from user action of cable dis-connection */
-	pr_info("DP%d [OK]", dp->cell_idx);
-end:
 	dp_panel->deinit(dp_panel, flags);
 	mutex_unlock(&dp->session_lock);
 
@@ -2293,6 +2295,31 @@ static int dp_display_init_aux_switch(struct dp_display_private *dp)
 end:
 	return rc;
 }
+
+static int dp_parser_msm_hdcp_dev(struct dp_display_private *dp)
+{
+	struct device_node *node;
+	struct platform_device *pdev;
+
+	node = of_parse_phandle(dp->pdev->dev.of_node, "qcom,msm-hdcp", 0);
+	if (!node) {
+		// This is a non-fatal error, module initialization can proceed
+		pr_warn("couldn't find msm-hdcp node\n");
+		return 0;
+	}
+
+	pdev = of_find_device_by_node(node);
+	if (!pdev) {
+		// defer the  module initialization
+		pr_err("couldn't find msm-hdcp pdev defer probe\n");
+		return -EPROBE_DEFER;
+	}
+
+	dp->msm_hdcp_dev = &pdev->dev;
+
+	return 0;
+}
+
 
 static int dp_display_bridge_internal_hpd(void *dev, bool hpd, bool hpd_irq)
 {
@@ -2798,6 +2825,10 @@ static int dp_display_probe(struct platform_device *pdev)
 		rc = -EPROBE_DEFER;
 		goto error;
 	}
+
+	rc = dp_parser_msm_hdcp_dev(dp);
+	if (rc)
+		goto error;
 
 	rc = dp_display_init_aux_bridge(dp);
 	if (rc)
