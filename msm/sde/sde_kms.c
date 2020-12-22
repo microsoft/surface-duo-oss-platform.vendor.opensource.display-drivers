@@ -1430,6 +1430,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		.cont_splash_config = dsi_display_cont_splash_config,
 		.get_panel_vfp = dsi_display_get_panel_vfp,
 		.get_default_lms = dsi_display_get_default_lms,
+		.get_qsync_min_fps = dsi_display_get_qsync_min_fps,
 	};
 	static const struct sde_connector_ops wb_ops = {
 		.post_init =    sde_wb_connector_post_init,
@@ -3325,12 +3326,16 @@ static int sde_kms_pd_enable(struct generic_pm_domain *genpd)
 static int sde_kms_pd_disable(struct generic_pm_domain *genpd)
 {
 	struct sde_kms *sde_kms = genpd_to_sde_kms(genpd);
+	struct msm_drm_private *priv;
 
 	SDE_DEBUG("\n");
 
 	pm_runtime_put_sync(sde_kms->dev->dev);
 
 	SDE_EVT32(genpd->device_count);
+
+	priv = sde_kms->dev->dev_private;
+	sde_kms_check_for_ext_vote(sde_kms, &priv->phandle);
 
 	return 0;
 }
