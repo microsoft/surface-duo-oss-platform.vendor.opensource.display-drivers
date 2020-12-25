@@ -18,32 +18,14 @@
 #include <linux/types.h>
 #include <linux/dma-fence.h>
 #include <linux/file.h>
-#include <linux/poll.h>
-
-struct sde_sub_fence;
 
 /**
- * struct sde_sub_fence_cb - sub-fence callback structure
- * @read: the function pointer for read
- * @fill_data: the function pointer for filling read data
- * @release: the function pointer for release sub-fence
+ * struct sde_fence_file_ops - operations structure of fence file
+ * @read: the callback pointer of file operation read
  */
-struct sde_sub_fence_cb {
-	uint32_t (*read)(struct sde_sub_fence *,
-			void __user *usr_ptr, size_t len);
-	void (*fill_data)(struct sde_sub_fence *);
-	void (*release)(struct sde_sub_fence *);
-};
-
-/**
- * struct sde_sub_fence - sub-fence structure
- * @cb: sub-fence callback pointer
- * @node: used by sde_sub_fence_add_callback to append this struct
- *        to sde_fence_file::cb_list
- */
-struct sde_sub_fence {
-	const struct sde_sub_fence_cb *cb;
-	struct list_head node;
+struct sde_fence_file_ops {
+	uint32_t (*read)(struct dma_fence *fence, void __user *usr_ptr,
+			size_t len);
 };
 
 /**
@@ -53,8 +35,7 @@ struct sde_sub_fence {
  * @flags: fence callback flag
  * @fence: dma fence pointer
  * @cb: dma fence callback
- * @list_lock: spin lock for fence file list protection
- * @sub_fence_list: sub-fence list of this file
+ * @ops: the operation pointer of fence file
  */
 struct sde_fence_file {
 	struct file *file;
@@ -62,29 +43,13 @@ struct sde_fence_file {
 	unsigned long flags;
 	struct dma_fence *fence;
 	struct dma_fence_cb cb;
-	spinlock_t list_lock;
-	struct list_head sub_fence_list;
+	const struct sde_fence_file_ops *ops;
 };
-
-/**
- * sde_fence_file_add_sub_fence - add a sub-fence to this fence file
- * @fence_file: fence file to be added callback
- * @sub_fence: sub_fence pointer to be added
- *
- * Return errno or zero.
- */
-int sde_fence_file_add_sub_fence(struct sde_fence_file *fence_file,
-		struct sde_sub_fence *sub_fence);
-
-/**
- * sde_fence_file_trigger - trigger all fill_data callback of this fence_file
- * @fence_file: fence file pointer
- */
-void sde_fence_file_trigger(struct sde_fence_file *fence_file);
 
 /**
  * sde_fence_file_create() - creates a sde fence file
  * @fence: fence to add to the sde_fence
+ * @ops: the callback pointer of fence file operations
  *
  * Creates a sde_fence_file contain @fence. This function acquires and
  * additional reference of @fence for the newly-created &sde_fence_file,
@@ -92,7 +57,9 @@ void sde_fence_file_trigger(struct sde_fence_file *fence_file);
  * fput(sde_fence_file->file). Returns the sde_fence_file or NULL in
  * case of error.
  */
-struct sde_fence_file *sde_fence_file_create(struct dma_fence *fence);
+struct sde_fence_file *sde_fence_file_create(
+		struct dma_fence *fence,
+		const struct sde_fence_file_ops *ops);
 
 #endif /* _SDE_FENCE_FILE_H */
 

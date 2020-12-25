@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_ROI_MISR_HELPER_H
@@ -8,7 +8,6 @@
 
 #include "sde_encoder_phys.h"
 #include "sde_crtc.h"
-#include "sde_fence_helper.h"
 
 #if defined(CONFIG_DRM_SDE_ROI_MISR)
 
@@ -19,25 +18,12 @@
 void sde_roi_misr_init(struct sde_crtc *sde_crtc);
 
 /**
- * sde_roi_misr_deinit - destroy roi misr related data
- * @sde_crtc: Pointer to sde crtc
- */
-void sde_roi_misr_deinit(struct sde_crtc *sde_crtc);
-
-/**
- * sde_roi_misr_prepare_fence - create a fence instance
- *		and add the instance to global list
- * @sde_crtc: Pointer to sde crtc
- * @cstate: Pointer to sde crtc state
- */
-void sde_roi_misr_prepare_fence(struct sde_crtc *sde_crtc,
-		struct sde_crtc_state *cstate);
-
-/**
  * sde_roi_misr_cfg_set - copy config data of roi misr
  *		to kernel space, then store the config to sde crtc state
  * @state: Pointer to drm crtc state
  * @usr_ptr: Pointer to config data of user space
+ *
+ * Return 0 on success, -ERRNO if there was an error.
  */
 int sde_roi_misr_cfg_set(struct drm_crtc_state *state,
 		void __user *usr_ptr);
@@ -46,6 +32,8 @@ int sde_roi_misr_cfg_set(struct drm_crtc_state *state,
  * sde_roi_misr_check_rois - check roi misr config
  * @crtc: Pointer to drm crtc
  * @state: Pointer to drm crtc state
+ *
+ * Return 0 on success, -ERRNO if there was an error.
  */
 int sde_roi_misr_check_rois(struct drm_crtc_state *state);
 
@@ -75,45 +63,16 @@ void sde_roi_misr_setup_irq_hw_idx(struct sde_encoder_phys *phys_enc);
  * @base_irq_idx: one roi misr's base irq table index
  * @roi_idx: the roi index of one misr
  * @enable: control to enable or disable one misr block irqs
- * @Return: 0 or -ERROR
+ *
+ * Return 0 on success, -ERRNO if there was an error.
  */
 int sde_roi_misr_irq_control(struct sde_encoder_phys *phys_enc,
 		int base_irq_idx, int roi_idx, bool enable);
-
-/**
- * sde_roi_misr_read_signature - get signatures from the signature queue
- * @sde_crtc: Pointer to sde crtc structure
- * @signature: Pointer to the input buffer
- * @len: the length of the input buffer
- * @Return: 0 or the length of copied data
- */
-uint32_t sde_roi_misr_read_signature(struct sde_crtc *sde_crtc,
-		uint32_t *signature, uint32_t len);
-
-/**
- * sde_roi_misr_update_fence - update fence data
- * @sde_crtc: Pointer to sde crtc structure
- * @force: force to trigger the last fence
- * @Return: true for all signature are ready
- *          false for all signature are not ready
- */
-bool sde_roi_misr_update_fence(struct sde_crtc *sde_crtc, bool force);
 
 #else
 
 static inline
 void sde_roi_misr_init(struct sde_crtc *sde_crtc)
-{
-}
-
-static inline
-void sde_roi_misr_deinit(struct sde_crtc *sde_crtc)
-{
-}
-
-static inline
-void sde_roi_misr_prepare_fence(struct sde_crtc *sde_crtc,
-		struct sde_crtc_state *cstate)
 {
 }
 
@@ -150,19 +109,6 @@ int sde_roi_misr_irq_control(struct sde_encoder_phys *phys_enc,
 		int base_irq_idx, int roi_idx, bool enable)
 {
 	return 0;
-}
-
-static inline
-uint32_t sde_roi_misr_read_signature(struct sde_crtc *sde_crtc,
-		uint32_t *signature, uint32_t len)
-{
-	return 0;
-}
-
-static inline
-bool sde_roi_misr_update_fence(struct sde_crtc *sde_crtc, bool force)
-{
-	return false;
 }
 
 #endif
