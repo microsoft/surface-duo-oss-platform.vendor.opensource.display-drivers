@@ -41,6 +41,7 @@
 #include "sde_hw_top.h"
 #include "sde_hw_qdss.h"
 #include "sde_recovery_manager.h"
+#include "sde_roi_misr.h"
 
 #define SDE_DEBUG_ENC(e, fmt, ...) SDE_DEBUG("enc%d " fmt,\
 		(e) ? (e)->base.base.id : -1, ##__VA_ARGS__)
@@ -1794,7 +1795,7 @@ static int _sde_encoder_dsc_2_lm_2_enc_2_intf(struct sde_encoder_virt *sde_enc,
 	SDE_DEBUG_ENC(sde_enc, "pic_w: %d pic_h: %d mode:%d\n",
 			roi->w, roi->h, dsc_common_mode);
 
-	for (i = 0; i < sde_enc->num_phys_encs; i++) {
+	for (i = 0; i < params->num_channels; i++) {
 		bool active = !!((1 << i) & params->affected_displays);
 
 		SDE_EVT32(DRMID(&sde_enc->base), roi->w, roi->h,
@@ -2014,7 +2015,7 @@ static int _sde_encoder_dsc_3_lm_3_enc_3_intf(struct sde_encoder_virt *sde_enc,
 	SDE_DEBUG_ENC(sde_enc, "pic_w: %d pic_h: %d mode:%d\n",
 			roi->w, roi->h, dsc_common_mode);
 
-	for (i = 0; i < sde_enc->num_phys_encs; i++) {
+	for (i = 0; i < params->num_channels; i++) {
 		bool active = !!((1 << i) & params->affected_displays);
 
 		SDE_EVT32(DRMID(&sde_enc->base), roi->w, roi->h,
@@ -3276,7 +3277,7 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 	struct sde_kms *sde_kms;
 	struct list_head *connector_list;
 	struct drm_connector *conn = NULL, *conn_iter;
-	struct sde_rm_hw_iter dsc_iter, pp_iter, qdss_iter, roi_misr_iter;
+	struct sde_rm_hw_iter dsc_iter, pp_iter, qdss_iter;
 	struct sde_rm_hw_request request_hw;
 	int tile_map[MAX_H_TILES_PER_DISPLAY];
 	bool is_cmd_mode = false;
@@ -3405,19 +3406,6 @@ static void sde_encoder_virt_mode_set(struct drm_encoder *drm_enc,
 	if (_sde_encoder_calc_lm_to_intf_ratio(sde_enc, &ratio)) {
 		SDE_ERROR_ENC(sde_enc, "invalid lm to interface ratio");
 		return;
-	}
-
-	sde_rm_init_hw_iter(&roi_misr_iter, drm_enc->base.id,
-			SDE_HW_BLK_ROI_MISR);
-	sde_enc->misr_data.num_roi_misrs = 0;
-	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
-		sde_enc->misr_data.hw_roi_misr[i] = NULL;
-		if (!sde_rm_get_hw(&sde_kms->rm, &roi_misr_iter))
-			break;
-
-		sde_enc->misr_data.hw_roi_misr[i] =
-			(struct sde_hw_roi_misr *) roi_misr_iter.hw;
-		sde_enc->misr_data.num_roi_misrs++;
 	}
 
 	_sde_encoder_get_tile_map(sde_enc, conn, tile_map);
@@ -3916,8 +3904,6 @@ static void sde_encoder_virt_disable(struct drm_encoder *drm_enc)
 	 */
 	sde_enc->crtc = NULL;
 
-	sde_enc->misr_data.num_roi_misrs = 0;
-
 	SDE_DEBUG_ENC(sde_enc, "encoder disabled\n");
 
 	sde_rm_release(&sde_kms->rm, drm_enc);
@@ -4033,8 +4019,7 @@ static void sde_encoder_vblank_callback(struct drm_encoder *drm_enc,
 	SDE_ATRACE_END("encoder_vblank_callback");
 }
 
-static void sde_encoder_roi_misr_callback(struct drm_encoder *drm_enc,
-		u32 event)
+static void sde_encoder_roi_misr_callback(struct drm_encoder *drm_enc)
 {
 	struct sde_encoder_virt *sde_enc = NULL;
 	unsigned long lock_flags;
@@ -4048,7 +4033,7 @@ static void sde_encoder_roi_misr_callback(struct drm_encoder *drm_enc,
 	spin_lock_irqsave(&sde_enc->enc_spinlock, lock_flags);
 	if (sde_enc->misr_data.crtc_roi_misr_cb)
 		sde_enc->misr_data.crtc_roi_misr_cb(
-			sde_enc->misr_data.crtc_roi_misr_cb_data, event);
+			sde_enc->misr_data.crtc_roi_misr_cb_data);
 	spin_unlock_irqrestore(&sde_enc->enc_spinlock, lock_flags);
 
 	SDE_ATRACE_END("encoder_roi_misr_callback");
@@ -4108,8 +4093,7 @@ void sde_encoder_register_vblank_callback(struct drm_encoder *drm_enc,
 }
 
 void sde_encoder_register_roi_misr_callback(struct drm_encoder *drm_enc,
-		void (*roi_misr_cb)(void *, u32 event),
-		void *roi_misr_data)
+		void (*roi_misr_cb)(void *), void *roi_misr_data)
 {
 	struct sde_encoder_virt *sde_enc = to_sde_encoder_virt(drm_enc);
 	unsigned long lock_flags;
@@ -4575,38 +4559,6 @@ static void _sde_encoder_kickoff_phys(struct sde_encoder_virt *sde_enc)
 		sde_enc->elevated_ahb_vote = false;
 	}
 
-}
-
-struct sde_misr_fence *sde_encoder_get_fence_object(
-		struct drm_encoder *encoder)
-{
-	struct sde_encoder_virt *sde_enc;
-	struct sde_crtc *sde_crtc;
-
-	if (!encoder || !encoder->dev)
-		return NULL;
-
-	sde_enc = to_sde_encoder_virt(encoder);
-
-	if (!sde_enc->crtc)
-		return NULL;
-
-	sde_crtc = to_sde_crtc(sde_enc->crtc);
-
-	return get_fence_instance(&sde_crtc->roi_misr_data.roi_misr_fence);
-}
-
-struct sde_misr_enc_data *sde_encoder_get_misr_data(
-		struct drm_encoder *encoder)
-{
-	struct sde_encoder_virt *sde_enc;
-
-	if (!encoder || !encoder->dev)
-		return NULL;
-
-	sde_enc = to_sde_encoder_virt(encoder);
-
-	return &sde_enc->misr_data;
 }
 
 static void _sde_encoder_ppsplit_swap_intf_for_right_only_update(

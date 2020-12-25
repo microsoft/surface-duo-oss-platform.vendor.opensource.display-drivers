@@ -7,19 +7,38 @@
 #include "sde_trace.h"
 #include "sde_core_irq.h"
 #include "sde_roi_misr.h"
+#include "sde_fence_misr.h"
+#include "sde_fence_post_commit.h"
 #include "sde_roi_misr_helper.h"
-
-#if defined(CONFIG_DRM_SDE_ROI_MISR)
 
 static void sde_roi_misr_work(struct kthread_work *work);
 
 void sde_roi_misr_init(struct sde_crtc *sde_crtc)
 {
-	/* Initiate ROI MISR related object */
-	INIT_LIST_HEAD(&sde_crtc->roi_misr_data.roi_misr_fence);
-	spin_lock_init(&sde_crtc->roi_misr_data.misr_fence_lock);
+	struct sde_misr_cfg_queue *cfg_queue;
+	int i;
+
+	sde_crtc->roi_misr_data.misr_fence =
+			sde_post_commit_fence_ctx_init(sde_crtc);
+
+	/* Initiate MISR config queue related members */
+	cfg_queue = &sde_crtc->roi_misr_data.cfg_queue;
+	spin_lock_init(&cfg_queue->queue_lock);
+	INIT_LIST_HEAD(&cfg_queue->free_list);
+	INIT_LIST_HEAD(&cfg_queue->cfg_list);
+	atomic_set(&cfg_queue->cfg_refcount, 0);
+
+	for (i = 0; i < MISR_DATA_POOL_SIZE; i++)
+		list_add_tail(&cfg_queue->free_pool[i].node,
+				&cfg_queue->free_list);
+
 	kthread_init_work(&sde_crtc->roi_misr_data.misr_event.work,
 				sde_roi_misr_work);
+}
+
+void sde_roi_misr_deinit(struct sde_crtc *sde_crtc)
+{
+	sde_generic_fence_ctx_deinit(sde_crtc->roi_misr_data.misr_fence);
 }
 
 static inline struct sde_kms *_sde_misr_get_kms(struct drm_crtc *crtc)
@@ -39,79 +58,68 @@ static inline struct sde_kms *_sde_misr_get_kms(struct drm_crtc *crtc)
 	return to_sde_kms(priv->kms);
 }
 
-void sde_roi_misr_fence_cleanup(struct sde_crtc *sde_crtc)
+static inline void sde_roi_misr_release_fence_file(
+		struct sde_post_commit_fence *post_commit_fence,
+		uint64_t *fence_fd)
 {
-	struct sde_misr_fence *cur, *tmp;
-	unsigned long irq_flags;
+	fput(post_commit_fence->base.file);
+	post_commit_fence->base.file = NULL;
 
-	if (list_empty(&sde_crtc->roi_misr_data.roi_misr_fence))
-		return;
-
-	spin_lock_irqsave(&sde_crtc->roi_misr_data.misr_fence_lock,
-		irq_flags);
-
-	list_for_each_entry_safe(cur, tmp,
-		&sde_crtc->roi_misr_data.roi_misr_fence, node)
-		del_fence_object(cur);
-
-	spin_unlock_irqrestore(&sde_crtc->roi_misr_data.misr_fence_lock,
-		irq_flags);
+	put_unused_fd(*fence_fd);
+	*fence_fd = -1;
 }
 
 void sde_roi_misr_prepare_fence(struct sde_crtc *sde_crtc,
 		struct sde_crtc_state *cstate)
 {
-	uint64_t fence_fd;
-	struct sde_misr_fence *misr_fence;
 	struct sde_kms *kms;
 	struct sde_roi_misr_usr_cfg *roi_misr_cfg;
-	unsigned long irq_flags;
+	struct sde_post_commit_fence *post_commit_fence;
+	uint64_t fence_fd;
 	int ret;
 
 	kms = _sde_misr_get_kms(&sde_crtc->base);
 	roi_misr_cfg = &cstate->misr_state.roi_misr_cfg;
 
-	if (!kms->catalog->has_roi_misr)
+	if (!kms || !kms->catalog->has_roi_misr)
 		return;
 
 	/**
 	 * if user_fence_fd_addr value equal NULL,
 	 * that means user has not set the ROI_MISR property
 	 *
-	 * if roi_rect_num equal to zero, we should disable all
-	 * misr irqs, so don't need to create fence instance
+	 * it is an empty commit if roi_rect_num equal to zero,
+	 * so don't need to create fence instance
 	 */
 	if (!roi_misr_cfg->user_fence_fd_addr
-		|| !roi_misr_cfg->roi_rect_num)
+		|| roi_misr_cfg->roi_rect_num == 0)
 		return;
 
-	ret = misr_fence_create(&misr_fence, &fence_fd);
-	if (ret < 0) {
-		SDE_ERROR("roi msir fence create failed rc:%d\n", ret);
+	post_commit_fence = sde_post_commit_fence_create(
+			sde_crtc->roi_misr_data.misr_fence,
+			&fence_fd);
+	if (!post_commit_fence) {
+		SDE_ERROR("post commit fence create failed\n");
 		fence_fd = -1;
+	} else {
+		ret = sde_misr_fence_create(post_commit_fence);
+		if (ret) {
+			SDE_ERROR("roi misr fence create failed rc:%d\n", ret);
+
+			sde_roi_misr_release_fence_file(post_commit_fence,
+					&fence_fd);
+		}
 	}
 
 	ret = copy_to_user(
 		(uint64_t __user *)roi_misr_cfg->user_fence_fd_addr,
 		&fence_fd, sizeof(uint64_t));
-	if (fence_fd == -1)
-		goto exit;
-	else if (ret) {
+	if (ret && (fence_fd >= 0)) {
 		SDE_ERROR("copy misr fence_fd to user failed rc:%d\n", ret);
-		put_unused_fd(fence_fd);
-		misr_fence_put(misr_fence);
-		goto exit;
+
+		sde_roi_misr_release_fence_file(post_commit_fence,
+				&fence_fd);
 	}
-
-	spin_lock_irqsave(&sde_crtc->roi_misr_data.misr_fence_lock,
-			irq_flags);
-	add_fence_object(&misr_fence->node,
-			&sde_crtc->roi_misr_data.roi_misr_fence);
-	spin_unlock_irqrestore(&sde_crtc->roi_misr_data.misr_fence_lock,
-			irq_flags);
-
-exit:
-	return;
 }
 
 int sde_roi_misr_cfg_set(struct drm_crtc_state *state,
@@ -141,12 +149,13 @@ int sde_roi_misr_cfg_set(struct drm_crtc_state *state,
 		return -EINVAL;
 	}
 
-	/* if roi count is zero, we only disable misr irq */
+	/* return directly if the roi_misr commit is empty */
 	if (roi_misr_info.roi_rect_num == 0)
 		return 0;
 
 	if (roi_misr_info.roi_rect_num > ROI_MISR_MAX_ROIS_PER_CRTC) {
-		SDE_ERROR("roi_rect_num greater then maximum roi number\n");
+		SDE_ERROR("invalid roi_rect_num(%u)\n",
+				roi_misr_info.roi_rect_num);
 		return -EINVAL;
 	}
 
@@ -221,7 +230,8 @@ static int sde_roi_misr_cfg_check(struct sde_crtc_state *cstate)
 			|| roi_misr_cfg->roi_rects[i].x2 > roi_range->x2
 			|| roi_misr_cfg->roi_rects[i].y2 > roi_range->y2) {
 			SDE_ERROR("error rect_info[%d]: {%d,%d,%d,%d}\n",
-				i, roi_misr_cfg->roi_rects[i].x1,
+				roi_id,
+				roi_misr_cfg->roi_rects[i].x1,
 				roi_misr_cfg->roi_rects[i].y1,
 				roi_misr_cfg->roi_rects[i].x2,
 				roi_misr_cfg->roi_rects[i].y2);
@@ -241,6 +251,7 @@ static void sde_roi_misr_calc_roi_range(struct drm_crtc_state *state)
 	struct drm_display_mode drm_mode;
 	int all_roi_num;
 	int misr_width;
+	int roi_factor, roi_id;
 	int i;
 
 	cstate = to_sde_crtc_state(state);
@@ -270,9 +281,16 @@ static void sde_roi_misr_calc_roi_range(struct drm_crtc_state *state)
 	all_roi_num = cstate->misr_state.num_misrs
 			* ROI_MISR_MAX_ROIS_PER_MISR;
 
+	roi_factor = sde_rm_is_3dmux_case(cstate->topology_name)
+			? 2 * ROI_MISR_MAX_ROIS_PER_MISR
+			: ROI_MISR_MAX_ROIS_PER_MISR;
+
 	for (i = 0; i < all_roi_num; i++) {
-		roi_range = &cstate->misr_state.roi_range[i];
-		roi_range->x1 = misr_width * (i / ROI_MISR_MAX_ROIS_PER_MISR);
+		roi_id = roi_factor * SDE_ROI_MISR_GET_HW_IDX(i)
+				+ SDE_ROI_MISR_GET_ROI_IDX(i);
+
+		roi_range = &cstate->misr_state.roi_range[roi_id];
+		roi_range->x1 = misr_width * SDE_ROI_MISR_GET_HW_IDX(i);
 		roi_range->y1 = 0;
 		roi_range->x2 = roi_range->x1 + misr_width - 1;
 		roi_range->y2 = drm_mode.vdisplay - 1;
@@ -317,28 +335,7 @@ int sde_roi_misr_check_rois(struct drm_crtc_state *state)
 	return ret;
 }
 
-static void sde_roi_misr_fence_signal(struct sde_crtc *sde_crtc)
-{
-	unsigned long irq_flags;
-	struct sde_misr_fence *fence = get_fence_instance(
-			&sde_crtc->roi_misr_data.roi_misr_fence);
-
-	if (!fence) {
-		SDE_ERROR("crtc%d: can't get roi misr fence instance!\n",
-				sde_crtc->base.base.id);
-		return;
-	}
-
-	misr_fence_signal(fence);
-
-	spin_lock_irqsave(&sde_crtc->roi_misr_data.misr_fence_lock,
-			irq_flags);
-	del_fence_object(fence);
-	spin_unlock_irqrestore(&sde_crtc->roi_misr_data.misr_fence_lock,
-			irq_flags);
-}
-
-static void sde_roi_misr_event_cb(void *data, u32 event)
+static void sde_roi_misr_event_cb(void *data)
 {
 	struct drm_crtc *crtc;
 	struct sde_crtc *sde_crtc;
@@ -361,12 +358,12 @@ static void sde_roi_misr_event_cb(void *data, u32 event)
 	priv = crtc->dev->dev_private;
 	crtc_id = drm_crtc_index(crtc);
 
-	SDE_DEBUG("crtc%d\n", crtc->base.id);
-	SDE_EVT32_VERBOSE(DRMID(crtc), event);
+	if (!sde_roi_misr_update_fence(sde_crtc, false))
+		return;
 
 	misr_event = &sde_crtc->roi_misr_data.misr_event;
-	misr_event->event = event;
 	misr_event->crtc = crtc;
+	misr_event->ts = ktime_get();
 	kthread_queue_work(&priv->event_thread[crtc_id].worker,
 			&misr_event->work);
 }
@@ -391,14 +388,12 @@ static void sde_roi_misr_work(struct kthread_work *work)
 	crtc = misr_event->crtc;
 	sde_crtc = to_sde_crtc(crtc);
 
-	SDE_ATRACE_BEGIN("crtc_frame_event");
+	SDE_ATRACE_BEGIN("crtc_roi_misr_event");
 
-	SDE_DEBUG("crtc%d event:%u\n", crtc->base.id, misr_event->event);
+	sde_generic_fence_signal(sde_crtc->roi_misr_data.misr_fence,
+			misr_event->ts);
 
-	if (misr_event->event & SDE_ENCODER_MISR_EVENT_SIGNAL_ROI_MSIR_FENCE)
-		sde_roi_misr_fence_signal(sde_crtc);
-
-	SDE_ATRACE_END("crtc_frame_event");
+	SDE_ATRACE_END("crtc_roi_misr_event");
 }
 
 static void sde_roi_misr_roi_calc(struct sde_crtc *sde_crtc,
@@ -420,10 +415,10 @@ static void sde_roi_misr_roi_calc(struct sde_crtc *sde_crtc,
 	for (i = 0; i < roi_misr_cfg->roi_rect_num; ++i) {
 		roi_id = roi_misr_cfg->roi_ids[i];
 		roi_range = &cstate->misr_state.roi_range[roi_id];
-		misr_idx = roi_id / ROI_MISR_MAX_ROIS_PER_MISR;
+		misr_idx = SDE_ROI_MISR_GET_HW_IDX(roi_id);
 		roi_misr_hw_cfg =
 			&sde_crtc->roi_misr_data.roi_misr_hw_cfg[misr_idx];
-		misr_roi_idx = roi_misr_hw_cfg->roi_num;
+		misr_roi_idx = SDE_ROI_MISR_GET_ROI_IDX(roi_id);
 
 		roi_misr_hw_cfg->misr_roi_rect[misr_roi_idx].x =
 			roi_misr_cfg->roi_rects[i].x1 - roi_range->x1;
@@ -442,13 +437,9 @@ static void sde_roi_misr_roi_calc(struct sde_crtc *sde_crtc,
 		/* always set frame_count to one */
 		roi_misr_hw_cfg->frame_count[misr_roi_idx] = 1;
 
-		/* record original roi order for return signature */
-		roi_misr_hw_cfg->orig_order[misr_roi_idx] = i;
-
-		++roi_misr_hw_cfg->roi_num;
+		roi_misr_hw_cfg->roi_mask |= BIT(misr_roi_idx);
 	}
 }
-
 
 static void sde_roi_misr_dspp_roi_calc(struct sde_crtc *sde_crtc,
 		struct sde_crtc_state *cstate)
@@ -456,11 +447,9 @@ static void sde_roi_misr_dspp_roi_calc(struct sde_crtc *sde_crtc,
 	const int dual_mixer = 2;
 	struct sde_rect roi_info;
 	struct sde_rect *left_rect, *right_rect;
-	struct sde_roi_misr_hw_cfg *misr_hw_cfg;
 	struct sde_roi_misr_hw_cfg *l_dspp_hw_cfg, *r_dspp_hw_cfg;
 	int mixer_width;
 	int lms_per_misr;
-	int l_roi, r_roi;
 	int l_idx, r_idx;
 	int i, j;
 
@@ -468,8 +457,6 @@ static void sde_roi_misr_dspp_roi_calc(struct sde_crtc *sde_crtc,
 	mixer_width = cstate->misr_state.mixer_width;
 
 	for (i = 0; i < cstate->misr_state.num_misrs; ++i) {
-		misr_hw_cfg = &sde_crtc->roi_misr_data.roi_misr_hw_cfg[i];
-
 		/**
 		 * Convert MISR rect info to DSPP bypass rect
 		 * this rect coordinate has been converted to
@@ -491,39 +478,38 @@ static void sde_roi_misr_dspp_roi_calc(struct sde_crtc *sde_crtc,
 		r_dspp_hw_cfg =
 			&sde_crtc->roi_misr_data.roi_misr_hw_cfg[r_idx];
 
-		for (j = 0; j < misr_hw_cfg->roi_num; ++j) {
-			roi_info = misr_hw_cfg->misr_roi_rect[j];
+		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; ++j) {
+			if (!(l_dspp_hw_cfg->roi_mask & BIT(i)))
+				continue;
 
-			l_roi = l_dspp_hw_cfg->dspp_roi_num;
-			left_rect = &l_dspp_hw_cfg->dspp_roi_rect[l_roi];
-
-			r_roi = r_dspp_hw_cfg->dspp_roi_num;
-			right_rect = &r_dspp_hw_cfg->dspp_roi_rect[r_roi];
+			roi_info = l_dspp_hw_cfg->misr_roi_rect[j];
+			left_rect = &l_dspp_hw_cfg->dspp_roi_rect[j];
+			right_rect = &r_dspp_hw_cfg->dspp_roi_rect[j];
 
 			if ((roi_info.x + roi_info.w <= mixer_width)) {
 				left_rect->x = roi_info.x;
 				left_rect->y = roi_info.y;
 				left_rect->w = roi_info.w;
 				left_rect->h = roi_info.h;
-				l_dspp_hw_cfg->dspp_roi_num++;
+				l_dspp_hw_cfg->dspp_roi_mask |= BIT(j);
 			} else if (roi_info.x >= mixer_width) {
 				right_rect->x = roi_info.x - mixer_width;
 				right_rect->y = roi_info.y;
 				right_rect->w = roi_info.w;
 				right_rect->h = roi_info.h;
-				r_dspp_hw_cfg->dspp_roi_num++;
+				r_dspp_hw_cfg->dspp_roi_mask |= BIT(j);
 			} else if (lms_per_misr == dual_mixer) {
 				left_rect->x = roi_info.x;
 				left_rect->y = roi_info.y;
 				left_rect->w = mixer_width - left_rect->x;
 				left_rect->h = roi_info.h;
-				l_dspp_hw_cfg->dspp_roi_num++;
+				l_dspp_hw_cfg->dspp_roi_mask |= BIT(j);
 
 				right_rect->x = 0;
 				right_rect->y = roi_info.y;
 				right_rect->w = roi_info.w - left_rect->w;
 				right_rect->h = roi_info.h;
-				r_dspp_hw_cfg->dspp_roi_num++;
+				r_dspp_hw_cfg->dspp_roi_mask |= BIT(j);
 			}
 		}
 	}
@@ -540,39 +526,154 @@ static bool sde_roi_misr_dspp_is_used(struct sde_crtc *sde_crtc)
 	return false;
 }
 
+static bool sde_roi_misr_add_new_cfg(
+		struct sde_crtc *sde_crtc,
+		struct sde_crtc_state *cstate)
+{
+	struct sde_roi_misr_usr_cfg *misr_user_cfg;
+	struct sde_misr_cfg_queue *cfg_queue;
+	struct sde_misr_cfg_data *cfg_data;
+	int misr_idx;
+	int i;
+
+	misr_user_cfg = &cstate->misr_state.roi_misr_cfg;
+	cfg_queue = &sde_crtc->roi_misr_data.cfg_queue;
+
+	spin_lock(&cfg_queue->queue_lock);
+	cfg_data = list_first_entry_or_null(&cfg_queue->free_list,
+			struct sde_misr_cfg_data, node);
+	if (!cfg_data) {
+		spin_unlock(&cfg_queue->queue_lock);
+		SDE_ERROR("get available sde_misr_cfg_data failed\n");
+
+		return false;
+	}
+
+	list_del(&cfg_data->node);
+	spin_unlock(&cfg_queue->queue_lock);
+
+	memset(cfg_data, 0, sizeof(*cfg_data));
+
+	for (i = 0; i < misr_user_cfg->roi_rect_num; ++i) {
+		misr_idx = SDE_ROI_MISR_GET_HW_IDX(misr_user_cfg->roi_ids[i]);
+		cfg_data->misr_res[i].hw_roi_idx = SDE_ROI_MISR_GET_ROI_IDX(
+				misr_user_cfg->roi_ids[i]);
+
+		cfg_data->misr_res[i].hw_misr =
+				sde_crtc->mixers[misr_idx].hw_roi_misr;
+
+		if (!cfg_data->misr_res[i].hw_misr) {
+			SDE_ERROR("roi_ids %u, error hw_misr handle\n",
+					misr_user_cfg->roi_ids[i]);
+
+			/* add current node back to free list if failed */
+			list_add_tail(&cfg_data->node, &cfg_queue->free_list);
+
+			return false;
+		}
+	}
+
+	cfg_data->total_roi_num = misr_user_cfg->roi_rect_num;
+	cfg_data->seqno = sde_crtc->output_fence->commit_count;
+
+	spin_lock(&cfg_queue->queue_lock);
+	list_add_tail(&cfg_data->node, &cfg_queue->cfg_list);
+	atomic_inc(&cfg_queue->cfg_refcount);
+	spin_unlock(&cfg_queue->queue_lock);
+
+	return true;
+}
+
+static struct sde_misr_cfg_data *sde_roi_misr_get_active_cfg(
+		struct sde_crtc *sde_crtc)
+{
+	struct sde_misr_cfg_queue *cfg_queue;
+	struct sde_misr_cfg_data *cur, *tmp, *valid = NULL;
+	unsigned int vsync_count;
+
+	cfg_queue = &sde_crtc->roi_misr_data.cfg_queue;
+	vsync_count = sde_crtc->output_fence->done_count;
+
+	list_for_each_entry_safe(cur, tmp, &cfg_queue->cfg_list, node) {
+		if (cur->seqno < vsync_count) {
+			list_del(&cur->node);
+			list_add_tail(&cur->node, &cfg_queue->free_list);
+		} else if (cur->seqno == vsync_count) {
+			valid = cur;
+			break;
+		}
+	}
+
+	return valid;
+}
+
+static inline void sde_roi_misr_reset_misr(struct sde_crtc *sde_crtc)
+{
+	struct sde_hw_roi_misr *hw_misr;
+	struct sde_hw_ctl *hw_ctl;
+	int i;
+
+	for (i = 0; i < sde_crtc->num_mixers; i++) {
+		hw_misr = sde_crtc->mixers[i].hw_roi_misr;
+		hw_ctl = sde_crtc->mixers[i].hw_ctl;
+
+		if (hw_misr && hw_ctl) {
+			hw_misr->ops.reset_roi_misr(hw_misr);
+			hw_ctl->ops.update_bitmask_dsc(hw_ctl,
+					(enum sde_dsc)hw_misr->idx, true);
+		}
+	}
+}
+
+static inline void sde_roi_misr_free_cfg(struct sde_crtc *sde_crtc,
+		struct sde_misr_cfg_queue *cfg_queue,
+		struct sde_misr_cfg_data *cfg_data)
+{
+	list_del(&cfg_data->node);
+	list_add_tail(&cfg_data->node, &cfg_queue->free_list);
+
+	if (atomic_dec_return(&cfg_queue->cfg_refcount) == 0)
+		sde_roi_misr_reset_misr(sde_crtc);
+}
+
 void sde_roi_misr_setup(struct drm_crtc *crtc)
 {
 	struct sde_crtc *sde_crtc;
 	struct sde_crtc_state *cstate;
+	struct sde_kms *kms;
 	struct sde_hw_ctl *hw_ctl;
 	struct sde_hw_roi_misr *hw_misr;
 	struct sde_hw_dspp *hw_dspp;
 	struct sde_roi_misr_hw_cfg *misr_hw_cfg;
-	struct sde_kms *kms;
-	struct sde_misr_fence *misr_fence;
 	struct sde_roi_misr_usr_cfg *roi_misr_cfg;
+	struct sde_generic_fence_context *misr_fence;
 	struct sde_ctl_dsc_cfg dsc_cfg;
-	int misr_cfg_idx = 0;
-	int orig_order_idx;
 	int i;
 
 	sde_crtc = to_sde_crtc(crtc);
 	cstate = to_sde_crtc_state(crtc->state);
 	kms = _sde_misr_get_kms(crtc);
 	roi_misr_cfg = &cstate->misr_state.roi_misr_cfg;
+	misr_fence = sde_crtc->roi_misr_data.misr_fence;
 
-	if (!kms->catalog->has_roi_misr)
+	if (!kms || !kms->catalog->has_roi_misr)
 		return;
 
 	/* do nothing if user didn't set misr */
 	if (!roi_misr_cfg->user_fence_fd_addr)
 		return;
 
-	misr_fence = get_fence_instance(
-			&sde_crtc->roi_misr_data.roi_misr_fence);
-	if (!misr_fence && (roi_misr_cfg->roi_rect_num > 0)) {
-		SDE_ERROR("crtc%d: can't find fence\n",
+	if (list_empty(&misr_fence->fence_list_head)) {
+		SDE_ERROR("crtc%d: can't find fence instance\n",
 				crtc->base.id);
+		return;
+	}
+
+	if (!sde_roi_misr_add_new_cfg(sde_crtc, cstate)) {
+		SDE_ERROR("crtc%d: add roi misr config failed\n",
+				crtc->base.id);
+		sde_generic_fence_signal(misr_fence, ktime_get());
+
 		return;
 	}
 
@@ -587,36 +688,25 @@ void sde_roi_misr_setup(struct drm_crtc *crtc)
 			sde_crtc->mixers[0].encoder,
 			sde_roi_misr_event_cb, crtc);
 
+	hw_ctl = sde_crtc->mixers[0].hw_ctl;
+
 	for (i = 0; i < sde_crtc->num_mixers; ++i) {
 		hw_dspp = sde_crtc->mixers[i].hw_dspp;
-		hw_ctl = sde_crtc->mixers[i].hw_ctl;
 		hw_misr = sde_crtc->mixers[i].hw_roi_misr;
-
-		if (!hw_misr)
-			continue;
-
-		if (misr_cfg_idx >= cstate->misr_state.num_misrs)
-			SDE_ERROR("crtc%d: misr config index error\n",
-					crtc->base.id);
-
 		misr_hw_cfg =
-			&sde_crtc->roi_misr_data.roi_misr_hw_cfg[misr_cfg_idx];
-
-		/* update fence data */
-		misr_fence->roi_num[misr_cfg_idx] = misr_hw_cfg->roi_num;
-		orig_order_idx = misr_cfg_idx * ROI_MISR_MAX_ROIS_PER_MISR;
-		memcpy(&misr_fence->orig_order[orig_order_idx],
-			misr_hw_cfg->orig_order,
-			sizeof(misr_hw_cfg->orig_order));
+			&sde_crtc->roi_misr_data.roi_misr_hw_cfg[i];
 
 		if (hw_dspp) {
 			hw_dspp->ops.setup_roi_misr(hw_dspp,
-					misr_hw_cfg->dspp_roi_num,
+					misr_hw_cfg->dspp_roi_mask,
 					misr_hw_cfg->dspp_roi_rect);
 
 			hw_ctl->ops.update_bitmask_dspp(hw_ctl,
 					hw_dspp->idx, true);
 		}
+
+		if (!hw_misr)
+			continue;
 
 		hw_misr->ops.setup_roi_misr(hw_misr, misr_hw_cfg);
 		hw_ctl->ops.update_bitmask_dsc(hw_ctl,
@@ -625,46 +715,27 @@ void sde_roi_misr_setup(struct drm_crtc *crtc)
 		dsc_cfg.dsc[dsc_cfg.dsc_count++] = (enum sde_dsc)hw_misr->idx;
 
 		SDE_DEBUG("crtc%d: setup roi misr, index(%d),",
-				crtc->base.id, misr_cfg_idx);
-		SDE_DEBUG("roi_num(%d), hw_lm_id %d, hw_misr_id %d\n",
-				misr_hw_cfg->roi_num,
+				crtc->base.id, i);
+		SDE_DEBUG("roi_mask(%x), hw_lm_id %d, hw_misr_id %d\n",
+				misr_hw_cfg->roi_mask,
 				sde_crtc->mixers[i].hw_lm->idx,
 				hw_misr->idx);
-
-		++misr_cfg_idx;
 	}
 
 	hw_ctl->ops.setup_dsc_cfg(hw_ctl, &dsc_cfg);
 }
 
-unsigned int sde_roi_misr_get_num(
-		struct drm_encoder *drm_enc)
+void sde_roi_misr_hw_reset(struct sde_encoder_phys *phys_enc)
 {
-	struct sde_misr_enc_data *misr_data;
-
-	misr_data = sde_encoder_get_misr_data(drm_enc);
-
-	return misr_data->num_roi_misrs;
-}
-
-void sde_roi_misr_hw_reset(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc)
-{
-	struct sde_misr_enc_data *misr_data;
 	struct sde_hw_roi_misr *hw_roi_misr;
 	int i;
 
-	misr_data = sde_encoder_get_misr_data(base_drm_enc);
+	for (i = 0; i < phys_enc->roi_misr_num; i++) {
+		hw_roi_misr = phys_enc->hw_roi_misr[i];
+		if (!hw_roi_misr->ops.reset_roi_misr)
+			continue;
 
-	for (i = 0; i < misr_data->num_roi_misrs; i++) {
-		hw_roi_misr = misr_data->hw_roi_misr[i];
-		if (hw_roi_misr == NULL)
-			break;
-
-		if (hw_roi_misr->ops.reset_roi_misr)
-			hw_roi_misr->ops.reset_roi_misr(hw_roi_misr);
-
+		hw_roi_misr->ops.reset_roi_misr(hw_roi_misr);
 		phys_enc->hw_ctl->ops.update_bitmask_dsc(
 				phys_enc->hw_ctl,
 				(enum sde_dsc)hw_roi_misr->idx,
@@ -672,27 +743,24 @@ void sde_roi_misr_hw_reset(
 	}
 }
 
-void sde_roi_misr_setup_irq_hw_idx(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc)
+void sde_roi_misr_setup_irq_hw_idx(struct sde_encoder_phys *phys_enc)
 {
+	struct sde_hw_roi_misr *hw_roi_misr;
 	struct sde_encoder_irq *irq;
-	struct sde_misr_enc_data *misr_data;
-	int mismatch_idx;
+	int mismatch_idx, intr_offset;
 	int i, j;
 
-	misr_data = sde_encoder_get_misr_data(base_drm_enc);
-
-	for (i = 0; i < misr_data->num_roi_misrs; i++) {
-		if (!misr_data->hw_roi_misr[i])
-			break;
+	for (i = 0; i < phys_enc->roi_misr_num; i++) {
+		hw_roi_misr = phys_enc->hw_roi_misr[i];
+		intr_offset = SDE_ROI_MISR_GET_INTR_OFFSET(hw_roi_misr->idx);
 
 		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; j++) {
 			mismatch_idx = MISR_ROI_MISMATCH_BASE_IDX
-				+ i * ROI_MISR_MAX_ROIS_PER_MISR + j;
+				+ intr_offset * ROI_MISR_MAX_ROIS_PER_MISR + j;
+
 			irq = &phys_enc->irq[mismatch_idx];
 			if (irq->irq_idx < 0)
-				irq->hw_idx = misr_data->hw_roi_misr[i]->idx;
+				irq->hw_idx = hw_roi_misr->idx;
 		}
 	}
 }
@@ -724,6 +792,9 @@ int sde_roi_misr_irq_control(struct sde_encoder_phys *phys_enc,
 
 	irq->irq_idx = sde_core_irq_idx_lookup(phys_enc->sde_kms,
 			irq->intr_type, irq->hw_idx) + roi_idx;
+
+	SDE_DEBUG("hw_idx(%d) roi_idx(%d) irq_idx(%d) enable(%d)\n",
+			irq->hw_idx, roi_idx, irq->irq_idx, enable);
 
 	if (enable) {
 		ret = sde_core_irq_register_callback(phys_enc->sde_kms,
@@ -760,63 +831,87 @@ int sde_roi_misr_irq_control(struct sde_encoder_phys *phys_enc,
 	return 0;
 }
 
-bool sde_roi_misr_update_fence(
-		struct sde_encoder_phys *phys_enc,
-		struct drm_encoder *base_drm_enc)
+uint32_t sde_roi_misr_read_signature(struct sde_crtc *sde_crtc,
+		uint32_t *signature, uint32_t len)
 {
-	struct sde_misr_enc_data *misr_data;
-	struct sde_misr_fence *fence;
+	struct sde_misr_cfg_queue *cfg_queue;
+	struct sde_misr_cfg_data *cfg_data;
+	uint32_t copy_len;
+
+	cfg_queue = &sde_crtc->roi_misr_data.cfg_queue;
+
+	cfg_data = list_first_entry_or_null(&cfg_queue->cfg_list,
+			struct sde_misr_cfg_data, node);
+	if (!cfg_data)
+		return 0;
+
+	copy_len = cfg_data->total_roi_num * sizeof(uint32_t);
+	copy_len = min(copy_len, len);
+
+	memcpy(signature, cfg_data->signature, copy_len);
+
+	return copy_len;
+}
+
+static void sde_roi_misr_cache_hw_signature(
+		struct sde_misr_cfg_data *cfg_data)
+{
 	struct sde_hw_roi_misr *hw_misr;
 	uint32_t signature;
-	int all_roi_num = 0;
-	int orig_order_idx;
-	int orig_order;
 	bool success;
-	int i, j;
+	int i;
 
-	misr_data = sde_encoder_get_misr_data(base_drm_enc);
+	for (i = 0; i < cfg_data->total_roi_num; ++i) {
+		if (cfg_data->signature_mask & BIT(i))
+			continue;
 
-	fence = sde_encoder_get_fence_object(phys_enc->parent);
-	if (!fence)
-		return false;
-
-	/* if has sent event to this fence, we should not send again */
-	if (test_bit(MISR_FENCE_FLAG_EVENT_BIT, &fence->flags))
-		return false;
-
-	for (i = 0; i < misr_data->num_roi_misrs; ++i) {
-		if (!misr_data->hw_roi_misr[i])
-			break;
-
-		hw_misr = misr_data->hw_roi_misr[i];
-
-		for (j = 0; j < ROI_MISR_MAX_ROIS_PER_MISR; ++j) {
-			success = hw_misr->ops.collect_roi_misr_signature(
-				hw_misr, j, &signature);
-			if (success) {
-				orig_order_idx =
-					i * ROI_MISR_MAX_ROIS_PER_MISR + j;
-				orig_order = fence->orig_order[orig_order_idx];
-				fence->data[orig_order] = signature;
-				++fence->updated_count;
-			}
+		hw_misr = cfg_data->misr_res[i].hw_misr;
+		success = hw_misr->ops.collect_roi_misr_signature(
+				hw_misr,
+				cfg_data->misr_res[i].hw_roi_idx,
+				&signature);
+		if (success) {
+			cfg_data->signature[i] = signature;
+			cfg_data->signature_mask |= BIT(i);
 		}
 	}
+}
 
-	for (i = 0; i < ROI_MISR_MAX_MISRS_PER_CRTC; ++i)
-		all_roi_num += fence->roi_num[i];
+bool sde_roi_misr_update_fence(struct sde_crtc *sde_crtc,
+		bool force)
+{
+	struct sde_generic_fence_context *fence_ctx;
+	struct sde_misr_cfg_queue *cfg_queue;
+	struct sde_misr_cfg_data *cfg_data;
+	uint32_t ready_mask;
 
-	if (fence->updated_count >= all_roi_num) {
-		set_bit(MISR_FENCE_FLAG_EVENT_BIT, &fence->flags);
+	fence_ctx = sde_crtc->roi_misr_data.misr_fence;
+	cfg_queue = &sde_crtc->roi_misr_data.cfg_queue;
 
-		if (fence->updated_count > all_roi_num)
-			SDE_ERROR("roi misr issue, please check!\n");
+	spin_lock(&cfg_queue->queue_lock);
+	cfg_data = sde_roi_misr_get_active_cfg(sde_crtc);
+	if (!cfg_data) {
+		spin_unlock(&cfg_queue->queue_lock);
+		return false;
+	}
+
+	sde_roi_misr_cache_hw_signature(cfg_data);
+
+	ready_mask = BIT(cfg_data->total_roi_num) - 1;
+	if (force || (cfg_data->signature_mask == ready_mask)) {
+		sde_trigger_post_commit_fence(fence_ctx);
+
+		sde_roi_misr_free_cfg(sde_crtc, cfg_queue, cfg_data);
+		spin_unlock(&cfg_queue->queue_lock);
+
+		if (force)
+			sde_generic_fence_signal(fence_ctx, ktime_get());
 
 		return true;
 	}
 
+	spin_unlock(&cfg_queue->queue_lock);
+
 	return false;
 }
-
-#endif
 

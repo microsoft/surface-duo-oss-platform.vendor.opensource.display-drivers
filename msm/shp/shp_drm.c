@@ -182,6 +182,10 @@ static int shp_plane_validate(struct shp_plane *splane,
 	}
 
 	if (!shp_state->active) {
+		/* handoff only if plane is staged */
+		if (!state->crtc && !shp_state->handoff)
+			return 0;
+
 		list_for_each_entry(p, &pool->plane_list, head) {
 			plane_state = drm_atomic_get_plane_state(
 				state->state, p->plane);
@@ -202,7 +206,7 @@ static int shp_plane_validate(struct shp_plane *splane,
 
 			if (pstate->active) {
 				if (p == p->master && !pstate->handoff) {
-					SDE_DEBUG("plane%d is busy\n",
+					SDE_ERROR("plane%d is busy\n",
 						p->plane->base.id);
 					return -EBUSY;
 				}

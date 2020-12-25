@@ -303,7 +303,8 @@ static int _sde_power_data_bus_set_quota(
 	for (i = 0; i < pdbus->data_paths_cnt; i++) {
 		if (pdbus->data_bus_hdl[i]) {
 			rc = icc_set_bw(pdbus->data_bus_hdl[i],
-				in_ab_quota, in_ib_quota);
+					Bps_to_icc(in_ab_quota),
+					Bps_to_icc(in_ib_quota));
 			if (rc)
 				goto err;
 		}
@@ -319,8 +320,8 @@ err:
 	for (j = 0; j < i; j++)
 		if (pdbus->data_bus_hdl[j])
 			icc_set_bw(pdbus->data_bus_hdl[j],
-				   pdbus->curr_val.ab,
-				   pdbus->curr_val.ib);
+				   Bps_to_icc(pdbus->curr_val.ab),
+				   Bps_to_icc(pdbus->curr_val.ib));
 
 	SDE_ATRACE_END("msm_bus_scale_req");
 	pr_err("failed to set data bus vote ab=%llu ib=%llu rc=%d\n",

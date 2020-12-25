@@ -23,11 +23,12 @@
 #define CLASS_NAME "hdcp"
 #define DRIVER_NAME "msm_hdcp"
 
+static struct class *class;
+
 struct msm_hdcp {
 	struct platform_device *pdev;
 	dev_t dev_num;
 	struct cdev cdev;
-	struct class *class;
 	struct device *device;
 	struct HDCP_V2V1_MSG_TOPOLOGY cached_tp;
 	u32 tp_msgid;
@@ -35,6 +36,7 @@ struct msm_hdcp {
 	void (*cb)(void *ctx, u8 data);
 	int state;
 	int version;
+	u32 cell_idx;
 };
 
 void msm_hdcp_register_cb(struct device *dev, void *ctx,
@@ -62,6 +64,11 @@ void msm_hdcp_notify_status(struct device *dev,
 {
 	char *envp[2];
 	struct msm_hdcp *hdcp = NULL;
+
+	if (!dev) {
+		pr_err("invalid device pointer\n");
+		return;
+	}
 
 	hdcp = dev_get_drvdata(dev);
 	if (!hdcp) {
@@ -320,7 +327,8 @@ static int msm_hdcp_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct msm_hdcp *hdcp;
-
+	char driver_name[10];
+	struct device_node *of_node = pdev->dev.of_node;
 	hdcp = devm_kzalloc(&pdev->dev, sizeof(struct msm_hdcp), GFP_KERNEL);
 	if (!hdcp)
 		return -ENOMEM;
@@ -330,21 +338,22 @@ static int msm_hdcp_probe(struct platform_device *pdev)
 	hdcp->version = 0;
 	platform_set_drvdata(pdev, hdcp);
 
-	ret = alloc_chrdev_region(&hdcp->dev_num, 0, 1, DRIVER_NAME);
+	of_property_read_u32(of_node, "cell-index", &hdcp->cell_idx);
+
+	if (hdcp->cell_idx)
+		snprintf(driver_name, sizeof(driver_name), "%s%d",
+				DRIVER_NAME, hdcp->cell_idx);
+	else
+		snprintf(driver_name, sizeof(driver_name), "%s", DRIVER_NAME);
+
+	ret = alloc_chrdev_region(&hdcp->dev_num, 0, 1, driver_name);
 	if (ret  < 0) {
 		pr_err("alloc_chrdev_region failed ret = %d\n", ret);
 		goto error_get_dev_num;
 	}
 
-	hdcp->class = class_create(THIS_MODULE, CLASS_NAME);
-	if (IS_ERR(hdcp->class)) {
-		ret = PTR_ERR(hdcp->class);
-		pr_err("couldn't create class rc = %d\n", ret);
-		goto error_class_create;
-	}
-
-	hdcp->device = device_create(hdcp->class, NULL,
-		hdcp->dev_num, hdcp, DRIVER_NAME);
+	hdcp->device = device_create(class, NULL,
+		hdcp->dev_num, hdcp, driver_name);
 	if (IS_ERR(hdcp->device)) {
 		ret = PTR_ERR(hdcp->device);
 		pr_err("device_create failed %d\n", ret);
@@ -361,13 +370,10 @@ static int msm_hdcp_probe(struct platform_device *pdev)
 	ret = sysfs_create_group(&hdcp->device->kobj, &msm_hdcp_fs_attr_group);
 	if (ret)
 		pr_err("unable to register msm_hdcp sysfs nodes\n");
-
 	return 0;
 error_cdev_add:
-	device_destroy(hdcp->class, hdcp->dev_num);
+	device_destroy(class, hdcp->dev_num);
 error_class_device_create:
-	class_destroy(hdcp->class);
-error_class_create:
 	unregister_chrdev_region(hdcp->dev_num, 1);
 error_get_dev_num:
 	devm_kfree(&pdev->dev, hdcp);
@@ -386,8 +392,8 @@ static int msm_hdcp_remove(struct platform_device *pdev)
 	sysfs_remove_group(&hdcp->device->kobj,
 	&msm_hdcp_fs_attr_group);
 	cdev_del(&hdcp->cdev);
-	device_destroy(hdcp->class, hdcp->dev_num);
-	class_destroy(hdcp->class);
+	device_destroy(class, hdcp->dev_num);
+
 	unregister_chrdev_region(hdcp->dev_num, 1);
 
 	devm_kfree(&pdev->dev, hdcp);
@@ -407,10 +413,19 @@ static struct platform_driver msm_hdcp_driver = {
 
 void __init msm_hdcp_register(void)
 {
+	int ret;
+
+	class = class_create(THIS_MODULE, CLASS_NAME);
+	if (IS_ERR(class)) {
+		ret = PTR_ERR(class);
+		pr_err("couldn't create class rc = %d\n", ret);
+	}
+
 	platform_driver_register(&msm_hdcp_driver);
 }
 
 void __exit msm_hdcp_unregister(void)
 {
+	class_destroy(class);
 	platform_driver_unregister(&msm_hdcp_driver);
 }

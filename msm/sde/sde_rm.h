@@ -329,6 +329,20 @@ static inline bool sde_rm_topology_is_dual_ctl(struct sde_rm *rm,
 }
 
 /**
+ * sde_rm_is_3dmux_case - check the given topology is 3dmux case or not
+ * @topology: topology name
+ * @Return: return true in 3DMux case, otherwise false
+ */
+static inline bool sde_rm_is_3dmux_case(enum sde_rm_topology_name top_name)
+{
+	return (top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE
+			|| top_name == SDE_RM_TOPOLOGY_DUALPIPE_3DMERGE_DSC
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE
+			|| top_name == SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC
+			|| top_name == SDE_RM_TOPOLOGY_SIXPIPE_3DMERGE);
+}
+
+/**
  * sde_rm_ext_blk_create_reserve - Create external HW blocks
  *	in resource manager and reserve for specific encoder.
  * @rm: SDE Resource Manager handle

@@ -1399,6 +1399,10 @@ static int dp_sim_debug_init(struct dp_sim_device *sim_dev)
 	for (i = 0; i < sim_dev->port_num; i++) {
 		edid_entry = devm_kzalloc(sim_dev->dev,
 				sizeof(*edid_entry), GFP_KERNEL);
+		if (!edid_entry) {
+			rc = -ENOMEM;
+			goto error_remove_dir;
+		}
 		edid_entry->index = i;
 		edid_entry->sim_dev = sim_dev;
 		scnprintf(name, sizeof(name), "edid-%d", i);

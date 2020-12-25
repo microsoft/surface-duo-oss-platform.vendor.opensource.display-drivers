@@ -2040,6 +2040,7 @@ static void sde_connector_populate_roi_misr_roi_range(
 	int range_data_idx;
 	int roi_misr_num;
 	int misr_width;
+	int roi_factor, roi_id;
 	int i;
 
 	roi_misr_num = sde_rm_get_roi_misr_num(&sde_kms->rm, topology_idx);
@@ -2056,11 +2057,18 @@ static void sde_connector_populate_roi_misr_roi_range(
 		roi_misr_rect_range[i].h = drm_mode->vdisplay;
 	}
 
+	roi_factor = sde_rm_is_3dmux_case(topology_idx)
+			? 2 * ROI_MISR_MAX_ROIS_PER_MISR
+			: ROI_MISR_MAX_ROIS_PER_MISR;
+
 	for (i = 0; i < roi_misr_num * ROI_MISR_MAX_ROIS_PER_MISR; i++) {
-		range_data_idx = i / ROI_MISR_MAX_ROIS_PER_MISR;
+		range_data_idx = SDE_ROI_MISR_GET_HW_IDX(i);
+
+		roi_id = roi_factor * range_data_idx
+				+ SDE_ROI_MISR_GET_ROI_IDX(i);
 
 		snprintf(misr_prop_name, sizeof(misr_prop_name),
-				"misr_roi_%d", i);
+				"misr_roi_%d", roi_id);
 		snprintf(misr_prop_value, sizeof(misr_prop_value),
 				"(%d,%d,%d,%d)",
 				roi_misr_rect_range[range_data_idx].x,
