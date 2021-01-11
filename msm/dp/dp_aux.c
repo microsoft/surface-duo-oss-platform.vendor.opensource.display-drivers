@@ -428,6 +428,11 @@ static int dp_aux_transfer_ready(struct dp_aux_private *aux,
 	int const aux_cmd_native_max = 16;
 	int const aux_cmd_i2c_max = 128;
 
+	if (!aux->enabled) {
+		ret = -EINVAL;
+		goto error;
+	}
+
 	if (atomic_read(&aux->aborted)) {
 		ret = -ETIMEDOUT;
 		goto error;
