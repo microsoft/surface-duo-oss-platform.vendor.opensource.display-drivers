@@ -1214,6 +1214,7 @@ enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
 {
 	struct dp_display *dp_disp;
 	struct sde_connector *sde_conn;
+	struct dp_panel *dp_panel;
 
 	if (!mode || !display || !connector) {
 		pr_err("invalid params\n");
@@ -1227,7 +1228,14 @@ enum drm_mode_status dp_connector_mode_valid(struct drm_connector *connector,
 	}
 
 	dp_disp = display;
+	dp_panel = sde_conn->drv_panel;
 	mode->vrefresh = drm_mode_vrefresh(mode);
+
+	if (dp_panel->mode_override && (mode->hdisplay != dp_panel->hdisplay ||
+			mode->vdisplay != dp_panel->vdisplay ||
+			mode->vrefresh != dp_panel->vrefresh ||
+			mode->picture_aspect_ratio != dp_panel->aspect_ratio))
+		return MODE_BAD;
 
 	if (dp_bond_is_tile_mode(mode)) {
 		struct drm_display_mode tmp;
