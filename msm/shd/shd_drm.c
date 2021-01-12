@@ -769,8 +769,6 @@ enum drm_connector_status shd_connector_detect(struct drm_connector *conn,
 		sde_conn = to_sde_connector(b_conn);
 		status = disp->base->ops.detect(b_conn,
 						force, sde_conn->display);
-		conn->display_info.width_mm = b_conn->display_info.width_mm;
-		conn->display_info.height_mm = b_conn->display_info.height_mm;
 	}
 
 end:
@@ -899,6 +897,14 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 			base_mode = &disp->base->mode;
 			base_mode->private = (int *)&shd_default_priv_info;
 		}
+
+		/* check display info override */
+		if (disp->base->info.width_mm)
+			disp->base->connector->display_info.width_mm =
+					disp->base->info.width_mm;
+		if (disp->base->info.height_mm)
+			disp->base->connector->display_info.height_mm =
+					disp->base->info.height_mm;
 	}
 
 	if (!base_mode) {
@@ -952,6 +958,18 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 	}
 
 	drm_mode_probed_add(connector, m);
+
+	if (disp->info.width_mm)
+		connector->display_info.width_mm = disp->info.width_mm;
+	else
+		connector->display_info.width_mm =
+				disp->base->connector->display_info.width_mm;
+
+	if (disp->info.height_mm)
+		connector->display_info.height_mm = disp->info.height_mm;
+	else
+		connector->display_info.height_mm =
+				disp->base->connector->display_info.height_mm;
 
 	return 1;
 }
@@ -1452,6 +1470,12 @@ static int shd_parse_display(struct shd_display *display)
 	display->roi.w = dst_w;
 	display->roi.h = dst_h;
 
+	of_property_read_u32(of_node, "qcom,mode-width-mm",
+			&display->info.width_mm);
+
+	of_property_read_u32(of_node, "qcom,mode-height-mm",
+			&display->info.height_mm);
+
 next:
 	rc = of_property_read_u32_array(of_node, "qcom,blend-stage-range",
 		range, 2);
@@ -1609,6 +1633,12 @@ static int shd_parse_base(struct drm_device *drm_dev,
 
 	tile_mode = of_property_read_bool(of_node,
 					"qcom,mode-tile");
+
+	of_property_read_u32(node, "qcom,mode-width-mm",
+			&base->info.width_mm);
+
+	of_property_read_u32(node, "qcom,mode-height-mm",
+			&base->info.height_mm);
 
 	mode->hsync_start = mode->hdisplay + h_front_porch;
 	mode->hsync_end = mode->hsync_start + h_pulse_width;

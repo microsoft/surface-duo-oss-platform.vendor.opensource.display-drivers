@@ -551,6 +551,7 @@ static int dp_sim_parse_edid_from_node(struct dp_sim_device *sim_dev,
 	u32 h_front_porch, h_pulse_width, h_back_porch;
 	u32 v_front_porch, v_pulse_width, v_back_porch;
 	bool h_active_high, v_active_high;
+	u32 width_mm = 0, height_mm = 0;
 	u32 flags = 0;
 	int rc;
 	struct edid *edid;
@@ -640,6 +641,12 @@ static int dp_sim_parse_edid_from_node(struct dp_sim_device *sim_dev,
 		goto fail;
 	}
 
+	of_property_read_u32(node, "qcom,mode-width-mm",
+			&width_mm);
+
+	of_property_read_u32(node, "qcom,mode-height-mm",
+			&height_mm);
+
 	mode->hsync_start = mode->hdisplay + h_front_porch;
 	mode->hsync_end = mode->hsync_start + h_pulse_width;
 	mode->htotal = mode->hsync_end + h_back_porch;
@@ -664,6 +671,8 @@ static int dp_sim_parse_edid_from_node(struct dp_sim_device *sim_dev,
 
 	memcpy(edid, edid_buf, sizeof(edid_buf));
 	dp_sim_update_dtd(edid, mode);
+	edid->width_cm = width_mm / 10;
+	edid->height_cm = height_mm / 10;
 	dp_sim_update_checksum(edid);
 
 	port = &sim_dev->ports[index];
