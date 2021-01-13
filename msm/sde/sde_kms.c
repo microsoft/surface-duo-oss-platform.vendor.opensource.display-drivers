@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -1066,14 +1066,14 @@ void sde_kms_release_splash_resource(struct sde_kms *sde_kms,
 	if (!crtc->state->active || !sde_kms->splash_data.num_splash_displays)
 		return;
 
-	for (i = 0; i < MAX_DSI_DISPLAYS; i++) {
+	for (i = 0; i < SDE_MAX_DISPLAYS; i++) {
 		splash_display = &sde_kms->splash_data.splash_display[i];
 		if (splash_display->encoder &&
 				crtc == splash_display->encoder->crtc)
 			break;
 	}
 
-	if (i >= MAX_DSI_DISPLAYS)
+	if (i >= SDE_MAX_DISPLAYS)
 		return;
 
 	_sde_kms_splash_mem_put(sde_kms, splash_display->splash);
@@ -1417,7 +1417,7 @@ static int _sde_kms_setup_displays(struct drm_device *dev,
 		.atomic_check = dp_connector_atomic_check,
 		.config_hdr = dp_connector_config_hdr,
 		.cmd_transfer = NULL,
-		.cont_splash_config = NULL,
+		.cont_splash_config = dp_display_cont_splash_config,
 		.get_panel_vfp = NULL,
 		.update_pps = dp_connector_update_pps,
 		.get_tile_map = dp_connector_get_tile_map,
@@ -2457,6 +2457,7 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 {
 	void *display;
 	struct dsi_display *dsi_display;
+	struct dp_display *dp_display;
 	struct msm_display_info info;
 	struct drm_encoder *encoder = NULL;
 	struct drm_crtc *crtc = NULL;
@@ -2468,6 +2469,7 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 	struct drm_connector *connector = NULL;
 	struct sde_connector *sde_conn = NULL;
 	struct sde_splash_display *splash_display;
+	int dp_boot_display_count = 0;
 
 	if (!kms) {
 		SDE_ERROR("invalid kms\n");
@@ -2487,10 +2489,12 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 		return rc;
 	}
 
-	if (sde_kms->dsi_display_count !=
+	dp_boot_display_count = dp_display_get_num_of_boot_displays();
+	if ((sde_kms->dsi_display_count + dp_boot_display_count) !=
 			sde_kms->splash_data.num_splash_displays) {
 		SDE_ERROR("mismatch - displays:%d vs splash-displays:%d\n",
-				sde_kms->dsi_display_count,
+				sde_kms->dsi_display_count
+				+ dp_boot_display_count,
 				sde_kms->splash_data.num_splash_displays);
 		return rc;
 	}
@@ -2595,6 +2599,119 @@ static int sde_kms_cont_splash_config(struct msm_kms *kms)
 			SDE_ERROR("Failed: set mode for crtc. rc = %d\n", rc);
 			return rc;
 		}
+
+		drm_mode_copy(&crtc->state->adjusted_mode, drm_mode);
+		drm_mode_copy(&crtc->mode, drm_mode);
+
+		/* Update encoder structure */
+		sde_encoder_update_caps_for_cont_splash(encoder,
+				splash_display, true);
+
+		sde_crtc_update_cont_splash_settings(crtc);
+
+		sde_conn = to_sde_connector(connector);
+		if (sde_conn && sde_conn->ops.cont_splash_config)
+			sde_conn->ops.cont_splash_config(sde_conn->display);
+
+		rc = _sde_kms_update_planes_for_cont_splash(sde_kms,
+				splash_display, crtc);
+		if (rc) {
+			SDE_ERROR("Failed: updating plane status rc=%d\n", rc);
+			return rc;
+		}
+	}
+
+	/* dp */
+	for (i = 0; i < sde_kms->dp_display_count; ++i) {
+		display = sde_kms->dp_displays[i];
+		dp_display = (struct dp_display *)display;
+		splash_display =
+			&sde_kms->splash_data.splash_display
+			[sde_kms->dsi_display_count + i];
+
+		if (!splash_display->cont_splash_enabled) {
+			SDE_DEBUG("splash not enabled on DP -%d\n", i);
+			continue;
+		}
+
+		if (dp_display->bridge->base.encoder) {
+			encoder = dp_display->bridge->base.encoder;
+			SDE_DEBUG("encoder name = %s\n", encoder->name);
+		}
+
+		memset(&info, 0x0, sizeof(info));
+
+		rc = dp_connector_get_info(NULL, &info, display);
+		if (rc) {
+			SDE_ERROR("dp get_info %d failed\n", i);
+			encoder = NULL;
+			continue;
+		}
+
+		SDE_DEBUG("info.is_connected = %s, info.is_primary = %s\n",
+				((info.is_connected) ? "true" : "false"),
+				((info.is_primary) ? "true" : "false"));
+
+		if (!encoder) {
+			SDE_ERROR("encoder not initialized\n");
+			return -EINVAL;
+		}
+
+		rc = -ENOENT;
+		drm_for_each_crtc(crtc, dev) {
+			if ((encoder->possible_crtcs & drm_crtc_mask(crtc)) &&
+					!crtc->state->active) {
+				rc = 0;
+				break;
+			}
+		}
+		if (rc) {
+			SDE_ERROR("failed to find crtc\n");
+			return rc;
+		}
+
+		encoder->crtc = crtc;
+		splash_display->encoder =  encoder;
+
+		SDE_DEBUG("for dp-display:%d crtc id = %d enc id =%d\n",
+				i, crtc->base.id, encoder->base.id);
+
+		connector = dp_display->base_connector;
+		if (!connector) {
+			SDE_ERROR("connector not initialized\n");
+			mutex_unlock(&dev->mode_config.mutex);
+			return -EINVAL;
+		}
+
+		/**
+		 * Unlike DSI, DP relies on HPD thread to detect valid modes.
+		 * In this case fill_modes might return invalid mode. For now
+		 * this feature is targeting to work with always-connected
+		 * DP feature together, so we won't hit the condition. In the
+		 * future to support more generic cases we need to revisit
+		 * this logic to get drm_mode from boot parameter instead.
+		 */
+		if (connector->funcs->fill_modes) {
+			connector->funcs->fill_modes(connector,
+					dev->mode_config.max_width,
+					dev->mode_config.max_height);
+		} else {
+			SDE_ERROR("fill_modes api not defined\n");
+			mutex_unlock(&dev->mode_config.mutex);
+			return -EINVAL;
+		}
+
+		mutex_unlock(&dev->mode_config.mutex);
+
+		crtc->state->encoder_mask = (1 << drm_encoder_index(encoder));
+
+		/* currently consider modes[0] as the preferred mode */
+		drm_mode = list_first_entry(&connector->modes,
+				struct drm_display_mode, head);
+
+		SDE_DEBUG("drm_mode->name = %s, type=0x%x, flags=0x%x\n",
+				drm_mode->name, drm_mode->type,
+				drm_mode->flags);
 		drm_mode_copy(&crtc->state->adjusted_mode, drm_mode);
 		drm_mode_copy(&crtc->mode, drm_mode);
 
@@ -3267,7 +3384,10 @@ static int _sde_kms_get_splash_data(struct sde_splash_data *data)
 	 * cont_splash_region  should be collection of all memory regions
 	 * Ex: <r1.start r1.end r2.start r2.end  ... rn.start, rn.end>
 	 */
+	/* dsi-displays */
 	num_displays = dsi_display_get_num_of_displays();
+	/* dp-displays */
+	num_displays += dp_display_get_num_of_boot_displays();
 	num_regions = of_property_count_u64_elems(node, "reg") / 2;
 
 	data->num_splash_displays = num_displays;

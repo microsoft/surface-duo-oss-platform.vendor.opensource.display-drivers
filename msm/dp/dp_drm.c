@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-dp]: %s: " fmt, __func__
@@ -206,6 +206,11 @@ static void dp_bridge_pre_enable(struct drm_bridge *drm_bridge)
 		       bridge->id, rc);
 		dp->unprepare(dp, bridge->dp_panel);
 	}
+
+	rc = dp_display_splash_res_cleanup(dp);
+	if (rc)
+		pr_err("Continuous splash pipeline cleanup failed, rc=%d\n",
+			rc);
 }
 
 static void dp_bridge_enable(struct drm_bridge *drm_bridge)

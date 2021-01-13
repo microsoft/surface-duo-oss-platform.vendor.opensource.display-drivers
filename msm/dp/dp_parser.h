@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DP_PARSER_H_
@@ -256,6 +256,7 @@ static inline char *dp_phy_aux_config_type_to_string(u32 cfg_type)
  * @hw_cfg: DP HW specific settings
  * @has_mst: MST feature enable status
  * @has_mst_sideband: MST sideband feature enable status
+ * @is_cont_splash_enabled: continuous splash enable status
  * @no_aux_switch: presence AUX switch status
  * @gpio_aux_switch: presence GPIO AUX switch status
  * @dsc_feature_enable: DSC feature enable status
@@ -295,6 +296,7 @@ struct dp_parser {
 	struct dp_hw_cfg hw_cfg;
 	bool has_mst;
 	bool has_mst_sideband;
+	bool is_cont_splash_enabled;
 	bool no_aux_switch;
 	bool dsc_feature_enable;
 	bool fec_feature_enable;

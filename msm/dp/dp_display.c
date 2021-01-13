@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
@@ -32,6 +32,22 @@
 #include "dp_mst_sim.h"
 
 #define DP_MST_DEBUG(fmt, ...) pr_debug(fmt, ##__VA_ARGS__)
+
+#define MAX_DP_BOOT_DISPLAY	1
+#define MAX_CMDLINE_PARAM_LEN	512
+
+struct dp_display_boot_param {
+	char name[MAX_CMDLINE_PARAM_LEN];
+	char *boot_param;
+	bool boot_disp_en;
+	struct device_node *node;
+	void *disp;
+};
+
+static char dp_display_0[MAX_CMDLINE_PARAM_LEN];
+static struct dp_display_boot_param boot_displays[MAX_DP_BOOT_DISPLAY] = {
+	{.boot_param = dp_display_0},
+};
 
 #define HPD_STRING_SIZE 30
 #define MAX_DP_NAME_SIZE 8
@@ -120,6 +136,8 @@ struct dp_display_private {
 	struct drm_connector *bond_primary;
 
 	struct device *msm_hdcp_dev;
+
+	struct sde_power_client *cont_splash_client;
 };
 
 static const struct of_device_id dp_dt_match[] = {
@@ -750,8 +768,10 @@ static void dp_display_host_init(struct dp_display_private *dp)
 	if (dp->hpd->orientation == ORIENTATION_CC2)
 		flip = true;
 
-	reset = dp->debug->sim_mode ? false :
-		(!dp->hpd->multi_func || !dp->hpd->peer_usb_comm);
+	/* avoid phy reset when doing continuous splash */
+	reset = ((dp->parser->is_cont_splash_enabled || dp->debug->sim_mode) ?
+			false : (!dp->hpd->multi_func ||
+			!dp->hpd->peer_usb_comm));
 
 	dp->power->init(dp->power, flip);
 	dp->hpd->host_init(dp->hpd, &dp->catalog->hpd);
@@ -1628,6 +1648,101 @@ static int dp_display_set_mode(struct dp_display *dp_display, void *panel,
 	mutex_unlock(&dp->session_lock);
 
 	return 0;
+}
+
+/**
+ * dp_display_cont_splash_config() - initialize splash resources
+ * @display:    Handle to display
+ * Return:      Zero on Success
+ */
+int dp_display_cont_splash_config(void *display)
+{
+	int rc = 0;
+	struct dp_display *dp_display = display;
+	struct dp_display_private *dp;
+
+	if (!dp_display) {
+		pr_err("invalid input display param\n");
+		rc = -EINVAL;
+		return rc;
+	}
+
+	dp = container_of(dp_display, struct dp_display_private, dp_display);
+	if (IS_ERR_OR_NULL(dp)) {
+		pr_err("invalid params\n");
+		rc = -EINVAL;
+		return rc;
+	}
+
+	mutex_lock(&dp->session_lock);
+
+	rc = pm_runtime_get_sync(dp_display->drm_dev->dev);
+	if (rc < 0) {
+		pr_err("failed to vote gdsc for continuous splash, rc=%d\n",
+				rc);
+		return rc;
+	}
+
+	dp->parser->is_cont_splash_enabled = true;
+
+	/* vote for core, link and stream clocks */
+	if (dp->power->clk_enable) {
+		dp->power->clk_enable(dp->power, DP_CORE_PM, true);
+		dp->power->clk_enable(dp->power, DP_LINK_PM, true);
+		/* DP SST mode */
+		if (dp->panel->stream_id == DP_STREAM_0)
+			dp->power->clk_enable(dp->power, DP_STREAM0_PM, true);
+	}
+
+	mutex_unlock(&dp->session_lock);
+	return rc;
+}
+
+/*
+ * dp_display_splash_res_cleanup() - cleanup for continuous splash
+ * @display:    Pointer to DP display
+ * return:      Zero on success
+ */
+
+int dp_display_splash_res_cleanup(struct dp_display *dp_display)
+{
+	int rc = 0;
+	struct dp_display_private *dp;
+
+	if (!dp_display) {
+		pr_err("invalid input display param\n");
+		rc = -EINVAL;
+		return rc;
+	}
+
+	dp = container_of(dp_display, struct dp_display_private, dp_display);
+	if (IS_ERR_OR_NULL(dp)) {
+		pr_err("invalid params\n");
+		rc = -EINVAL;
+		return rc;
+	}
+
+	if (!dp->parser->is_cont_splash_enabled)
+		return 0;
+
+	rc = pm_runtime_get_sync(dp_display->drm_dev->dev);
+	if (rc < 0) {
+		pr_err("failed to vote gdsc for continuous splash, rc=%d\n",
+				rc);
+		return rc;
+	}
+
+	/* unvote for core, link and stream clocks */
+	if (dp->power->clk_enable) {
+		dp->power->clk_enable(dp->power, DP_CORE_PM, false);
+		dp->power->clk_enable(dp->power, DP_LINK_PM, false);
+		/* DP SST mode */
+		if (dp->panel->stream_id == DP_STREAM_0)
+			dp->power->clk_enable(dp->power, DP_STREAM0_PM, false);
+	}
+	dp->parser->is_cont_splash_enabled = false;
+
+	return rc;
 }
 
 static int dp_display_prepare(struct dp_display *dp_display, void *panel)
@@ -2753,11 +2868,46 @@ static int dp_display_set_phy_bond_mode(struct dp_display *dp_display,
 	return 0;
 }
 
+/**
+ * dp_display_parse_boot_display_selection()- Parse DP boot display name
+ *
+ * Return:      returns error status
+ */
+static int dp_display_parse_boot_display_selection(void)
+{
+	char *pos = NULL;
+	char disp_buf[MAX_CMDLINE_PARAM_LEN] = {'\0'};
+	int i, j;
+
+	for (i = 0; i < MAX_DP_BOOT_DISPLAY; i++) {
+		strlcpy(disp_buf, boot_displays[i].boot_param,
+				MAX_CMDLINE_PARAM_LEN);
+
+		pos = strnstr(disp_buf, ":", MAX_CMDLINE_PARAM_LEN);
+
+		/* Use ':' as a delimiter to retrieve the display name */
+		if (!pos) {
+			pr_err("display name[%s]is not valid\n", disp_buf);
+			continue;
+		}
+
+		for (j = 0; (disp_buf + j) < pos; j++)
+			boot_displays[i].name[j] = *(disp_buf + j);
+
+		boot_displays[i].name[j] = '\0';
+
+		boot_displays[i].boot_disp_en = true;
+	}
+
+	return 0;
+}
+
 static int dp_display_probe(struct platform_device *pdev)
 {
 	int rc = 0;
 	struct dp_display_private *dp;
 	struct dp_display *dp_display;
+	struct dp_display_boot_param *boot_disp;
 	int index;
 
 	if (!pdev || !pdev->dev.of_node) {
@@ -2765,6 +2915,8 @@ static int dp_display_probe(struct platform_device *pdev)
 		rc = -ENODEV;
 		goto bail;
 	}
+
+	boot_disp = &boot_displays[0];
 
 	index = dp_display_get_num_of_displays();
 	if (index >= MAX_DP_ACTIVE_DISPLAY) {
@@ -2804,6 +2956,13 @@ static int dp_display_probe(struct platform_device *pdev)
 	if (rc) {
 		pr_err("Failed to create workqueue\n");
 		goto error;
+	}
+
+	if (boot_disp->boot_disp_en) {
+		if (!strcmp(boot_disp->name, dp->name)) {
+			boot_disp->node = pdev->dev.of_node;
+			boot_disp->disp = dp;
+		}
 	}
 
 	platform_set_drvdata(pdev, dp);
@@ -2876,6 +3035,18 @@ int dp_display_get_displays(void **displays, int count)
 			break;
 
 		displays[i] = g_dp_display[i];
+	}
+
+	return count;
+}
+
+int dp_display_get_num_of_boot_displays(void)
+{
+	int i, count = 0;
+
+	for (i = 0; i < MAX_DP_BOOT_DISPLAY; i++) {
+		if (boot_displays[i].disp && boot_displays[i].node)
+			count++;
 	}
 
 	return count;
@@ -3118,6 +3289,7 @@ static struct platform_driver dp_display_driver = {
 
 void __init dp_display_register(void)
 {
+	dp_display_parse_boot_display_selection();
 	platform_driver_register(&dp_display_driver);
 }
 
@@ -3125,4 +3297,10 @@ void __exit dp_display_unregister(void)
 {
 	platform_driver_unregister(&dp_display_driver);
 }
+
+module_param_string(dp_display0, dp_display_0, MAX_CMDLINE_PARAM_LEN, 0600);
+MODULE_PARM_DESC(dp_display0,
+	"msm_drm.dp_display0=<display node>:<configX> where <display node> is 'external dp display node name' and <configX> where x represents index in the topology list");
+
+
 
