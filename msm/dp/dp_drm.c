@@ -839,9 +839,6 @@ static void dp_bond_check_force_mode(struct drm_connector *connector)
 	if (!dp_display->dp_bond_prv_info || !dp_display->force_bond_mode)
 		return;
 
-	if (connector->has_tile && connector->tile_group)
-		return;
-
 	connector->has_tile = false;
 
 	for (type = DP_BOND_DUAL; type < DP_BOND_MAX; type++) {
@@ -855,8 +852,11 @@ static void dp_bond_check_force_mode(struct drm_connector *connector)
 		return;
 
 	connector->has_tile = true;
-	connector->tile_group = drm_mode_create_tile_group(connector->dev,
-		topology);
+
+	if (!connector->tile_group)
+		connector->tile_group = drm_mode_create_tile_group(
+				connector->dev, topology);
+
 	connector->num_h_tile = preferred_type + 2;
 	connector->num_v_tile = 1;
 }
