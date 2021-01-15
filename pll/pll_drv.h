@@ -95,6 +95,8 @@ struct mdss_pll_resources {
 	s64	vco_current_rate;
 	s64	vco_locking_rate;
 	s64	vco_ref_clk_rate;
+	s64	vco_max_rate;
+	s64	vco_min_rate;
 
 	/*
 	 * Certain pll's needs to update the same vco rate after resume in
