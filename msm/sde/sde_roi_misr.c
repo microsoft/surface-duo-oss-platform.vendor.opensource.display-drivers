@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <drm/drm_encoder.h>
@@ -390,8 +390,7 @@ static void sde_roi_misr_work(struct kthread_work *work)
 
 	SDE_ATRACE_BEGIN("crtc_roi_misr_event");
 
-	sde_generic_fence_signal(sde_crtc->roi_misr_data.misr_fence,
-			misr_event->ts);
+	sde_generic_fence_signal(sde_crtc->roi_misr_data.misr_fence);
 
 	SDE_ATRACE_END("crtc_roi_misr_event");
 }
@@ -672,7 +671,7 @@ void sde_roi_misr_setup(struct drm_crtc *crtc)
 	if (!sde_roi_misr_add_new_cfg(sde_crtc, cstate)) {
 		SDE_ERROR("crtc%d: add roi misr config failed\n",
 				crtc->base.id);
-		sde_generic_fence_signal(misr_fence, ktime_get());
+		sde_generic_fence_signal(misr_fence);
 
 		return;
 	}
@@ -905,7 +904,7 @@ bool sde_roi_misr_update_fence(struct sde_crtc *sde_crtc,
 		spin_unlock(&cfg_queue->queue_lock);
 
 		if (force)
-			sde_generic_fence_signal(fence_ctx, ktime_get());
+			sde_generic_fence_signal(fence_ctx);
 
 		return true;
 	}
