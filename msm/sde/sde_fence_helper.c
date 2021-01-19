@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2018, 2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, 2020-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -185,8 +185,7 @@ error:
 EXPORT_SYMBOL(sde_generic_fence_init);
 
 void sde_generic_fence_signal(
-		struct sde_generic_fence_context *ctx,
-		ktime_t ts)
+		struct sde_generic_fence_context *ctx)
 {
 	struct sde_generic_fence *f, *next;
 	struct list_head local_list_head;
@@ -208,7 +207,6 @@ void sde_generic_fence_signal(
 
 	list_for_each_entry_safe(f, next, &local_list_head, fence_list) {
 		spin_lock_irqsave(&ctx->lock, flags);
-		f->base.timestamp = ts;
 		is_signaled = dma_fence_is_signaled_locked(&f->base);
 		spin_unlock_irqrestore(&ctx->lock, flags);
 

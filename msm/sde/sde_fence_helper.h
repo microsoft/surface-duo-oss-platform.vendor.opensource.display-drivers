@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2018, 2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2016-2018, 2020-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -121,11 +121,9 @@ int sde_generic_fence_init(
 /**
  * sde_generic_fence_signal() - the signal method for signaling fence
  * @ctx: the generic fence context pointer
- * @ts: the timestamp when signaling
  */
 void sde_generic_fence_signal(
-		struct sde_generic_fence_context *ctx,
-		ktime_t ts);
+		struct sde_generic_fence_context *ctx);
 
 #endif /* _SDE_FENCE_HELPER_H_ */
 
