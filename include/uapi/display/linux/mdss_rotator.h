@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 #ifndef _UAPI_MDSS_ROTATOR_H_
 #define _UAPI_MDSS_ROTATOR_H_
 
-#include <linux/msm_mdp_ext.h>
+#include <display/linux/msm_mdp_ext.h>
 
 #define MDSS_ROTATOR_IOCTL_MAGIC 'w'
 

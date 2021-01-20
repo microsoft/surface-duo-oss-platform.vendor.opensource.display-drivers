@@ -1,9 +1,15 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 #ifndef _UAPI__MSM_HDMI_HDCP_MGR_H
 #define _UAPI__MSM_HDMI_HDCP_MGR_H
+
+#if defined(__KERNEL__)
+#include <linux/types.h>
+#else
+#include <stdint.h>
+#endif
 
 enum DS_TYPE {  /* type of downstream device */
 	DS_UNKNOWN,
