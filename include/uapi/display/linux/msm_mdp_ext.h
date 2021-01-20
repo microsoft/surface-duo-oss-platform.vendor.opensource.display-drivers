@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 #ifndef _MSM_MDP_EXT_H_
 #define _MSM_MDP_EXT_H_
 
-#include <linux/msm_mdp.h>
+#include <display/linux/msm_mdp.h>
 
 #define MDP_IOCTL_MAGIC 'S'
 /* atomic commit ioctl used for validate and commit request */

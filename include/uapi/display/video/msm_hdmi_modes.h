@@ -1,10 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 #ifndef _UAPI_MSM_HDMI_MODES_H__
 #define _UAPI_MSM_HDMI_MODES_H__
+
+#if defined(__KERNEL__)
 #include <linux/types.h>
+#else
+#include <stdint.h>
+#endif
+
 #include <linux/errno.h>
 
 #define MSM_HDMI_RGB_888_24BPP_FORMAT       1
