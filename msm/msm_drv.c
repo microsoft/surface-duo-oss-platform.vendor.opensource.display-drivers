@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -708,7 +708,7 @@ static int msm_drm_init(struct device *dev, struct drm_driver *drv)
 #endif
 
 	/* create drm client only when fbdev is not supported */
-	if (!priv->fbdev) {
+	if (kms && !priv->fbdev) {
 		ret = drm_client_init(ddev, &kms->client, "kms_client", NULL);
 		if (ret) {
 			DRM_ERROR("failed to init kms_client: %d\n", ret);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -751,6 +751,9 @@ static int shp_parse(struct shp_device *shp)
 
 out:
 	pm_runtime_put_sync(sde_kms->dev->dev);
+
+	if (!shp->planes)
+		return rc;
 
 	/* dump all the planes */
 	for (i = 0; i < shp->num_planes; i++) {
