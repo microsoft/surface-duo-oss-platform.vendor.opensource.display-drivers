@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
  */
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -601,7 +601,7 @@ static void msm_lease_fixup_crtc_primary(struct drm_device *dev,
 	}
 
 	/* setup new primary planes */
-	for (i = 0; i < crtc_count; i++) {
+	for (i = 0; i < crtc_count && i < plane_count; i++) {
 		if (crtcs[i]->primary) {
 			crtcs[i]->primary->type = DRM_PLANE_TYPE_OVERLAY;
 		}
