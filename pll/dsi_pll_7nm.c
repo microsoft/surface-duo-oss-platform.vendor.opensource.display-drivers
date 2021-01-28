@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -581,10 +581,18 @@ static void dsi_pll_calc_dec_frac(struct dsi_pll_7nm *pll,
 
 	dec = div_u64(dec_multiple, multiplier);
 
-	if (dsi_pll_7nm_is_hw_revision_v1(rsc))
+	if (dsi_pll_7nm_is_hw_revision_v1(rsc)) {
 		regs->pll_clock_inverters = 0x0;
-	else
-		regs->pll_clock_inverters = 0x28;
+	} else {
+		if (pll_freq > 3020000000UL)
+			regs->pll_clock_inverters = 0x40;
+		else if (pll_freq > 2500000000UL)
+			regs->pll_clock_inverters = 0;
+		else if (pll_freq > 1100000000UL)
+			regs->pll_clock_inverters = 0x20;
+		else
+			regs->pll_clock_inverters = 0x28;
+	}
 
 	regs->pll_lockdet_rate = config->lock_timer;
 	regs->decimal_div_start = dec;
