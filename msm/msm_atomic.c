@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2014 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -31,6 +31,7 @@ struct msm_commit {
 	struct drm_atomic_state *state;
 	uint32_t crtc_mask;
 	uint32_t plane_mask;
+	uint64_t rm_mask;
 	bool nonblock;
 	struct kthread_work commit_work;
 };
@@ -39,18 +40,20 @@ struct msm_commit {
  * atomically mark them as pending update
  */
 static int start_atomic(struct msm_drm_private *priv, uint32_t crtc_mask,
-			uint32_t plane_mask)
+			uint32_t plane_mask, uint64_t rm_mask)
 {
 	int ret;
 
 	spin_lock(&priv->pending_crtcs_event.lock);
 	ret = wait_event_interruptible_locked(priv->pending_crtcs_event,
 			!(priv->pending_crtcs & crtc_mask) &&
-			!(priv->pending_planes & plane_mask));
+			!(priv->pending_planes & plane_mask) &&
+			!(priv->pending_rm & rm_mask));
 	if (ret == 0) {
 		DBG("start: %08x", crtc_mask);
 		priv->pending_crtcs |= crtc_mask;
 		priv->pending_planes |= plane_mask;
+		priv->pending_rm |= rm_mask;
 	}
 	spin_unlock(&priv->pending_crtcs_event.lock);
 
@@ -60,19 +63,21 @@ static int start_atomic(struct msm_drm_private *priv, uint32_t crtc_mask,
 /* clear specified crtcs (no longer pending update)
  */
 static void end_atomic(struct msm_drm_private *priv, uint32_t crtc_mask,
-			uint32_t plane_mask)
+			uint32_t plane_mask, uint64_t rm_mask)
 {
 	spin_lock(&priv->pending_crtcs_event.lock);
 	DBG("end: %08x", crtc_mask);
 	priv->pending_crtcs &= ~crtc_mask;
 	priv->pending_planes &= ~plane_mask;
+	priv->pending_rm &= ~rm_mask;
 	wake_up_all_locked(&priv->pending_crtcs_event);
 	spin_unlock(&priv->pending_crtcs_event.lock);
 }
 
 static void commit_destroy(struct msm_commit *c)
 {
-	end_atomic(c->dev->dev_private, c->crtc_mask, c->plane_mask);
+	end_atomic(c->dev->dev_private, c->crtc_mask, c->plane_mask,
+			c->rm_mask);
 	if (c->nonblock)
 		kfree(c);
 }
@@ -720,10 +725,19 @@ int msm_atomic_commit(struct drm_device *dev,
 	}
 
 	/*
+	 * Figure out what resource we have:
+	 */
+	if (priv && priv->kms && priv->kms->funcs &&
+			priv->kms->funcs->get_resource_mask)
+		c->rm_mask = priv->kms->funcs->get_resource_mask(priv->kms,
+				state);
+
+	/*
 	 * Wait for pending updates on any of the same crtc's and then
 	 * mark our set of crtc's as busy:
 	 */
-	ret = start_atomic(dev->dev_private, c->crtc_mask, c->plane_mask);
+	ret = start_atomic(dev->dev_private, c->crtc_mask, c->plane_mask,
+			c->rm_mask);
 	if (ret)
 		goto err_free;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -621,6 +621,7 @@ struct msm_drm_private {
 	/* crtcs pending async atomic updates: */
 	uint32_t pending_crtcs;
 	uint32_t pending_planes;
+	uint64_t pending_rm;
 	wait_queue_head_t pending_crtcs_event;
 
 	unsigned int num_planes;

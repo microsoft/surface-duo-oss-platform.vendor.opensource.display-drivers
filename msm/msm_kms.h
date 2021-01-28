@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -123,6 +123,9 @@ struct msm_kms_funcs {
 	int (*get_mixer_count)(const struct msm_kms *kms,
 			const struct drm_display_mode *mode,
 			u32 mode_max_width, u32 *num_lm);
+	/* resource mask in state */
+	uint64_t (*get_resource_mask)(const struct msm_kms *kms,
+			struct drm_atomic_state *state);
 };
 
 struct msm_kms {
