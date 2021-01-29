@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
@@ -189,6 +189,20 @@ static void dp_lphw_hpd_isr(struct dp_hpd *dp_hpd)
 		rc = queue_work(lphw_hpd->connect_wq, &lphw_hpd->attention);
 		if (!rc)
 			pr_debug("attention not queued\n");
+	} else if (isr & DP_HPD_PLUG_INT_STATUS) {
+
+		pr_debug("connect interrupt, hpd isr state: 0x%x\n", isr);
+
+		if (!lphw_hpd->hpd) {
+			lphw_hpd->hpd = true;
+			rc = queue_work(lphw_hpd->connect_wq,
+					&lphw_hpd->connect);
+			if (!rc)
+				pr_debug("connect not queued\n");
+		} else {
+			pr_err("already connected\n");
+		}
+
 	}
 }
 

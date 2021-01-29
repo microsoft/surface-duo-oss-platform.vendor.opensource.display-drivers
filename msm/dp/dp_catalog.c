@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
@@ -2096,9 +2096,9 @@ static void dp_catalog_hpd_config_hpd(struct dp_catalog_hpd *hpd, bool en)
 		u32 reftimer = dp_read(catalog->exe_mode, io_data,
 						DP_DP_HPD_REFTIMER);
 
-		/* Arm only the UNPLUG and HPD_IRQ interrupts */
+		/* Arm only the PLUG, UNPLUG and HPD_IRQ interrupts */
 		dp_write(catalog->exe_mode, io_data, DP_DP_HPD_INT_ACK, 0xF);
-		dp_write(catalog->exe_mode, io_data, DP_DP_HPD_INT_MASK, 0xA);
+		dp_write(catalog->exe_mode, io_data, DP_DP_HPD_INT_MASK, 0xB);
 
 		/* Enable REFTIMER to count 1ms */
 		reftimer |= BIT(16);
