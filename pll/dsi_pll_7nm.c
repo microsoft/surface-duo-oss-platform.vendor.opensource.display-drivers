@@ -2001,6 +2001,12 @@ int dsi_pll_clock_register_7nm(struct platform_device *pdev,
 		dsi0pll_cphy_pclk_src_mux.clkr.regmap = rmap;
 
 		dsi0pll_vco_clk.priv = pll_res;
+
+		if (pll_res->vco_max_rate) {
+			dsi0pll_vco_clk.min_rate = pll_res->vco_min_rate;
+			dsi0pll_vco_clk.max_rate = pll_res->vco_max_rate;
+		}
+
 		for (i = VCO_CLK_0; i <= CPHY_PCLK_SRC_0_CLK; i++) {
 			clk = devm_clk_register(&pdev->dev,
 						mdss_dsi_pllcc_7nm[i]);
@@ -2053,6 +2059,12 @@ int dsi_pll_clock_register_7nm(struct platform_device *pdev,
 		dsi1pll_cphy_pclk_src_mux.clkr.regmap = rmap;
 
 		dsi1pll_vco_clk.priv = pll_res;
+
+		if (pll_res->vco_max_rate) {
+			dsi1pll_vco_clk.min_rate = pll_res->vco_min_rate;
+			dsi1pll_vco_clk.max_rate = pll_res->vco_max_rate;
+		}
+
 		for (i = VCO_CLK_1; i <= CPHY_PCLK_SRC_1_CLK; i++) {
 			clk = devm_clk_register(&pdev->dev,
 						mdss_dsi_pllcc_7nm[i]);
