@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __MDSS_PLL_H
@@ -36,22 +36,13 @@
 #define upper_8_bit(x) ((((x) >> 2) & 0x100) >> 8)
 
 enum {
-	MDSS_DSI_PLL_10NM,
-	MDSS_DP_PLL_10NM,
 	MDSS_DSI_PLL_7NM,
 	MDSS_DSI_PLL_7NM_V2,
 	MDSS_DP_PLL_7NM,
-	MDSS_DSI_PLL_28LPM,
 	MDSS_DSI_PLL_14NM,
 	MDSS_DP_PLL_14NM,
-	MDSS_HDMI_PLL_28LPM,
 	MDSS_EDP_PLL_7NM,
 	MDSS_UNKNOWN_PLL,
-};
-
-enum {
-	MDSS_PLL_TARGET_8996,
-	MDSS_PLL_TARGET_SDM660,
 };
 
 #define DFPS_MAX_NUM_OF_FRAME_RATES 16
@@ -216,12 +207,10 @@ static inline bool is_gdsc_disabled(struct mdss_pll_resources *pll_res)
 		WARN(1, "gdsc_base register is not defined\n");
 		return true;
 	}
-	if (pll_res->target_id == MDSS_PLL_TARGET_SDM660)
-		ret = ((readl_relaxed(pll_res->gdsc_base + 0x4) & BIT(31)) &&
-		(!(readl_relaxed(pll_res->gdsc_base) & BIT(0)))) ? false : true;
-	else
-		ret = readl_relaxed(pll_res->gdsc_base) & BIT(31) ?
+
+	ret = readl_relaxed(pll_res->gdsc_base) & BIT(31) ?
 			 false : true;
+
 	return ret;
 }
 

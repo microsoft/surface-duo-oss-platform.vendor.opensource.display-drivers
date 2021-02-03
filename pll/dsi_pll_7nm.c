@@ -11,7 +11,7 @@
 #include <linux/delay.h>
 #include "dsi_pll.h"
 #include "pll_drv.h"
-#include <dt-bindings/clock/mdss-10nm-pll-clk.h>
+#include <dt-bindings/clock/mdss-7nm-pll-clk.h>
 
 #define VCO_DELAY_USEC 1
 
