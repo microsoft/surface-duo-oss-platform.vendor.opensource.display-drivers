@@ -56,6 +56,7 @@ struct dp_hdcp2p2_ctrl {
 	u8 sink_rx_status;
 	u8 rx_status;
 	char abort_mask;
+	u32 downstream_version;
 
 	bool polling;
 };
@@ -144,12 +145,18 @@ static int dp_hdcp2p2_copy_buf(struct dp_hdcp2p2_ctrl *ctrl,
 
 static void dp_hdcp2p2_send_auth_status(struct dp_hdcp2p2_ctrl *ctrl)
 {
+	int version = HDCP_VERSION_2P2;
+	int state = atomic_read(&ctrl->auth_state);
+
+	if (ctrl->downstream_version)
+		version = HDCP_VERSION_1X;
+
 	msm_hdcp_notify_status(ctrl->init_data.msm_hdcp_dev,
-				atomic_read(&ctrl->auth_state),
-				HDCP_VERSION_2P2);
+				state,
+				version);
 
 	ctrl->init_data.notify_status(ctrl->init_data.cb_data,
-		atomic_read(&ctrl->auth_state));
+		state);
 }
 
 static void dp_hdcp2p2_set_interrupts(struct dp_hdcp2p2_ctrl *ctrl, bool enable)
@@ -236,6 +243,9 @@ static int dp_hdcp2p2_wakeup(struct hdcp_transport_wakeup_data *data)
 		break;
 	case HDCP_TRANSPORT_CMD_AUTHENTICATE:
 		kthread_queue_work(&ctrl->worker, &ctrl->auth);
+		break;
+	case HDCP_TRANSPORT_CMD_RX_INFO:
+		ctrl->downstream_version = data->buf[1] & 0x1;
 		break;
 	default:
 		pr_err("invalid wakeup command %d\n", ctrl->wakeup_cmd);
