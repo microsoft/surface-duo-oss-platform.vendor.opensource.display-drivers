@@ -4,5 +4,6 @@
  */
 
 #define CONFIG_DRM_MSM_HYP 1
+#define CONFIG_DRM_MSM_HYP_WFD 1
 #define CONFIG_SYNC_FILE 1
 #define CONFIG_DRM_MSM_LEASE 1
