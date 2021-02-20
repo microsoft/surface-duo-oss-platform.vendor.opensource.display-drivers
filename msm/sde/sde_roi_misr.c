@@ -1,4 +1,4 @@
-/* Copyright (c) 2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -78,7 +78,7 @@ void sde_roi_misr_prepare_fence(struct sde_crtc *sde_crtc,
 	kms = _sde_misr_get_kms(&sde_crtc->base);
 	roi_misr_cfg = &cstate->misr_state.roi_misr_cfg;
 
-	if (!kms->catalog->has_roi_misr)
+	if (!kms || !kms->catalog->has_roi_misr)
 		return;
 
 	/**
@@ -568,7 +568,7 @@ void sde_roi_misr_setup(struct drm_crtc *crtc)
 	kms = _sde_misr_get_kms(crtc);
 	roi_misr_cfg = &cstate->misr_state.roi_misr_cfg;
 
-	if (!kms->catalog->has_roi_misr)
+	if (!kms || !kms->catalog->has_roi_misr)
 		return;
 
 	/* do nothing if user didn't set misr */
