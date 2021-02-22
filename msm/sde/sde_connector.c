@@ -1774,7 +1774,7 @@ int sde_connector_get_panel_vfp(struct drm_connector *connector,
 
 	vfp = c_conn->ops.get_panel_vfp(c_conn->display,
 		mode->hdisplay, mode->vdisplay);
-	if (vfp <= 0)
+	if (vfp <= 0 && vfp != -EPERM)
 		SDE_ERROR("Failed get_panel_vfp %d\n", vfp);
 
 	return vfp;
