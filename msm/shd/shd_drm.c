@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #define pr_fmt(fmt)	"[drm-shd] %s: " fmt, __func__
@@ -1172,6 +1163,12 @@ static int shd_drm_obj_init(struct shd_display *display)
 
 	/* update encoder's possible crtcs */
 	encoder->possible_crtcs = 1 << (priv->num_crtcs - 1);
+
+	/* add cwb support */
+	drm_for_each_encoder(encoder, dev) {
+		if (encoder->encoder_type == DRM_MODE_ENCODER_VIRTUAL)
+			encoder->possible_crtcs |= 1 << (priv->num_crtcs - 1);
+	}
 
 	/* update plane's possible crtcs */
 	for (i = 0; i < priv->num_planes; i++)
