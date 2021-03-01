@@ -2099,6 +2099,7 @@ int sde_rm_reserve(
 	struct sde_rm_requirements reqs;
 	struct msm_drm_private *priv;
 	struct sde_kms *sde_kms;
+	struct sde_connector *sde_conn;
 	int ret;
 
 	if (!rm || !enc || !crtc_state || !conn_state) {
@@ -2110,6 +2111,11 @@ int sde_rm_reserve(
 		SDE_ERROR("drm device invalid\n");
 		return -EINVAL;
 	}
+
+	/* shared connector doesn't have resources */
+	sde_conn = to_sde_connector(conn_state->connector);
+	if (sde_conn->shared)
+		return 0;
 
 	if (conn_state->state)
 		state = sde_rm_get_atomic_state(conn_state->state, rm);
@@ -2139,9 +2145,6 @@ int sde_rm_reserve(
 		SDE_ERROR("failed to populate hw requirements\n");
 		goto end;
 	}
-
-	if (reqs.topology->top_name == SDE_RM_TOPOLOGY_NONE)
-		goto end;
 
 	if (!conn_state->state) {
 		SDE_DEBUG("cont_splash enabled on enc-%d\n", enc->base.id);

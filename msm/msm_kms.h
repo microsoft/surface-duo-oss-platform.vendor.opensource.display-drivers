@@ -40,8 +40,6 @@
 #define MSM_MODE_FLAG_SEAMLESS_VRR			(1<<3)
 /* Request to switch the bit clk */
 #define MSM_MODE_FLAG_SEAMLESS_DYN_CLK			(1<<4)
-/* Mode fixed up by shared display */
-#define MSM_MODE_FLAG_SHARED_DISPLAY			(1<<5)
 
 /* As there are different display controller blocks depending on the
  * snapdragon version, the kms support is split out and the appropriate

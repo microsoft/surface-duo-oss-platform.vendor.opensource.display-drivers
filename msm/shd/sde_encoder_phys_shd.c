@@ -399,7 +399,6 @@ static void sde_encoder_phys_shd_mode_set(
 	struct drm_encoder *encoder;
 	struct sde_rm_hw_iter iter;
 	struct sde_rm *rm;
-	uint64_t top_name;
 	int i;
 
 	SDE_DEBUG("%d\n", phys_enc->parent->base.id);
@@ -466,13 +465,6 @@ static void sde_encoder_phys_shd_mode_set(
 	}
 
 	_sde_encoder_phys_shd_setup_irq_hw_idx(phys_enc);
-
-	/* update to base connector's topology name */
-	top_name = sde_connector_get_topology_name(display->base->connector);
-	msm_property_set_property(
-			sde_connector_get_propinfo(connector),
-			sde_connector_get_property_state(connector->state),
-			CONNECTOR_PROP_TOPOLOGY_NAME, top_name);
 }
 
 static int _sde_encoder_phys_shd_wait_for_vblank(
