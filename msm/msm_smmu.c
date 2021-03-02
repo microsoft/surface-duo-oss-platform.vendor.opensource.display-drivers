@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -28,6 +28,7 @@
 #include "msm_gem.h"
 #include "msm_mmu.h"
 #include "sde_dbg.h"
+#include "sde_recovery_manager.h"
 
 #ifndef SZ_4G
 #define SZ_4G	(((size_t) SZ_1G) * 4)
@@ -453,7 +454,9 @@ static int msm_smmu_fault_handler(struct iommu_domain *domain,
 
 	/* generate dump, but no panic */
 	SDE_DBG_DUMP("all", "dbg_bus", "vbif_dbg_bus");
-
+	if (client->dev)
+		sde_recovery_set_event(dev_get_drvdata(client->dev),
+				DRM_EVENT_SDE_SMMUFAULT, NULL);
 	/*
 	 * return -ENOSYS to allow smmu driver to dump out useful
 	 * debug info.

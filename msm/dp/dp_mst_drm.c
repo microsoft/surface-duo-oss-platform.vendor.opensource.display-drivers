@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  */
 
 /*
@@ -1606,6 +1606,8 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 		return rc;
 
 	state = new_conn_state->state;
+	if (!state)
+		return rc;
 
 	old_conn_state = drm_atomic_get_old_connector_state(state, connector);
 	if (!old_conn_state)

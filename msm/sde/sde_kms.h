@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -278,6 +278,8 @@ struct sde_kms {
 
 	bool first_kickoff;
 	bool qdss_enabled;
+
+	void *recovery_mgr;
 };
 
 struct vsync_info {

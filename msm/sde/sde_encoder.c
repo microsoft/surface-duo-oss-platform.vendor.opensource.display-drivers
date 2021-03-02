@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -39,6 +39,7 @@
 #include "sde_core_irq.h"
 #include "sde_hw_top.h"
 #include "sde_hw_qdss.h"
+#include "sde_recovery_manager.h"
 
 #define SDE_DEBUG_ENC(e, fmt, ...) SDE_DEBUG("enc%d " fmt,\
 		(e) ? (e)->base.base.id : -1, ##__VA_ARGS__)
@@ -1825,7 +1826,7 @@ static int _sde_encoder_dsc_2_lm_2_enc_2_intf(struct sde_encoder_virt *sde_enc,
 	SDE_DEBUG_ENC(sde_enc, "pic_w: %d pic_h: %d mode:%d\n",
 			roi->w, roi->h, dsc_common_mode);
 
-	for (i = 0; i < sde_enc->num_phys_encs; i++) {
+	for (i = 0; i < params->num_channels; i++) {
 		bool active = !!((1 << i) & params->affected_displays);
 
 		SDE_EVT32(DRMID(&sde_enc->base), roi->w, roi->h,
@@ -1880,6 +1881,11 @@ static int _sde_encoder_dsc_2_lm_2_enc_1_intf(struct sde_encoder_virt *sde_enc,
 	int i, rc;
 
 	memset(&cfg, 0, sizeof(cfg));
+
+	if (params->num_channels < 2) {
+		SDE_ERROR_ENC(sde_enc, "invalid enc number for DSC\n");
+		return -EINVAL;
+	}
 
 	for (i = 0; i < params->num_channels; i++) {
 		hw_pp[i] = sde_enc->hw_pp[i];
@@ -2045,7 +2051,7 @@ static int _sde_encoder_dsc_3_lm_3_enc_3_intf(struct sde_encoder_virt *sde_enc,
 	SDE_DEBUG_ENC(sde_enc, "pic_w: %d pic_h: %d mode:%d\n",
 			roi->w, roi->h, dsc_common_mode);
 
-	for (i = 0; i < sde_enc->num_phys_encs; i++) {
+	for (i = 0; i < params->num_channels; i++) {
 		bool active = !!((1 << i) & params->affected_displays);
 
 		SDE_EVT32(DRMID(&sde_enc->base), roi->w, roi->h,
@@ -4097,6 +4103,9 @@ static void sde_encoder_underrun_callback(struct drm_encoder *drm_enc,
 	SDE_ATRACE_BEGIN("encoder_underrun_callback");
 	atomic_inc(&phy_enc->underrun_cnt);
 	SDE_EVT32(DRMID(drm_enc), atomic_read(&phy_enc->underrun_cnt));
+	if (drm_enc != NULL)
+		sde_recovery_set_event(drm_enc->dev, DRM_EVENT_SDE_UNDERRUN,
+				drm_enc->crtc);
 
 	trace_sde_encoder_underrun(DRMID(drm_enc),
 		atomic_read(&phy_enc->underrun_cnt));

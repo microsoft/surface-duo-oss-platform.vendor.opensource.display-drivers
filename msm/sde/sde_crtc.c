@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -43,6 +43,7 @@
 #include "sde_core_perf.h"
 #include "sde_trace.h"
 #include "sde_roi_misr_helper.h"
+#include "sde_recovery_manager.h"
 
 #define SDE_PSTATES_MAX (SDE_STAGE_MAX * 4)
 #define SDE_MULTIRECT_PLANE_MAX (SDE_STAGE_MAX * 2)
@@ -2883,6 +2884,10 @@ static void sde_crtc_frame_event_cb(void *data, u32 event)
 		}
 	}
 
+	if (event & SDE_ENCODER_FRAME_EVENT_ERROR)
+		sde_recovery_set_event(crtc->dev, DRM_EVENT_SDE_VSYNC_MISS,
+				crtc);
+
 	fevent->event = event;
 	fevent->crtc = crtc;
 	fevent->connector = cb_data->connector;
@@ -3856,7 +3861,7 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	 * apply color processing properties only if
 	 * smmu state is attached,
 	 */
-	for (i = 0; i < MAX_DSI_DISPLAYS; i++) {
+	for (i = 0; i < SDE_MAX_DISPLAYS; i++) {
 		splash_display = &sde_kms->splash_data.splash_display[i];
 		if (splash_display->cont_splash_enabled &&
 			splash_display->encoder &&
@@ -7164,6 +7169,10 @@ static int _sde_crtc_event_enable(struct sde_kms *kms,
 			break;
 		}
 	}
+
+	/* Try recovery manager */
+	if (!node)
+		node = sde_recovery_get_event_handler(kms->dev, event);
 
 	if (!node) {
 		SDE_ERROR("unsupported event %x\n", event);

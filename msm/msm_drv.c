@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -964,8 +964,9 @@ static void msm_lastclose(struct drm_device *dev)
 	flush_workqueue(priv->wq);
 
 	if (priv->fbdev) {
-		drm_fb_helper_restore_fbdev_mode_unlocked(priv->fbdev);
-		return;
+		rc = drm_fb_helper_restore_fbdev_mode_unlocked(priv->fbdev);
+		if (rc)
+			DRM_ERROR("restore FBDEV mode failed: %d\n", rc);
 	}
 
 	drm_modeset_acquire_init(&ctx, 0);
