@@ -511,6 +511,7 @@ struct dsi_host_common_cfg {
 	bool ignore_rx_eot;
 	bool append_tx_eot;
 	bool ext_bridge_mode;
+	bool ext_bridge_hpd_en;
 	bool force_hs_clk_lane;
 	enum dsi_phy_type phy_type;
 	struct dsi_split_link_config split_link;
