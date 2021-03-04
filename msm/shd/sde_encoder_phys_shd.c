@@ -767,7 +767,7 @@ int sde_encoder_phys_shd_atomic_check(struct sde_encoder_phys *phys_enc,
 		return -EINVAL;
 	}
 
-	if (!drm_atomic_crtc_needs_modeset(crtc_state))
+	if (!drm_atomic_crtc_needs_modeset(crtc_state) || !crtc_state->active)
 		return 0;
 
 	display = sde_connector_get_display(conn_state->connector);
