@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -119,7 +119,7 @@ int shp_plane_validate(struct shp_plane *splane,
 
 	if (!shp_state->active) {
 		/* handoff only if plane is staged */
-		if (!state->crtc)
+		if (!state->crtc && !shp_state->handoff)
 			return 0;
 
 		list_for_each_entry(p, &pool->plane_list, head) {
@@ -139,7 +139,7 @@ int shp_plane_validate(struct shp_plane *splane,
 
 			if (pstate->active) {
 				if (p == p->master && !pstate->handoff) {
-					SDE_DEBUG("plane%d is busy\n",
+					SDE_ERROR("plane%d is busy\n",
 						p->plane->base.id);
 					return -EBUSY;
 				}
