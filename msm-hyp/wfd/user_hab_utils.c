@@ -24,7 +24,9 @@
 #define CHANNEL_EVENTS		1
 #define MAX_CHANNELS		2
 #define WFD_MAX_NUM_OF_CLIENTS	10
-#define WD_CLIENT_ID_BASE	WFD_CLIENT_ID_CLUSTER
+#define WFD_CLIENT_ID_BASE	WFD_CLIENT_ID_CLUSTER
+#define WFD_CLIENT_ID_LA_CONTAINER	0x7818
+#define WFD_CLIENT_ID_LV_CONTAINER	0x7819
 
 #define DO_NOT_LOCK_CHANNEL	0x01
 #define HAB_NO_TIMEOUT_VAL	-1
@@ -70,34 +72,42 @@ static u32 channel_map[WFD_MAX_NUM_OF_CLIENTS][2] = {
 	/* Each MM ID translates to a physical channel per VM.
 	 * Different clients on the same VM should use different MM IDs.
 	 */
-	[WFD_CLIENT_ID_TELLTALE - WD_CLIENT_ID_BASE] /* Tell-Tale App */
+	[WFD_CLIENT_ID_TELLTALE - WFD_CLIENT_ID_BASE] /* Tell-Tale App */
 	{
 		MM_DISP_5
 	},
-	[WFD_CLIENT_ID_QNX_GVM - WD_CLIENT_ID_BASE] /* QNX GVM */
+	[WFD_CLIENT_ID_QNX_GVM - WFD_CLIENT_ID_BASE] /* QNX GVM */
 	{
 		MM_DISP_3,
 		MM_DISP_4
 	},
-	[WFD_CLIENT_ID_LA_GVM - WD_CLIENT_ID_BASE] /* LA GVM */
+	[WFD_CLIENT_ID_LA_GVM - WFD_CLIENT_ID_BASE] /* LA GVM */
 	{
 		MM_DISP_1,
 		MM_DISP_2
 	},
-	[WFD_CLIENT_ID_LV_GVM - WD_CLIENT_ID_BASE] /* LV GVM */
+	[WFD_CLIENT_ID_LV_GVM - WFD_CLIENT_ID_BASE] /* LV GVM */
+	{
+		MM_DISP_1,
+		MM_DISP_2
+	},
+	[WFD_CLIENT_ID_LA_CONTAINER - WFD_CLIENT_ID_BASE] /* LA Container */
+	{
+		MM_DISP_1,
+		MM_DISP_2
+	},
+	[WFD_CLIENT_ID_LV_CONTAINER - WFD_CLIENT_ID_BASE] /* LV Container */
 	{
 		MM_DISP_1,
 		MM_DISP_2
 	},
 };
-/*
- * ---------------------------------------------------------------------------
- * Global Variables
- * ---------------------------------------------------------------------------
- */
-static int32_t hyp_hdl_disp[MAX_CHANNELS];
-/* locks to serialize access to hypervisor channels */
-static struct mutex hyp_chl_lock[MAX_CHANNELS];
+
+struct user_os_utils_context {
+	u32 client_id;
+	int32_t hyp_hdl_disp[MAX_CHANNELS];
+	struct mutex hyp_chl_lock[MAX_CHANNELS];
+};
 
 /*
  * ---------------------------------------------------------------------------
@@ -106,6 +116,7 @@ static struct mutex hyp_chl_lock[MAX_CHANNELS];
  */
 static inline int32_t
 get_hab_handle(
+	struct user_os_utils_context *ctx,
 	u32 *chl_id,
 	u32 flags)
 {
@@ -116,8 +127,8 @@ get_hab_handle(
 		client_id = *chl_id;
 		if (client_id < MAX_CHANNELS) {
 			if (!(DO_NOT_LOCK_CHANNEL & flags))
-				mutex_lock(&hyp_chl_lock[client_id]);
-			chl_hdl = hyp_hdl_disp[client_id];
+				mutex_lock(&ctx->hyp_chl_lock[client_id]);
+			chl_hdl = ctx->hyp_hdl_disp[client_id];
 		}
 	}
 
@@ -126,11 +137,12 @@ get_hab_handle(
 
 static inline int
 rel_hab_handle(
+	struct user_os_utils_context *ctx,
 	u32 chl_id,
 	u32 flags)
 {
 	if (chl_id < MAX_CHANNELS)
-		mutex_unlock(&hyp_chl_lock[chl_id]);
+		mutex_unlock(&ctx->hyp_chl_lock[chl_id]);
 
 	return 0;
 }
@@ -145,18 +157,24 @@ user_os_utils_init(
 	struct user_os_utils_init_info *init_info,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx;
 	int rc = 0;
 	int client_id = init_info->client_id;
 	int client_idx = 0;
 
-	if ((client_id < WFD_CLIENT_ID_CLUSTER) || (client_id > WFD_CLIENT_ID_LV_GVM))
+	if ((client_id < WFD_CLIENT_ID_CLUSTER) ||
+		(client_id > WFD_CLIENT_ID_LV_CONTAINER))
 		return -EINVAL;
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
 
 	init_info->clock_id = CLOCK_MONOTONIC;
 	init_info->enable_event_handling = (flags & WIRE_INIT_EVENT_SUPPORT) ?
 			true : false;
 
-	client_idx = client_id - WD_CLIENT_ID_BASE;
+	client_idx = client_id - WFD_CLIENT_ID_BASE;
 
 	if (channel_map[client_idx][CHANNEL_OPENWFD] != 0x00) {
 	/* open hab channel for openwfd commands */
@@ -165,20 +183,24 @@ user_os_utils_init(
 #else
 		rc = habmm_socket_open_dummy(
 #endif
-			&hyp_hdl_disp[CHANNEL_OPENWFD],
+			&ctx->hyp_hdl_disp[CHANNEL_OPENWFD],
 			channel_map[client_idx][CHANNEL_OPENWFD],
 			(uint32_t)HAB_NO_TIMEOUT_VAL,
 			0x00);
 		if (rc) {
 			UTILS_LOG_ERROR("habmm_socket_open(HAB_CHNL_OPENWFD) failed");
-			return rc;
+			goto fail;
 		}
+	} else {
+		UTILS_LOG_ERROR("invalid hab channel id");
+		rc = -EINVAL;
+		goto fail;
 	}
 	/* create lock for openwfd commands hab channel */
-	mutex_init(&hyp_chl_lock[CHANNEL_OPENWFD]);
+	mutex_init(&ctx->hyp_chl_lock[CHANNEL_OPENWFD]);
 
 	UTILS_LOG_CRITICAL_INFO("OpenWFD channel open successful, handle=%d",
-			hyp_hdl_disp[CHANNEL_OPENWFD]);
+			ctx->hyp_hdl_disp[CHANNEL_OPENWFD]);
 
 	if ((init_info->enable_event_handling) &&
 		(channel_map[client_idx][CHANNEL_EVENTS]) != 0x00) {
@@ -188,72 +210,91 @@ user_os_utils_init(
 #else
 		rc = habmm_socket_open_dummy(
 #endif
-			&hyp_hdl_disp[CHANNEL_EVENTS],
+			&ctx->hyp_hdl_disp[CHANNEL_EVENTS],
 			channel_map[client_idx][CHANNEL_EVENTS],
 			(uint32_t)HAB_NO_TIMEOUT_VAL,
 			0x00);
 		if (rc) {
 			UTILS_LOG_ERROR("habmm_socket_open(HAB_CHNL_EVENTS) failed");
-			return rc;
+			goto fail;
 		}
 		/* create lock for events handling hab channel */
-		mutex_init(&hyp_chl_lock[CHANNEL_EVENTS]);
+		mutex_init(&ctx->hyp_chl_lock[CHANNEL_EVENTS]);
 
 		UTILS_LOG_CRITICAL_INFO("Events channel open successful, handle=%d",
-			hyp_hdl_disp[CHANNEL_EVENTS]);
+			ctx->hyp_hdl_disp[CHANNEL_EVENTS]);
 	}
 
+	ctx->client_id = client_id;
+	init_info->context = ctx;
+	return 0;
+
+fail:
+	kfree(ctx);
 	return rc;
 }
 
 int
 user_os_utils_deinit(
+	void *handle,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = handle;
 	int rc = 0;
 
+	if (!ctx)
+		return -EINVAL;
+
 	/* destroy lock for openwfd commands hab channel */
-	mutex_destroy(&hyp_chl_lock[CHANNEL_OPENWFD]);
+	mutex_destroy(&ctx->hyp_chl_lock[CHANNEL_OPENWFD]);
 	/* close hab channel for openwfd commands */
-	if (hyp_hdl_disp[CHANNEL_OPENWFD]) {
+	if (ctx->hyp_hdl_disp[CHANNEL_OPENWFD]) {
 #ifdef USE_HAB
-		rc = habmm_socket_close(hyp_hdl_disp[CHANNEL_OPENWFD]);
+		rc = habmm_socket_close(ctx->hyp_hdl_disp[CHANNEL_OPENWFD]);
 #else
-		rc = habmm_socket_close_dummy(hyp_hdl_disp[CHANNEL_OPENWFD]);
+		rc = habmm_socket_close_dummy(ctx->hyp_hdl_disp[CHANNEL_OPENWFD]);
 #endif
 		if (rc)
 			UTILS_LOG_ERROR("habmm_socket_close (CHANNEL_OPENWFD) failed");
 	}
 
 	/* close hab channel for events handling */
-	if (hyp_hdl_disp[CHANNEL_EVENTS]) {
+	if (ctx->hyp_hdl_disp[CHANNEL_EVENTS]) {
 		/* destroy lock for events handling hab channel */
-		mutex_destroy(&hyp_chl_lock[CHANNEL_EVENTS]);
+		mutex_destroy(&ctx->hyp_chl_lock[CHANNEL_EVENTS]);
 #ifdef USE_HAB
-		rc = habmm_socket_close(hyp_hdl_disp[CHANNEL_EVENTS]);
+		rc = habmm_socket_close(ctx->hyp_hdl_disp[CHANNEL_EVENTS]);
 #else
-		rc = habmm_socket_close_dummy(hyp_hdl_disp[CHANNEL_EVENTS]);
+		rc = habmm_socket_close_dummy(ctx->hyp_hdl_disp[CHANNEL_EVENTS]);
 #endif
 		if (rc)
 			UTILS_LOG_ERROR("habmm_socket_close (CHANNEL_EVENTS) failed");
 	}
+
+	kfree(ctx);
 
 	return 0;
 }
 
 void
 user_os_utils_get_id(
+	void *handle,
 	u32 *id,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = handle;
+
+	*id = ctx->client_id;
 }
 
 int
 user_os_utils_send_recv(
+	void *context,
 	struct wire_packet *req,
 	struct wire_packet *resp,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = context;
 	int rc = 0;
 	int32_t handle = 0;
 	u32 chl_id = 0;
@@ -297,7 +338,7 @@ user_os_utils_send_recv(
 		goto end;
 	}
 
-	handle = get_hab_handle(&chl_id, 0x00);
+	handle = get_hab_handle(ctx, &chl_id, 0x00);
 	if (!handle) {
 		UTILS_LOG_ERROR("get_hab_handle failed for chl_id=%d", chl_id);
 		rc = -1;
@@ -413,7 +454,7 @@ user_os_utils_send_recv(
 
 end:
 	if (handle) {
-		if (rel_hab_handle(chl_id, 0x00))
+		if (rel_hab_handle(ctx, chl_id, 0x00))
 			UTILS_LOG_ERROR("rel_hab_handle failed");
 	}
 
@@ -422,9 +463,11 @@ end:
 
 int
 user_os_utils_recv(
+	void *context,
 	struct wire_packet *req,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = context;
 	int rc = 0;
 	int32_t handle = 0;
 	u32 chl_id = 0;
@@ -452,7 +495,7 @@ user_os_utils_recv(
 		goto end;
 	}
 
-	handle = get_hab_handle(&chl_id, 0x00);
+	handle = get_hab_handle(ctx, &chl_id, 0x00);
 	if (!handle) {
 		UTILS_LOG_ERROR("get_hab_handle failed for chl_id=%d", chl_id);
 		rc = -1;
@@ -490,7 +533,7 @@ user_os_utils_recv(
 
 end:
 	if (handle) {
-		if (rel_hab_handle(chl_id, 0x00))
+		if (rel_hab_handle(ctx, chl_id, 0x00))
 			UTILS_LOG_ERROR("rel_hab_handle failed");
 	}
 
@@ -499,9 +542,11 @@ end:
 
 int
 user_os_utils_shmem_export(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = context;
 	int32_t rc = 0;
 	int32_t handle = 0;
 	u32 chl_id = CHANNEL_OPENWFD;
@@ -514,7 +559,7 @@ user_os_utils_shmem_export(
 		goto end;
 	}
 
-	handle = get_hab_handle(&chl_id, 0x00);
+	handle = get_hab_handle(ctx, &chl_id, 0x00);
 	if (!handle) {
 		UTILS_LOG_ERROR("get_hab_handle failed for chl_id=%d",
 			chl_id);
@@ -545,7 +590,7 @@ user_os_utils_shmem_export(
 
 end:
 	if (handle) {
-		if (rel_hab_handle(chl_id, 0x00))
+		if (rel_hab_handle(ctx, chl_id, 0x00))
 			UTILS_LOG_ERROR("rel_hab_handle failed");
 	}
 
@@ -554,9 +599,11 @@ end:
 
 int
 user_os_utils_shmem_import(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = context;
 	int32_t rc = 0;
 	int32_t handle = 0;
 	u32 chl_id = CHANNEL_OPENWFD;
@@ -568,7 +615,7 @@ user_os_utils_shmem_import(
 		goto end;
 	}
 
-	handle = get_hab_handle(&chl_id, 0x00);
+	handle = get_hab_handle(ctx, &chl_id, 0x00);
 	if (!handle) {
 		UTILS_LOG_ERROR("get_hab_handle failed for chl_id=%d",
 			chl_id);
@@ -603,7 +650,7 @@ user_os_utils_shmem_import(
 
 end:
 	if (handle) {
-		if (rel_hab_handle(chl_id, 0x00))
+		if (rel_hab_handle(ctx, chl_id, 0x00))
 			UTILS_LOG_ERROR("rel_hab_handle failed");
 	}
 
@@ -612,9 +659,11 @@ end:
 
 int
 user_os_utils_shmem_unexport(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = context;
 	int32_t rc = 0;
 	int32_t handle = 0;
 	u32 chl_id = CHANNEL_OPENWFD;
@@ -626,7 +675,7 @@ user_os_utils_shmem_unexport(
 		goto end;
 	}
 
-	handle = get_hab_handle(&chl_id, 0x00);
+	handle = get_hab_handle(ctx, &chl_id, 0x00);
 	if (!handle) {
 		UTILS_LOG_ERROR("get_hab_handle failed for chl_id=%d", chl_id);
 		rc = -1;
@@ -656,7 +705,7 @@ user_os_utils_shmem_unexport(
 
 end:
 	if (handle) {
-		if (rel_hab_handle(chl_id, 0x00))
+		if (rel_hab_handle(ctx, chl_id, 0x00))
 			UTILS_LOG_ERROR("rel_hab_handle failed");
 	}
 
@@ -665,9 +714,11 @@ end:
 
 int
 user_os_utils_shmem_unimport(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags)
 {
+	struct user_os_utils_context *ctx = context;
 	int32_t rc = 0;
 	int32_t handle = 0;
 	u32 chl_id = CHANNEL_OPENWFD;
@@ -679,7 +730,7 @@ user_os_utils_shmem_unimport(
 		goto end;
 	}
 
-	handle = get_hab_handle(&chl_id, 0x00);
+	handle = get_hab_handle(ctx, &chl_id, 0x00);
 	if (!handle) {
 		UTILS_LOG_ERROR("get_hab_handle failed for chl_id=%d", chl_id);
 		rc = -1;
@@ -712,7 +763,7 @@ user_os_utils_shmem_unimport(
 
 end:
 	if (handle) {
-		if (rel_hab_handle(chl_id, 0x00))
+		if (rel_hab_handle(ctx, chl_id, 0x00))
 			UTILS_LOG_ERROR("rel_hab_handle failed");
 	}
 

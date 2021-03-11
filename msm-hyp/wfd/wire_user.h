@@ -97,7 +97,8 @@ struct cb_info {
 int wire_user_init(uint32_t client_id,
 		uint32_t flags);
 
-int wire_user_deinit(uint32_t flags);
+int wire_user_deinit(uint32_t client_id,
+		uint32_t flags);
 
 /* ========== OPENWFD ========== */
 
@@ -353,11 +354,13 @@ void wfdDestroySource_User(
 
 /* ========== EVENT ========== */
 int wire_user_register_event_listener(
+		WFDDevice device,
 		enum event_types type,
 		union event_info *info,
 		struct cb_info *cb_info);
 
 int wire_user_request_cb(
+		WFDDevice device,
 		enum event_types type,
 		union event_info *info);
 

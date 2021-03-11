@@ -771,21 +771,26 @@ static int _wfd_kms_hw_init(struct wfd_kms *kms)
 	WFDint wfd_port_ids[MAX_PORT_CNT];
 	WFDPort port;
 	int i, j, num_port, port_idx;
+	int rc;
 
 	attribs[0] = WFD_DEVICE_CLIENT_TYPE;
 	attribs[1] = kms->client_id;
 	attribs[2] = WFD_NONE;
 
-	wire_user_init(kms->client_id, WIRE_INIT_EVENT_SUPPORT);
+	rc = wire_user_init(kms->client_id, WIRE_INIT_EVENT_SUPPORT);
+	if (rc) {
+		pr_err("failed to init wire user for client %x\n", kms->client_id);
+		return rc;
+	}
 
 	/* open a open WFD device */
-	num_dev = wfdEnumerateDevices_User(NULL, 0, NULL);
+	num_dev = wfdEnumerateDevices_User(NULL, 0, attribs);
 	if (!num_dev) {
 		pr_err("wfdEnumerateDevices_User - failed!\n");
 		return -ENODEV;
 	}
 
-	wfdEnumerateDevices_User(wfd_ids, num_dev, NULL);
+	wfdEnumerateDevices_User(wfd_ids, num_dev, attribs);
 
 	for (j = 0; j < num_dev; j++) {
 		wfd_dev = wfdCreateDevice_User(wfd_ids[j], attribs);
@@ -1522,11 +1527,13 @@ static void _wfd_kms_req_vblank(struct drm_crtc *crtc)
 	pr_debug("register vsync event id=%d\n",
 			disp_event.display_id);
 
-	wire_user_register_event_listener(DISPLAY_EVENT,
+	wire_user_register_event_listener(priv->wfd_device,
+			DISPLAY_EVENT,
 			(union event_info *)&disp_event,
 			&cb_info);
 
-	wire_user_request_cb(DISPLAY_EVENT,
+	wire_user_request_cb(priv->wfd_device,
+			DISPLAY_EVENT,
 			(union event_info *)&disp_event);
 }
 
@@ -1557,6 +1564,7 @@ static void wfd_kms_commit(struct msm_hyp_kms *kms,
 		cb_info.user_data = crtc;
 
 		wire_user_register_event_listener(
+				priv->wfd_device,
 				DISPLAY_EVENT,
 				(union event_info *)&disp_event,
 				&cb_info);
@@ -1668,7 +1676,13 @@ static int wfd_kms_probe(struct platform_device *pdev)
 static int wfd_kms_remove(struct platform_device *pdev)
 {
 	struct wfd_kms *kms = platform_get_drvdata(pdev);
-	int i;
+	int i, j;
+
+	for (i = 0; i < kms->port_cnt; i++) {
+		for (j = 0; j < kms->pipeline_cnt[i]; j++)
+			wfdDestroyPipeline_User(kms->port_devs[i], kms->pipelines[i][j]);
+		wfdDestroyPort_User(kms->port_devs[i], kms->ports[i]);
+	}
 
 	for (i = 0; i < kms->wfd_device_cnt; i++)
 		wfdDestroyDevice_User(kms->wfd_device[i]);

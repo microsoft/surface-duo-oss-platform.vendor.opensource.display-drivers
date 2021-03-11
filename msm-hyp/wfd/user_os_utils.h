@@ -36,6 +36,7 @@ struct user_os_utils_init_info {
 	u32 enable_event_handling;
 	u32 clock_id;
 	u32 client_id;
+	void *context;
 };
 
 struct user_os_utils_mem_info {
@@ -60,41 +61,49 @@ user_os_utils_init(
 
 int
 user_os_utils_deinit(
+	void *context,
 	u32 flags);
 
 void
 user_os_utils_get_id(
+	void *context,
 	u32 *id,
 	u32 flags);
 
 int
 user_os_utils_send_recv(
+	void *context,
 	struct wire_packet *req,
 	struct wire_packet *resp,
 	u32 flags);
 
 int
 user_os_utils_recv(
+	void *context,
 	struct wire_packet *req,
 	u32 flags);
 
 int
 user_os_utils_shmem_export(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags);
 
 int
 user_os_utils_shmem_import(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags);
 
 int
 user_os_utils_shmem_unexport(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags);
 
 int
 user_os_utils_shmem_unimport(
+	void *context,
 	struct user_os_utils_mem_info *mem,
 	u32 flags);
 

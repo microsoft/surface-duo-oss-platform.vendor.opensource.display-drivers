@@ -55,19 +55,36 @@ struct cb_info_node {
 	struct list_head head;
 };
 
+struct wire_context {
+	struct list_head head;
+	struct user_os_utils_init_info init_info;
+	bool wire_isr_enable;
+	bool wire_isr_stop;
+	struct list_head _cb_info_ctx;
+	struct mutex _event_cb_lock;
+	struct task_struct *listener_thread;
+};
+
+struct wire_device {
+	WFDDevice device;
+	struct wire_context *ctx;
+};
+
+struct wire_port {
+	WFDPort port;
+};
+
+struct wire_pipeline {
+	WFDPipeline pipeline;
+};
+
 /*
  * ---------------------------------------------------------------------------
  * Global Variables
  * ---------------------------------------------------------------------------
  */
-struct user_os_utils_init_info init_info = {0, 0, 0};
 
-static bool wire_isr_enable;
-static bool wire_isr_stop;
-
-static LIST_HEAD(_cb_info_ctx);
-static struct mutex _event_cb_lock;
-static struct task_struct *listener_thread;
+static LIST_HEAD(g_context_list);
 
 static int event_listener(void *param);
 
@@ -146,15 +163,21 @@ static void get_timestamp(
  * ---------------------------------------------------------------------------
  */
 
-#if MAX_BUFS_CNT > 1
+#if (MAX_BUFS_CNT > 1) || defined(WIRE_USER_PROFILING_ENABLE)
 #define WIRE_HEAP static
 static struct mutex _heap_mutex[PROFILING_MAX + 1];
+static bool _heap_inited;
 static inline void wire_user_heap_init(void)
 {
 	int i;
 
+	if (_heap_inited)
+		return;
+
 	for (i = 0; i < PROFILING_MAX + 1; i++)
 		mutex_init(&_heap_mutex[i]);
+
+	_heap_inited = true;
 }
 static inline void wire_user_heap_begin(u32 index)
 {
@@ -345,60 +368,93 @@ int
 wire_user_init(u32 client_id,
 	u32 flags)
 {
+	struct wire_context *ctx;
 	int rc = 0;
 
 	wire_user_heap_init();
 
-	memset((char *)&init_info,
-		0x00,
-		sizeof(struct user_os_utils_init_info));
-
-	init_info.client_id = client_id;
-
-	rc = user_os_utils_init(&init_info, flags);
-	if (rc)
-		WIRE_LOG_ERROR("user_os_utils_init failed");
-
-	/* event handling initialization */
-	if ((rc == 0) && (init_info.enable_event_handling)) {
-		wire_isr_enable = true;
-		wire_isr_stop = false;
-		/* init event callback lock */
-		mutex_init(&_event_cb_lock);
-
-		/* create event listener thread */
-		listener_thread = kthread_run(event_listener, NULL,
-				"wfd event listener");
+	list_for_each_entry(ctx, &g_context_list, head) {
+		if (ctx->init_info.client_id == client_id) {
+			WIRE_LOG_ERROR("client %d already inited\n", client_id);
+			return -EINVAL;
+		}
 	}
 
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	ctx->init_info.client_id = client_id;
+
+	rc = user_os_utils_init(&ctx->init_info, flags);
+	if (rc) {
+		WIRE_LOG_ERROR("user_os_utils_init failed");
+		goto fail;
+	}
+
+	/* event handling initialization */
+	if ((rc == 0) && (ctx->init_info.enable_event_handling)) {
+		ctx->wire_isr_enable = true;
+		ctx->wire_isr_stop = false;
+		/* init event callback lock */
+		mutex_init(&ctx->_event_cb_lock);
+
+		/* create event listener thread */
+		ctx->listener_thread = kthread_run(event_listener, ctx,
+				"wfd event listener");
+
+		INIT_LIST_HEAD(&ctx->_cb_info_ctx);
+	}
+
+	list_add_tail(&ctx->head, &g_context_list);
+
+	return 0;
+fail:
+	kfree(ctx);
 	return rc;
 }
 
 int
 wire_user_deinit(
+	u32 client_id,
 	u32 flags)
 {
+	struct wire_context *p, *ctx = NULL;
 	int rc = 0;
 
-	if (init_info.enable_event_handling) {
-		wire_isr_stop = true;
-		wire_isr_enable = false;
+	list_for_each_entry(p, &g_context_list, head) {
+		if (p->init_info.client_id == client_id) {
+			ctx = p;
+			break;
+		}
 	}
 
-	rc = user_os_utils_deinit(0x00);
-	if (rc)
+	if (!ctx) {
+		WIRE_LOG_ERROR("failed to find client %d\n", client_id);
+		return -EINVAL;
+	}
+
+	if (ctx->init_info.enable_event_handling) {
+		ctx->wire_isr_stop = true;
+		ctx->wire_isr_enable = false;
+	}
+
+	rc = user_os_utils_deinit(ctx->init_info.context, 0x00);
+	if (rc) {
 		WIRE_LOG_ERROR("user_os_utils_deinit failed");
+		goto fail;
+	}
 
 	/* event handling de-initialization */
-	if (init_info.enable_event_handling) {
-		mutex_destroy(&_event_cb_lock);
-		kthread_stop(listener_thread);
+	if (ctx->init_info.enable_event_handling) {
+		mutex_destroy(&ctx->_event_cb_lock);
+		kthread_stop(ctx->listener_thread);
 	}
 
-	memset((char *)&init_info,
-		0x00,
-		sizeof(struct user_os_utils_init_info));
+	list_del(&ctx->head);
+	kfree(ctx);
 
+fail:
 	return rc;
 }
 
@@ -411,6 +467,11 @@ wfdEnumerateDevices_User(
 	WFDint deviceIdsCount,
 	const WFDint *filterList)
 {
+	struct wire_context *p, *ctx = NULL;
+	WFDint *tmp = (WFDint *)filterList;
+	u32 client_id = 0;
+	void *handle;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -423,6 +484,34 @@ wfdEnumerateDevices_User(
 
 	wire_user_profile_begin(WFD_ENUMERATE_DEVICES_PROFILING);
 
+	while ((tmp) && (*tmp != WFD_NONE) && (i < MAX_CREATE_DEVICE_ATTRIBS - 1)) {
+		if (*tmp == WFD_DEVICE_CLIENT_TYPE) {
+			client_id = tmp[1];
+			break;
+		}
+		i++;
+		tmp++;
+	}
+
+	if (!client_id) {
+		WIRE_LOG_ERROR("can't find client id in filter list\n");
+		goto end;
+	}
+
+	list_for_each_entry(p, &g_context_list, head) {
+		if (p->init_info.client_id == client_id) {
+			ctx = p;
+			break;
+		}
+	}
+
+	if (!ctx) {
+		WIRE_LOG_ERROR("can't find client id %d\n", client_id);
+		goto end;
+	}
+
+	handle = ctx->init_info.context;
+
 	memset((char *)&req, 0x00, sizeof(struct wire_packet));
 	memset((char *)&resp, 0x00, sizeof(struct wire_packet));
 
@@ -432,7 +521,7 @@ wfdEnumerateDevices_User(
 	}
 
 	req.payload.wfd_req.num_of_cmds = 1;
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	wfd_req_cmd->type = ENUMERATE_DEVICES;
 
 	enum_devs = (union msg_enumerate_devices *)
@@ -440,7 +529,7 @@ wfdEnumerateDevices_User(
 
 	enum_devs->req.dev_ids_cnt = (deviceIds) ? (u32)deviceIdsCount : 0;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -469,6 +558,11 @@ wfdCreateDevice_User(
 	WFDint deviceId,
 	const WFDint *attribList)
 {
+	struct wire_device *wire_dev = NULL;
+	struct wire_context *p, *ctx = NULL;
+	u32 client_id = 0;
+	void *handle;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -482,6 +576,37 @@ wfdCreateDevice_User(
 
 	wire_user_profile_begin(WFD_CREATE_DEVICE_PROFILING);
 
+	while ((tmp) && (*tmp != WFD_NONE) && (i < MAX_CREATE_DEVICE_ATTRIBS - 1)) {
+		if (*tmp == WFD_DEVICE_CLIENT_TYPE) {
+			client_id = tmp[1];
+			break;
+		}
+		i++;
+		tmp++;
+	}
+
+	i = 0;
+	tmp = (WFDint *)attribList;
+
+	if (!client_id) {
+		WIRE_LOG_ERROR("can't find client id in attrib list\n");
+		goto end;
+	}
+
+	list_for_each_entry(p, &g_context_list, head) {
+		if (p->init_info.client_id == client_id) {
+			ctx = p;
+			break;
+		}
+	}
+
+	if (!ctx) {
+		WIRE_LOG_ERROR("can't find client id %d\n", client_id);
+		goto end;
+	}
+
+	handle = ctx->init_info.context;
+
 	memset((char *)&req, 0x00, sizeof(struct wire_packet));
 	memset((char *)&resp, 0x00, sizeof(struct wire_packet));
 
@@ -490,7 +615,7 @@ wfdCreateDevice_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = CREATE_DEVICE;
 
@@ -509,24 +634,32 @@ wfdCreateDevice_User(
 	/* server expects last item to be WFD_NONE */
 	create_dev->req.attrib_list[i] = WFD_NONE;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
 
 	dev_hdl = (WFDDevice)(uintptr_t)(wfd_resp_cmd->cmd.create_dev.resp.client_dev_hdl);
+	if (dev_hdl == WFD_INVALID_HANDLE)
+		goto end;
 
+	wire_dev = kzalloc(sizeof(*wire_dev), GFP_KERNEL);
+	wire_dev->device = dev_hdl;
+	wire_dev->ctx = ctx;
 end:
 
 	wire_user_profile_end(WFD_CREATE_DEVICE_PROFILING, true);
 
-	return dev_hdl;
+	return wire_dev;
 }
 
 WFDErrorCode
 wfdDestroyDevice_User(
 	WFDDevice device)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -546,20 +679,23 @@ wfdDestroyDevice_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = DESTROY_DEVICE;
 
 	destroy_dev = (union msg_destroy_device *)
 			&(wfd_req_cmd->cmd.destroy_dev);
-	destroy_dev->req.dev = (u32)(uintptr_t)device;
+	destroy_dev->req.dev = (u32)(uintptr_t)wire_dev->device;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
 
 	sts = (WFDErrorCode)wfd_resp_cmd->cmd.destroy_dev.resp.sts;
+
+	if (sts == WFD_ERROR_NONE)
+		kfree(wire_dev);
 
 end:
 
@@ -569,54 +705,16 @@ end:
 }
 
 void
-wfdDeviceCommit_User(
-	WFDDevice device,
-	WFDCommitType type,
-	WFDHandle hdl)
-{
-	/* Request/Response */
-	WIRE_HEAP struct wire_packet req, resp;
-	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
-
-	/* Command specific */
-	union msg_device_commit *dev_commit = NULL;
-
-	wire_user_profile_begin(WFD_DEVICE_COMMIT_PROFILING);
-
-	memset((char *)&req, 0x00, sizeof(struct wire_packet));
-	memset((char *)&resp, 0x00, sizeof(struct wire_packet));
-
-	if (prep_hdr(OPENWFD_CMD, &req)) {
-		WIRE_LOG_ERROR("prep_hdr failed");
-		goto end;
-	}
-
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
-	req.payload.wfd_req.num_of_cmds = 1;
-	wfd_req_cmd->type = DEVICE_COMMIT;
-
-	dev_commit = (union msg_device_commit *)&(wfd_req_cmd->cmd.dev_commit);
-	dev_commit->req.dev = (u32)(uintptr_t)device;
-	dev_commit->req.type = (u32)type;
-	dev_commit->req.hdl = (u32)(uintptr_t)hdl;
-
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
-		WIRE_LOG_ERROR("RPC call failed");
-		goto end;
-	}
-
-end:
-
-	wire_user_profile_end(WFD_DEVICE_COMMIT_PROFILING, true);
-}
-
-void
 wfdDeviceCommitExt_User(
 	WFDDevice device,
 	WFDCommitType type,
 	WFDHandle hdl,
 	WFDint flags)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = hdl;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -628,6 +726,11 @@ wfdDeviceCommitExt_User(
 
 	wire_user_profile_begin(WFD_DEVICE_COMMIT_EXT_PROFILING);
 
+	if (type != WFD_COMMIT_ENTIRE_PORT) {
+		WIRE_LOG_ERROR("unsupported type %d\n", type);
+		goto end;
+	}
+
 	memset((char *)&req, 0x00, sizeof(struct wire_packet));
 	memset((char *)&resp, 0x00, sizeof(struct wire_packet));
 
@@ -638,18 +741,18 @@ wfdDeviceCommitExt_User(
 
 	req.hdr.flags |= WIRE_RESP_NOACK_FLAG;
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = DEVICE_COMMIT_EXT;
 
 	dev_commit_ext = (union msg_device_commit_ext *)
 					&(wfd_req_cmd->cmd.dev_commit_ext);
-	dev_commit_ext->req.dev = (u32)(uintptr_t)device;
+	dev_commit_ext->req.dev = (u32)(uintptr_t)wire_dev->device;
 	dev_commit_ext->req.type = (u32)type;
-	dev_commit_ext->req.hdl = (u32)(uintptr_t)hdl;
+	dev_commit_ext->req.hdl = (u32)(uintptr_t)wire_port->port;
 	dev_commit_ext->req.flags = (u32)flags;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -668,6 +771,9 @@ wfdGetDeviceAttribi_User(
 	WFDDevice device,
 	WFDDeviceAttrib attrib)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -687,16 +793,16 @@ wfdGetDeviceAttribi_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_DEVICE_ATTRIBI;
 
 	get_dev_attribi = (union msg_get_device_attribi *)
 				&(wfd_req_cmd->cmd.get_dev_attribi);
-	get_dev_attribi->req.dev = (u32)(uintptr_t)device;
+	get_dev_attribi->req.dev = (u32)(uintptr_t)wire_dev->device;
 	get_dev_attribi->req.attrib = (u32)attrib;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -716,6 +822,9 @@ wfdSetDeviceAttribi_User(
 	WFDDeviceAttrib attrib,
 	WFDint value)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -733,17 +842,17 @@ wfdSetDeviceAttribi_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_DEVICE_ATTRIBI;
 
 	set_dev_attribi = (union msg_set_device_attribi *)
 				&(wfd_req_cmd->cmd.set_dev_attribi);
-	set_dev_attribi->req.dev = (u32)(uintptr_t)device;
+	set_dev_attribi->req.dev = (u32)(uintptr_t)wire_dev->device;
 	set_dev_attribi->req.attrib = (u32)attrib;
 	set_dev_attribi->req.val = (i32)value;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -760,6 +869,9 @@ wfdGetDeviceAttribiv_User(
 	WFDint count,
 	WFDint *value)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -784,17 +896,17 @@ wfdGetDeviceAttribiv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_DEVICE_ATTRIBIV;
 
 	get_dev_attribiv = (union msg_get_device_attribiv *)
 				&(wfd_req_cmd->cmd.get_dev_attribiv);
-	get_dev_attribiv->req.dev = (u32)(uintptr_t)device;
+	get_dev_attribiv->req.dev = (u32)(uintptr_t)wire_dev->device;
 	get_dev_attribiv->req.attrib = (u32)attrib;
 	get_dev_attribiv->req.attrib_cnt = (u32)count;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -818,6 +930,9 @@ wfdEnumeratePorts_User(
 	WFDint portIdsCount,
 	const WFDint *filterList)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -838,17 +953,17 @@ wfdEnumeratePorts_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = ENUMERATE_PORTS;
 
 	enum_ports = (union msg_enumerate_ports *)
 			&wfd_req_cmd->cmd.enumerate_ports;
 
-	enum_ports->req.dev = (u32)(uintptr_t)device;
+	enum_ports->req.dev = (u32)(uintptr_t)wire_dev->device;
 	enum_ports->req.port_ids_cnt = (portIds) ? (u32)portIdsCount : 0;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -879,6 +994,10 @@ wfdCreatePort_User(
 	WFDint portId,
 	const WFDint *attribList)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = NULL;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -898,27 +1017,35 @@ wfdCreatePort_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = CREATE_PORT;
 
 	create_port = (union msg_create_port *)
 			&wfd_req_cmd->cmd.create_port;
-	create_port->req.dev = (u32)(uintptr_t)device;
+	create_port->req.dev = (u32)(uintptr_t)wire_dev->device;
 	create_port->req.port_id = (u32)portId;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
 
 	port_hdl = (WFDPort)(uintptr_t)wfd_resp_cmd->cmd.create_port.resp.client_port_hdl;
+	if (port_hdl == WFD_INVALID_HANDLE)
+		goto end;
+
+	wire_port = kzalloc(sizeof(*wire_port), GFP_KERNEL);
+	if (!wire_port)
+		goto end;
+
+	wire_port->port = port_hdl;
 
 end:
 
 	wire_user_profile_end(WFD_CREATE_PORT_PROFILING, true);
 
-	return port_hdl;
+	return wire_port;
 }
 
 void
@@ -926,6 +1053,10 @@ wfdDestroyPort_User(
 	WFDDevice device,
 	WFDPort port)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -943,19 +1074,21 @@ wfdDestroyPort_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = DESTROY_PORT;
 
 	destroy_port = (union msg_destroy_port *)
 			&wfd_req_cmd->cmd.destroy_port;
-	destroy_port->req.dev = (u32)(uintptr_t)device;
-	destroy_port->req.port = (u32)(uintptr_t)port;
+	destroy_port->req.dev = (u32)(uintptr_t)wire_dev->device;
+	destroy_port->req.port = (u32)(uintptr_t)wire_port->port;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
+
+	kfree(wire_port);
 
 end:
 
@@ -969,6 +1102,10 @@ wfdGetPortModes_User(
 	WFDPortMode *modes,
 	WFDint modesCount)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -989,18 +1126,18 @@ wfdGetPortModes_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_MODES;
 
 	get_port_mode = (union msg_get_port_modes *)
 			&(wfd_req_cmd->cmd.get_port_modes);
 
-	get_port_mode->req.dev = (u32)(uintptr_t)device;
-	get_port_mode->req.port = (u32)(uintptr_t)port;
+	get_port_mode->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_mode->req.port = (u32)(uintptr_t)wire_port->port;
 	get_port_mode->req.modes_cnt = (modes) ? (u32)modesCount : 0;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1030,6 +1167,10 @@ wfdGetPortModeAttribi_User(
 	WFDPortMode mode,
 	WFDPortModeAttrib attrib)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1049,18 +1190,18 @@ wfdGetPortModeAttribi_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_MODE_ATTRIBI;
 
 	get_port_mode_attrib = (union msg_get_port_mode_attribi *)
 				&(wfd_req_cmd->cmd.get_port_mode_attribi);
-	get_port_mode_attrib->req.dev = (u32)(uintptr_t)device;
-	get_port_mode_attrib->req.port = (u32)(uintptr_t)port;
+	get_port_mode_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_mode_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	get_port_mode_attrib->req.mode = (u32)(uintptr_t)mode;
 	get_port_mode_attrib->req.attrib = (u32)attrib;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1081,6 +1222,10 @@ wfdGetPortModeAttribf_User(
 	WFDPortMode mode,
 	WFDPortModeAttrib attrib)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1100,18 +1245,18 @@ wfdGetPortModeAttribf_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_MODE_ATTRIBF;
 
 	get_port_mode_attrib = (union msg_get_port_mode_attribf *)
 				&(wfd_req_cmd->cmd.get_port_mode_attribf);
-	get_port_mode_attrib->req.dev = (u32)(uintptr_t)device;
-	get_port_mode_attrib->req.port = (u32)(uintptr_t)port;
+	get_port_mode_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_mode_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	get_port_mode_attrib->req.mode = (u32)(uintptr_t)mode;
 	get_port_mode_attrib->req.attrib = (u32)attrib;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1131,6 +1276,10 @@ wfdSetPortMode_User(
 	WFDPort port,
 	WFDPortMode mode)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1148,17 +1297,17 @@ wfdSetPortMode_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PORT_MODE;
 
 	set_port_mode = (union msg_set_port_mode *)
 			&(wfd_req_cmd->cmd.set_port_mode);
-	set_port_mode->req.dev = (u32)(uintptr_t)device;
-	set_port_mode->req.port = (u32)(uintptr_t)port;
+	set_port_mode->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_port_mode->req.port = (u32)(uintptr_t)wire_port->port;
 	set_port_mode->req.mode = (u32)(uintptr_t)mode;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1173,6 +1322,10 @@ wfdGetCurrentPortMode_User(
 	WFDDevice device,
 	WFDPort port)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1192,16 +1345,16 @@ wfdGetCurrentPortMode_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_MODES;
 
 	get_port_mode = (union msg_get_current_port_mode *)
 			&(wfd_req_cmd->cmd.get_current_port_mode);
-	get_port_mode->req.dev = (u32)(uintptr_t)device;
-	get_port_mode->req.port = (u32)(uintptr_t)port;
+	get_port_mode->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_mode->req.port = (u32)(uintptr_t)wire_port->port;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1221,6 +1374,10 @@ wfdGetPortAttribi_User(
 	WFDPort port,
 	WFDPortConfigAttrib attrib)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1240,17 +1397,17 @@ wfdGetPortAttribi_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_ATTRIBI;
 
 	get_port_attrib = (union msg_get_port_attribi *)
 			&(wfd_req_cmd->cmd.get_port_attribi);
-	get_port_attrib->req.dev = (u32)(uintptr_t)device;
-	get_port_attrib->req.port = (u32)(uintptr_t)port;
+	get_port_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	get_port_attrib->req.attrib = (u32)attrib;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1270,6 +1427,10 @@ wfdGetPortAttribf_User(
 	WFDPort port,
 	WFDPortConfigAttrib attrib)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1289,17 +1450,17 @@ wfdGetPortAttribf_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_ATTRIBF;
 
 	get_port_attrib = (union msg_get_port_attribf *)
 				&(wfd_req_cmd->cmd.get_port_attribf);
-	get_port_attrib->req.dev = (u32)(uintptr_t)device;
-	get_port_attrib->req.port = (u32)(uintptr_t)port;
+	get_port_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	get_port_attrib->req.attrib = (u32)attrib;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1322,6 +1483,10 @@ wfdGetPortAttribiv_User(
 	WFDint count,
 	WFDint *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1347,18 +1512,18 @@ wfdGetPortAttribiv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_ATTRIBIV;
 
 	get_port_attribiv = (union msg_get_port_attribiv *)
 			&(wfd_req_cmd->cmd.get_port_attribiv);
-	get_port_attribiv->req.dev = (u32)(uintptr_t)device;
-	get_port_attribiv->req.port = (u32)(uintptr_t)port;
+	get_port_attribiv->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_attribiv->req.port = (u32)(uintptr_t)wire_port->port;
 	get_port_attribiv->req.attrib = (u32)attrib;
 	get_port_attribiv->req.attrib_cnt = (u32)count;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1381,6 +1546,10 @@ wfdGetPortAttribfv_User(
 	WFDint count,
 	WFDfloat *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1406,18 +1575,18 @@ wfdGetPortAttribfv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PORT_ATTRIBFV;
 
 	get_port_attribfv = (union msg_get_port_attribfv *)
 				&(wfd_req_cmd->cmd.get_port_attribfv);
-	get_port_attribfv->req.dev = (u32)(uintptr_t)device;
-	get_port_attribfv->req.port = (u32)(uintptr_t)port;
+	get_port_attribfv->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_port_attribfv->req.port = (u32)(uintptr_t)wire_port->port;
 	get_port_attribfv->req.attrib = (u32)attrib;
 	get_port_attribfv->req.attrib_cnt = (u32)count;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1438,6 +1607,10 @@ wfdSetPortAttribi_User(
 	WFDPortConfigAttrib attrib,
 	WFDint value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1454,18 +1627,18 @@ wfdSetPortAttribi_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PORT_ATTRIBI;
 
 	set_port_attrib = (union msg_set_port_attribi *)
 			&(wfd_req_cmd->cmd.set_port_attribi);
-	set_port_attrib->req.dev = (u32)(uintptr_t)device;
-	set_port_attrib->req.port = (u32)(uintptr_t)port;
+	set_port_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_port_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	set_port_attrib->req.attrib = (u32)attrib;
 	set_port_attrib->req.val = (i32)value;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1482,6 +1655,10 @@ wfdSetPortAttribf_User(
 	WFDPortConfigAttrib attrib,
 	WFDfloat value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1499,18 +1676,18 @@ wfdSetPortAttribf_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PORT_ATTRIBF;
 
 	set_port_attrib = (union msg_set_port_attribf *)
 			&(wfd_req_cmd->cmd.set_port_attribf);
-	set_port_attrib->req.dev = (u32)(uintptr_t)device;
-	set_port_attrib->req.port = (u32)(uintptr_t)port;
+	set_port_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_port_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	set_port_attrib->req.attrib = (u32)attrib;
 	set_port_attrib->req.val = (float)value;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1528,6 +1705,10 @@ wfdSetPortAttribiv_User(
 	WFDint count,
 	const WFDint *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1552,20 +1733,20 @@ wfdSetPortAttribiv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PORT_ATTRIBIV;
 
 	set_port_attrib = (union msg_set_port_attribiv *)
 				&(wfd_req_cmd->cmd.set_port_attribiv);
-	set_port_attrib->req.dev = (u32)(uintptr_t)device;
-	set_port_attrib->req.port = (u32)(uintptr_t)port;
+	set_port_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_port_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	set_port_attrib->req.attrib = (u32)attrib;
 	set_port_attrib->req.attrib_cnt = (u32)count;
 	for (i = 0; i < count; i++)
 		set_port_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1583,6 +1764,10 @@ wfdSetPortAttribfv_User(
 	WFDint count,
 	const WFDfloat *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1607,20 +1792,20 @@ wfdSetPortAttribfv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PORT_ATTRIBFV;
 
 	set_port_attrib = (union msg_set_port_attribfv *)
 				&(wfd_req_cmd->cmd.set_port_attribfv);
-	set_port_attrib->req.dev = (u32)(uintptr_t)device;
-	set_port_attrib->req.port = (u32)(uintptr_t)port;
+	set_port_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_port_attrib->req.port = (u32)(uintptr_t)wire_port->port;
 	set_port_attrib->req.attrib = (u32)attrib;
 	set_port_attrib->req.attrib_cnt = (u32)count;
 	for (i = 0; i < count; i++)
 		set_port_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1635,6 +1820,10 @@ wfdWaitForVSync_User(
 	WFDDevice device,
 	WFDPort port)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1655,16 +1844,16 @@ wfdWaitForVSync_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = WAIT_FOR_VSYNC;
 
 	wait_for_vsync = (union msg_wait_for_vsync *)
 			&(wfd_req_cmd->cmd.wait_for_vsync);
-	wait_for_vsync->req.dev = (u32)(uintptr_t)device;
-	wait_for_vsync->req.port = (u32)(uintptr_t)port;
+	wait_for_vsync->req.dev = (u32)(uintptr_t)wire_dev->device;
+	wait_for_vsync->req.port = (u32)(uintptr_t)wire_port->port;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		sts = WFD_ERROR_INCONSISTENCY;
 		goto end;
@@ -1685,6 +1874,11 @@ wfdBindPipelineToPort_User(
 	WFDPort port,
 	WFDPipeline pipeline)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1704,17 +1898,17 @@ wfdBindPipelineToPort_User(
 
 	req.hdr.flags |= WIRE_RESP_NOACK_FLAG;
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = BIND_PIPELINE_TO_PORT;
 
 	bind_pipeline_to_port = (union msg_bind_pipeline_to_port *)
 			&(wfd_req_cmd->cmd.bind_pipe_to_port);
-	bind_pipeline_to_port->req.dev = (u32)(uintptr_t)device;
-	bind_pipeline_to_port->req.port = (u32)(uintptr_t)port;
-	bind_pipeline_to_port->req.pipe = (u32)(uintptr_t)pipeline;
+	bind_pipeline_to_port->req.dev = (u32)(uintptr_t)wire_dev->device;
+	bind_pipeline_to_port->req.port = (u32)(uintptr_t)wire_port->port;
+	bind_pipeline_to_port->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1733,6 +1927,9 @@ wfdEnumeratePipelines_User(
 	WFDint pipelineIdsCount,
 	const WFDint *filterList)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1753,18 +1950,18 @@ wfdEnumeratePipelines_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = ENUMERATE_PIPELINES;
 
 	enumerate_pipe = (union msg_enumerate_pipelines *)
 				&(wfd_req_cmd->cmd.enumerate_pipes);
 
-	enumerate_pipe->req.dev = (u32)(uintptr_t)device;
+	enumerate_pipe->req.dev = (u32)(uintptr_t)wire_dev->device;
 	enumerate_pipe->req.pipe_ids_cnt = (pipelineIds) ?
 						(u32)pipelineIdsCount : 0;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1796,6 +1993,10 @@ wfdCreatePipeline_User(
 	WFDint pipelineId,
 	const WFDint *attribList)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = NULL;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1815,26 +2016,34 @@ wfdCreatePipeline_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = CREATE_PIPELINE;
 
 	create_pipe = (union msg_create_pipeline *)&(wfd_req_cmd->cmd.create_pipe);
-	create_pipe->req.dev = (u32)(uintptr_t)device;
+	create_pipe->req.dev = (u32)(uintptr_t)wire_dev->device;
 	create_pipe->req.pipe_id = (u32)pipelineId;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
 
 	pipe_hdl = (WFDPipeline)(uintptr_t)wfd_resp_cmd->cmd.create_pipe.resp.client_pipe_hdl;
+	if (pipe_hdl == WFD_INVALID_HANDLE)
+		goto end;
+
+	wire_pipeline = kzalloc(sizeof(*wire_pipeline), GFP_KERNEL);
+	if (!wire_pipeline)
+		goto end;
+
+	wire_pipeline->pipeline = pipe_hdl;
 
 end:
 
 	wire_user_profile_end(WFD_CREATE_PIPELINE_PROFILING, true);
 
-	return pipe_hdl;
+	return wire_pipeline;
 }
 
 void
@@ -1842,6 +2051,10 @@ wfdDestroyPipeline_User(
 	WFDDevice device,
 	WFDPipeline pipeline)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1859,19 +2072,21 @@ wfdDestroyPipeline_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = DESTROY_PIPELINE;
 
 	destroy_pipe = (union msg_destroy_pipeline *)
 			&(wfd_req_cmd->cmd.destroy_pipe);
-	destroy_pipe->req.dev = (u32)(uintptr_t)device;
-	destroy_pipe->req.pipe = (u32)(uintptr_t)pipeline;
+	destroy_pipe->req.dev = (u32)(uintptr_t)wire_dev->device;
+	destroy_pipe->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
+
+	kfree(wire_pipeline);
 
 end:
 
@@ -1886,6 +2101,10 @@ wfdBindSourceToPipeline_User(
 	WFDTransition transition,
 	const WFDRect *region)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1905,21 +2124,21 @@ wfdBindSourceToPipeline_User(
 
 	req.hdr.flags |= WIRE_RESP_NOACK_FLAG;
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = BIND_SOURCE_TO_PIPELINE;
 
 	bind_source_to_pipe = (union msg_bind_source_to_pipeline *)
 				&(wfd_req_cmd->cmd.bind_source_to_pipe);
-	bind_source_to_pipe->req.dev = (u32)(uintptr_t)device;
-	bind_source_to_pipe->req.pipe = (u32)(uintptr_t)pipeline;
+	bind_source_to_pipe->req.dev = (u32)(uintptr_t)wire_dev->device;
+	bind_source_to_pipe->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	bind_source_to_pipe->req.source = (u64)(uintptr_t)source;
 	bind_source_to_pipe->req.transition = (u32)transition;
 	/* TODO: CHECK if this is needed: Based on union definition */
 	//bind_source_to_pipe->req.region. = (struct rect *)region;
 	//memcpy(&(bind_source_to_pipe->req.region), region, sizeof(struct rect));
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1935,6 +2154,10 @@ wfdGetPipelineAttribi_User(
 	WFDPipeline pipeline,
 	WFDPipelineConfigAttrib attrib)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -1954,17 +2177,17 @@ wfdGetPipelineAttribi_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PIPELINE_ATTRIBI;
 
 	get_pipe_attrib = (union msg_get_pipeline_attribi *)
 			&(wfd_req_cmd->cmd.get_pipe_attribi);
-	get_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	get_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	get_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	get_pipe_attrib->req.attrib = (u32)attrib;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1984,6 +2207,10 @@ wfdGetPipelineAttribf_User(
 	WFDPipeline pipeline,
 	WFDPipelineConfigAttrib attrib)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2003,17 +2230,17 @@ wfdGetPipelineAttribf_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PIPELINE_ATTRIBF;
 
 	get_pipe_attrib = (union msg_get_pipeline_attribf *)
 				&(wfd_req_cmd->cmd.get_pipe_attribf);
-	get_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	get_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	get_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	get_pipe_attrib->req.attrib = (u32)attrib;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2035,6 +2262,10 @@ wfdGetPipelineAttribiv_User(
 	WFDint count,
 	WFDint *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2060,18 +2291,18 @@ wfdGetPipelineAttribiv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PIPELINE_ATTRIBIV;
 
 	get_pipe_attrib = (union msg_get_pipeline_attribiv *)
 			&(wfd_req_cmd->cmd.get_pipe_attribiv);
-	get_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	get_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	get_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	get_pipe_attrib->req.attrib = (u32)attrib;
 	get_pipe_attrib->req.attrib_cnt = (u32)count;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2094,6 +2325,10 @@ wfdGetPipelineAttribfv_User(
 	WFDint count,
 	WFDfloat *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2119,18 +2354,18 @@ wfdGetPipelineAttribfv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PIPELINE_ATTRIBFV;
 
 	get_pipe_attrib = (union msg_get_pipeline_attribfv *)
 			&(wfd_req_cmd->cmd.get_pipe_attribfv);
-	get_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	get_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	get_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	get_pipe_attrib->req.attrib = (u32)attrib;
 	get_pipe_attrib->req.attrib_cnt = (u32)count;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2152,6 +2387,10 @@ wfdSetPipelineAttribi_User(
 	WFDPipelineConfigAttrib attrib,
 	WFDint value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2171,18 +2410,18 @@ wfdSetPipelineAttribi_User(
 
 	req.hdr.flags |= WIRE_RESP_NOACK_FLAG;
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PIPELINE_ATTRIBI;
 
 	set_pipe_attrib = (union msg_set_pipeline_attribi *)
 			&(wfd_req_cmd->cmd.set_pipe_attribi);
-	set_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	set_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	set_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	set_pipe_attrib->req.attrib = (u32)attrib;
 	set_pipe_attrib->req.val = (i32)value;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2199,6 +2438,10 @@ wfdSetPipelineAttribf_User(
 	WFDPipelineConfigAttrib attrib,
 	WFDfloat value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2216,18 +2459,18 @@ wfdSetPipelineAttribf_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PIPELINE_ATTRIBF;
 
 	set_pipe_attrib = (union msg_set_pipeline_attribf *)
 			&(wfd_req_cmd->cmd.set_pipe_attribf);
-	set_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	set_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	set_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	set_pipe_attrib->req.attrib = (u32)attrib;
 	set_pipe_attrib->req.val = (float)value;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2245,6 +2488,10 @@ wfdSetPipelineAttribiv_User(
 	WFDint count,
 	const WFDint *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2271,20 +2518,20 @@ wfdSetPipelineAttribiv_User(
 
 	req.hdr.flags |= WIRE_RESP_NOACK_FLAG;
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PIPELINE_ATTRIBIV;
 
 	set_pipe_attrib = (union msg_set_pipeline_attribiv *)
 			&(wfd_req_cmd->cmd.set_pipe_attribiv);
-	set_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	set_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	set_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	set_pipe_attrib->req.attrib = (u32)attrib;
 	set_pipe_attrib->req.attrib_cnt = (u32)count;
 	for (i = 0; i < count; i++)
 		set_pipe_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2302,6 +2549,10 @@ wfdSetPipelineAttribfv_User(
 	WFDint count,
 	const WFDfloat *value)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2326,20 +2577,20 @@ wfdSetPipelineAttribfv_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = SET_PIPELINE_ATTRIBFV;
 
 	set_pipe_attrib = (union msg_set_pipeline_attribfv *)
 				&(wfd_req_cmd->cmd.set_pipe_attribfv);
-	set_pipe_attrib->req.dev = (u32)(uintptr_t)device;
-	set_pipe_attrib->req.pipe = (u32)(uintptr_t)pipeline;
+	set_pipe_attrib->req.dev = (u32)(uintptr_t)wire_dev->device;
+	set_pipe_attrib->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 	set_pipe_attrib->req.attrib = (u32)attrib;
 	set_pipe_attrib->req.attrib_cnt = (u32)count;
 	for (i = 0; i < count; i++)
 		set_pipe_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2355,6 +2606,11 @@ wfdGetPipelineLayerOrder_User(
 	WFDPort port,
 	WFDPipeline pipeline)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_port *wire_port = port;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2374,17 +2630,17 @@ wfdGetPipelineLayerOrder_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = GET_PIPELINE_LAYER_ORDER;
 
 	get_pipe_layer_order = (union msg_get_pipeline_layer_order *)
 			&(wfd_req_cmd->cmd.get_pipe_layer_order);
-	get_pipe_layer_order->req.dev = (u32)(uintptr_t)device;
-	get_pipe_layer_order->req.port = (u32)(uintptr_t)port;
-	get_pipe_layer_order->req.pipe = (u32)(uintptr_t)pipeline;
+	get_pipe_layer_order->req.dev = (u32)(uintptr_t)wire_dev->device;
+	get_pipe_layer_order->req.port = (u32)(uintptr_t)wire_port->port;
+	get_pipe_layer_order->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2415,6 +2671,9 @@ wfdCreateWFDEGLImagesPreAlloc_User(
 	WFDint *offsets,
 	WFDint flags)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2446,13 +2705,13 @@ wfdCreateWFDEGLImagesPreAlloc_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = CREATE_WFD_EGL_IMAGES_PRE_ALLOC;
 
 	create_egl_images_pre_alloc = (union msg_create_egl_images_pre_alloc *)
 				&(wfd_req_cmd->cmd.create_egl_images_pre_alloc);
-	create_egl_images_pre_alloc->req.dev    = (u32)(uintptr_t)device;
+	create_egl_images_pre_alloc->req.dev    = (u32)(uintptr_t)wire_dev->device;
 	create_egl_images_pre_alloc->req.width  = (u32)width;
 	create_egl_images_pre_alloc->req.height = (u32)height;
 	create_egl_images_pre_alloc->req.format = (u32)format;
@@ -2469,7 +2728,7 @@ wfdCreateWFDEGLImagesPreAlloc_User(
 			sizeof(struct user_os_utils_mem_info));
 		mem.size	= (u32)size;
 		mem.buffer	= buffers[i];
-		if (user_os_utils_shmem_export(&mem, 0x00) != 0) {
+		if (user_os_utils_shmem_export(handle, &mem, 0x00) != 0) {
 			WIRE_LOG_ERROR("shmem export failed");
 			sts = WFD_ERROR_INCONSISTENCY;
 			goto end;
@@ -2488,7 +2747,7 @@ wfdCreateWFDEGLImagesPreAlloc_User(
 
 	create_egl_images_pre_alloc->req.flags      = (i32)flags;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		sts = WFD_ERROR_INCONSISTENCY;
 		goto end;
@@ -2555,6 +2814,9 @@ wfdDestroyWFDEGLImages_User(
 	WFDEGLImage *images,
 	void **vaddrs)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2588,13 +2850,13 @@ wfdDestroyWFDEGLImages_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = DESTROY_WFD_EGL_IMAGES;
 
 	destroy_egl_images = (union msg_destroy_egl_images *)
 				&(wfd_req_cmd->cmd.destroy_egl_images);
-	destroy_egl_images->req.dev = (u32)(uintptr_t)device;
+	destroy_egl_images->req.dev = (u32)(uintptr_t)wire_dev->device;
 	destroy_egl_images->req.count = (u32)count;
 	for (i = 0; i < count; i++) {
 		wfd_eglimage = (struct WFD_EGLImageType *)images[i];
@@ -2617,7 +2879,7 @@ wfdDestroyWFDEGLImages_User(
 				wfd_eglimage->vaddr;
 			mem.shmem_id	= (u64)wfd_eglimage->shmem_id;
 			mem.shmem_type	= (u32)wfd_eglimage->shmem_type;
-			if (user_os_utils_shmem_unimport(&mem, 0x00) != 0) {
+			if (user_os_utils_shmem_unimport(handle, &mem, 0x00) != 0) {
 				WIRE_LOG_ERROR("shmem unimport failed");
 				sts = WFD_ERROR_INCONSISTENCY;
 				goto end;
@@ -2630,7 +2892,7 @@ wfdDestroyWFDEGLImages_User(
 		}
 	}
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		sts = WFD_ERROR_INCONSISTENCY;
 		goto end;
@@ -2647,7 +2909,7 @@ wfdDestroyWFDEGLImages_User(
 				wfd_eglimage->vaddr;
 			mem.shmem_id	= (u64)wfd_eglimage->shmem_id;
 			mem.shmem_type	= (u32)wfd_eglimage->shmem_type;
-			if (user_os_utils_shmem_unexport(&mem, 0x00) != 0) {
+			if (user_os_utils_shmem_unexport(handle, &mem, 0x00) != 0) {
 				WIRE_LOG_ERROR("shmem unexport failed");
 				sts = WFD_ERROR_INCONSISTENCY;
 				goto end;
@@ -2683,6 +2945,10 @@ wfdCreateSourceFromImage_User(
 	WFDEGLImage image,
 	const WFDint *attribList)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_pipeline *wire_pipeline = pipeline;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2705,14 +2971,14 @@ wfdCreateSourceFromImage_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = CREATE_SOURCE_FROM_IMAGE;
 
 	create_source_from_image = (union msg_create_source_from_image *)
 			&(wfd_req_cmd->cmd.create_src_from_img);
-	create_source_from_image->req.dev = (u32)(uintptr_t)device;
-	create_source_from_image->req.pipe = (u32)(uintptr_t)pipeline;
+	create_source_from_image->req.dev = (u32)(uintptr_t)wire_dev->device;
+	create_source_from_image->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 
 	/* loop through attribList and copy items, one at a time, until
 	 * WFD_NONE or NULL is found
@@ -2737,7 +3003,7 @@ wfdCreateSourceFromImage_User(
 	 */
 	create_source_from_image->req.image_handle = (u64)wfd_eglimage->dvaddr;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2757,6 +3023,9 @@ wfdDestroySource_User(
 	WFDDevice device,
 	WFDSource source)
 {
+	struct wire_device *wire_dev = device;
+	void *handle = wire_dev->ctx->init_info.context;
+
 	/* Request/Response */
 	WIRE_HEAP struct wire_packet req, resp;
 	struct openwfd_cmd *wfd_req_cmd = &req.payload.wfd_req.reqs[0];
@@ -2774,16 +3043,16 @@ wfdDestroySource_User(
 		goto end;
 	}
 
-	user_os_utils_get_id(&wfd_req_cmd->client_id, 0x00);
+	user_os_utils_get_id(handle, &wfd_req_cmd->client_id, 0x00);
 	req.payload.wfd_req.num_of_cmds = 1;
 	wfd_req_cmd->type = DESTROY_SOURCE;
 
 	destroy_source = (union msg_destroy_source *)
 				&(wfd_req_cmd->cmd.destroy_src);
-	destroy_source->req.dev = (u32)(uintptr_t)device;
+	destroy_source->req.dev = (u32)(uintptr_t)wire_dev->device;
 	destroy_source->req.source = (u64)(uintptr_t)source;
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2838,6 +3107,7 @@ find_node_locked(
 
 static void
 event_handler(
+	struct wire_context *ctx,
 	struct event_req *e_req)
 {
 	struct cb_info_node *node;
@@ -2858,9 +3128,9 @@ event_handler(
 					e_req->info.vm_event.type;
 	}
 
-	mutex_lock(&_event_cb_lock);
-	node = find_node_locked(type, &info, &_cb_info_ctx);
-	mutex_unlock(&_event_cb_lock);
+	mutex_lock(&ctx->_event_cb_lock);
+	node = find_node_locked(type, &info, &ctx->_cb_info_ctx);
+	mutex_unlock(&ctx->_event_cb_lock);
 
 	if (node && node->cb_info.cb)
 		node->cb_info.cb(type, &info, node->cb_info.user_data);
@@ -2868,10 +3138,12 @@ event_handler(
 
 static int event_listener(void *param)
 {
+	struct wire_context *ctx = param;
+	void *handle = ctx->init_info.context;
 	WIRE_HEAP struct wire_packet req;
 	int rc;
 
-	while (wire_isr_enable) {
+	while (ctx->wire_isr_enable) {
 		memset((char *)&req, 0x00, sizeof(struct wire_packet));
 
 		if (prep_hdr(EVENT_NOTIFICATION, &req)) {
@@ -2879,8 +3151,8 @@ static int event_listener(void *param)
 			continue;
 		}
 
-		rc = user_os_utils_recv(&req, 0x00);
-		if (rc && !wire_isr_stop) {
+		rc = user_os_utils_recv(handle, &req, 0x00);
+		if (rc && !ctx->wire_isr_stop) {
 			WIRE_LOG_ERROR("user_os_utils_recv (EVENT_NOTIFICATION) failed");
 			break;
 		}
@@ -2903,7 +3175,7 @@ static int event_listener(void *param)
 
 		if (!rc) {
 			/* Need to handle event callbacks outside of channel lock */
-			event_handler(&req.payload.ev_req);
+			event_handler(ctx, &req.payload.ev_req);
 		}
 	}
 
@@ -2912,14 +3184,17 @@ static int event_listener(void *param)
 
 int
 wire_user_register_event_listener(
+	WFDDevice device,
 	enum event_types type,
 	union event_info *info,
 	struct cb_info *cb_info)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_context *ctx = wire_dev->ctx;
 	struct cb_info_node *node = NULL;
 	int rc = 0;
 
-	if (!init_info.enable_event_handling) {
+	if (!ctx->init_info.enable_event_handling) {
 		WIRE_LOG_ERROR("not supported");
 		rc = -1;
 		goto end;
@@ -2948,9 +3223,9 @@ wire_user_register_event_listener(
 	 *   b) error case
 	 */
 
-	mutex_lock(&_event_cb_lock);
+	mutex_lock(&ctx->_event_cb_lock);
 
-	node = find_node_locked(type, info, &_cb_info_ctx);
+	node = find_node_locked(type, info, &ctx->_cb_info_ctx);
 	if (node) {
 		if (cb_info) {
 			memcpy(&node->cb_info, cb_info, sizeof(struct cb_info));
@@ -2964,7 +3239,7 @@ wire_user_register_event_listener(
 			node->type = type;
 			node->info = *info;
 			memcpy(&node->cb_info, cb_info, sizeof(struct cb_info));
-			list_add_tail(&node->head, &_cb_info_ctx);
+			list_add_tail(&node->head, &ctx->_cb_info_ctx);
 		} else {
 			WIRE_LOG_ERROR("malloc failed, out of memory");
 			rc = -1;
@@ -2974,7 +3249,7 @@ wire_user_register_event_listener(
 		rc = -1;
 	}
 
-	mutex_unlock(&_event_cb_lock);
+	mutex_unlock(&ctx->_event_cb_lock);
 
 end:
 
@@ -2983,9 +3258,13 @@ end:
 
 int
 wire_user_request_cb(
+	WFDDevice device,
 	enum event_types type,
 	union event_info *info)
 {
+	struct wire_device *wire_dev = device;
+	struct wire_context *ctx = wire_dev->ctx;
+	void *handle = ctx->init_info.context;
 	int rc = 0;
 
 	/* Request/Response */
@@ -2996,7 +3275,7 @@ wire_user_request_cb(
 
 	wire_user_heap_begin(0);
 
-	if (!init_info.enable_event_handling) {
+	if (!ctx->init_info.enable_event_handling) {
 		WIRE_LOG_ERROR("not supported");
 		rc = -1;
 		goto end;
@@ -3037,7 +3316,7 @@ wire_user_request_cb(
 						info->vm_event.type;
 	}
 
-	if (user_os_utils_send_recv(&req, &resp, 0x00)) {
+	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
