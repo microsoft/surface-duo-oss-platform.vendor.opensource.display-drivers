@@ -63,6 +63,13 @@ struct wire_context {
 	struct list_head _cb_info_ctx;
 	struct mutex _event_cb_lock;
 	struct task_struct *listener_thread;
+	bool support_batch_mode;
+};
+
+struct wire_commit {
+	struct wire_batch_packet *packet;
+	u32 alloc_size;
+	u32 size;
 };
 
 struct wire_device {
@@ -72,10 +79,12 @@ struct wire_device {
 
 struct wire_port {
 	WFDPort port;
+	struct wire_commit commit;
 };
 
 struct wire_pipeline {
 	WFDPipeline pipeline;
+	struct wire_port *port;
 };
 
 /*
@@ -104,9 +113,65 @@ static void get_timestamp(
 
 /*
  * ---------------------------------------------------------------------------
+ * Command Sizes
+ * ---------------------------------------------------------------------------
+ */
+const static u32 wire_user_cmd_size[OPENWFD_CMD_MAX] = {
+	[ENUMERATE_DEVICES]     = sizeof(union msg_enumerate_devices),
+	[CREATE_DEVICE]         = sizeof(union msg_create_device),
+	[DESTROY_DEVICE]        = sizeof(union msg_destroy_device),
+	[DEVICE_COMMIT]         = sizeof(union msg_device_commit),
+	[DEVICE_COMMIT_EXT]     = sizeof(union msg_device_commit_ext),
+	[GET_DEVICE_ATTRIBI]    = sizeof(union msg_get_device_attribi),
+	[SET_DEVICE_ATTRIBI]    = sizeof(union msg_set_device_attribi),
+	[GET_DEVICE_ATTRIBIV]   = sizeof(union msg_get_device_attribiv),
+	[ENUMERATE_PORTS]       = sizeof(union msg_enumerate_ports),
+	[CREATE_PORT]           = sizeof(union msg_create_port),
+	[DESTROY_PORT]          = sizeof(union msg_destroy_port),
+	[GET_PORT_MODES]        = sizeof(union msg_get_port_modes),
+	[GET_PORT_MODE_ATTRIBI] = sizeof(union msg_get_port_mode_attribi),
+	[GET_PORT_MODE_ATTRIBF] = sizeof(union msg_get_port_mode_attribf),
+	[SET_PORT_MODE]         = sizeof(union msg_set_port_mode),
+	[GET_CURRENT_PORT_MODE] = sizeof(union msg_get_current_port_mode),
+	[GET_PORT_ATTRIBI]      = sizeof(union msg_get_port_attribi),
+	[GET_PORT_ATTRIBF]      = sizeof(union msg_get_port_attribf),
+	[GET_PORT_ATTRIBIV]     = sizeof(union msg_get_port_attribiv),
+	[GET_PORT_ATTRIBFV]     = sizeof(union msg_get_port_attribfv),
+	[SET_PORT_ATTRIBI]      = sizeof(union msg_set_port_attribi),
+	[SET_PORT_ATTRIBF]      = sizeof(union msg_set_port_attribf),
+	[SET_PORT_ATTRIBIV]     = sizeof(union msg_set_port_attribiv),
+	[SET_PORT_ATTRIBFV]     = sizeof(union msg_set_port_attribfv),
+	[WAIT_FOR_VSYNC]        = sizeof(union msg_wait_for_vsync),
+	[BIND_PIPELINE_TO_PORT] = sizeof(union msg_bind_pipeline_to_port),
+	[ENUMERATE_PIPELINES]   = sizeof(union msg_enumerate_pipelines),
+	[CREATE_PIPELINE]       = sizeof(union msg_create_pipeline),
+	[DESTROY_PIPELINE]      = sizeof(union msg_destroy_pipeline),
+	[GET_PIPELINE_ATTRIBI]  = sizeof(union msg_get_pipeline_attribi),
+	[GET_PIPELINE_ATTRIBF]  = sizeof(union msg_get_pipeline_attribf),
+	[GET_PIPELINE_ATTRIBIV] = sizeof(union msg_get_pipeline_attribiv),
+	[GET_PIPELINE_ATTRIBFV] = sizeof(union msg_get_pipeline_attribfv),
+	[SET_PIPELINE_ATTRIBI]  = sizeof(union msg_set_pipeline_attribi),
+	[SET_PIPELINE_ATTRIBF]  = sizeof(union msg_set_pipeline_attribf),
+	[SET_PIPELINE_ATTRIBIV] = sizeof(union msg_set_pipeline_attribiv),
+	[SET_PIPELINE_ATTRIBFV] = sizeof(union msg_set_pipeline_attribfv),
+	[BIND_SOURCE_TO_PIPELINE] = sizeof(union msg_bind_source_to_pipeline),
+	[GET_PIPELINE_LAYER_ORDER] = sizeof(union msg_get_pipeline_layer_order),
+	[CREATE_WFD_EGL_IMAGES] = sizeof(union msg_create_egl_images),
+	[CREATE_WFD_EGL_IMAGES_PRE_ALLOC] = sizeof(union msg_create_egl_images_pre_alloc),
+	[DESTROY_WFD_EGL_IMAGES] = sizeof(union msg_destroy_egl_images),
+	[CREATE_SOURCE_FROM_IMAGE] = sizeof(union msg_create_source_from_image),
+	[DESTROY_SOURCE]        = sizeof(union msg_destroy_source),
+};
+
+/*
+ * ---------------------------------------------------------------------------
  * Performance Profile Utilities
  * ---------------------------------------------------------------------------
  */
+
+//#define WIRE_USER_DEBUG_BATCH
+
+//#define WIRE_USER_DEBUG_BATCH_SIM
 
 //#define WIRE_USER_PROFILING_ENABLE
 
@@ -358,6 +423,89 @@ prep_hdr(
 	return 0;
 }
 
+static int
+prep_batch_hdr(
+	struct wire_commit *commit)
+{
+	struct wire_header *req_hdr;
+
+	req_hdr = &commit->packet->hdr;
+	req_hdr->magic_num = WIRE_FORMAT_MAGIC;
+	req_hdr->version = DISPLAY_SHIM_OPENWFD_CMD_VERSION;
+	req_hdr->payload_type = OPENWFD_CMD;
+	req_hdr->payload_size = commit->size + sizeof(struct openwfd_batch_req);
+	get_timestamp(&req_hdr->timestamp);
+
+	return 0;
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * Batch mode
+ * ---------------------------------------------------------------------------
+ */
+
+static int
+wire_port_send_recv(
+	struct wire_device *device,
+	struct wire_port *port,
+	struct wire_packet *req,
+	struct wire_packet *resp,
+	u32 flags)
+{
+#if ENABLE_BATCH_COMMIT
+	struct wire_commit *commit;
+	struct wire_batch_packet *p;
+	u32 type;
+	u32 size;
+	u8 *payload;
+
+	if (port && device->ctx->support_batch_mode) {
+		commit = &port->commit;
+
+		if (commit->size + sizeof(struct wire_batch_packet) >= commit->alloc_size) {
+			size = commit->alloc_size + SZ_4K;
+
+			p = krealloc(commit->packet, size, GFP_KERNEL);
+			if (!p)
+				return -ENOMEM;
+
+			if (!commit->alloc_size)
+				memset(p, 0, sizeof(struct wire_batch_packet));
+
+			commit->packet = p;
+			commit->alloc_size = size;
+		}
+
+		type = req->payload.wfd_req.reqs[0].type;
+		if (type >= OPENWFD_CMD_MAX) {
+			WIRE_LOG_ERROR("invalid req type");
+			return -EINVAL;
+		}
+
+		size = wire_user_cmd_size[type] + sizeof(struct openwfd_batch_cmd);
+		payload = (u8 *)commit->packet->wfd_req.reqs;
+		memcpy(&payload[commit->size], &req->payload.wfd_req.reqs[0], size);
+		commit->size += size;
+		commit->packet->wfd_req.num_of_cmds++;
+
+#ifdef WIRE_USER_DEBUG_BATCH
+		pr_info("command %d size %d total %d/%d\n",
+			req->payload.wfd_req.reqs[0].type, size, commit->size, commit->alloc_size);
+		print_hex_dump(KERN_INFO, "hdr: ", DUMP_PREFIX_NONE, 16, 1,
+			&req->hdr, sizeof(req->hdr), false);
+		print_hex_dump(KERN_INFO, "req: ", DUMP_PREFIX_NONE, 16, 1,
+			&req->payload, size + sizeof(struct openwfd_batch_req), false);
+#endif
+
+#ifndef WIRE_USER_DEBUG_BATCH_SIM
+		return 0;
+#endif
+	}
+#endif
+	return user_os_utils_send_recv(device->ctx->init_info.context, req, resp, flags);
+}
+
 /*
  * ---------------------------------------------------------------------------
  * Wire User APIs
@@ -456,6 +604,17 @@ wire_user_deinit(
 
 fail:
 	return rc;
+}
+
+int wire_user_set_host_capabilities(WFDDevice device,
+		uint32_t capabilities)
+{
+	struct wire_device *wire_dev = device;
+
+	if (capabilities & WFD_DEVICE_HOST_CAP_BATCH_MODE)
+		wire_dev->ctx->support_batch_mode = true;
+
+	return 0;
 }
 
 /* ========== OPENWFD ========== */
@@ -752,9 +911,33 @@ wfdDeviceCommitExt_User(
 	dev_commit_ext->req.hdl = (u32)(uintptr_t)wire_port->port;
 	dev_commit_ext->req.flags = (u32)flags;
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
+	}
+
+	/* reset batch commit */
+	if (wire_port->commit.size) {
+		prep_batch_hdr(&wire_port->commit);
+
+#ifdef WIRE_USER_DEBUG_BATCH
+		pr_info("batch size=%d\n", wire_port->commit.size);
+		print_hex_dump(KERN_INFO, "hdr: ", DUMP_PREFIX_NONE, 16, 1,
+			&wire_port->commit.packet->hdr, sizeof(req.hdr), false);
+		print_hex_dump(KERN_INFO, "req: ", DUMP_PREFIX_NONE, 16, 1,
+			&wire_port->commit.packet->wfd_req.num_of_cmds,
+			wire_port->commit.size + sizeof(struct openwfd_batch_req), false);
+#endif
+
+#ifndef WIRE_USER_DEBUG_BATCH_SIM
+		if (user_os_utils_send_recv(handle, (struct wire_packet *)wire_port->commit.packet,
+				&resp, 0x00)) {
+			WIRE_LOG_ERROR("RPC call failed");
+			goto end;
+		}
+#endif
+		wire_port->commit.size = 0;
+		wire_port->commit.packet->wfd_req.num_of_cmds = 0;
 	}
 
 	sts = (WFDErrorCode)wfd_resp_cmd->cmd.dev_commit_ext.resp.sts;
@@ -1088,6 +1271,7 @@ wfdDestroyPort_User(
 		goto end;
 	}
 
+	kfree(wire_port->commit.packet);
 	kfree(wire_port);
 
 end:
@@ -1307,7 +1491,7 @@ wfdSetPortMode_User(
 	set_port_mode->req.port = (u32)(uintptr_t)wire_port->port;
 	set_port_mode->req.mode = (u32)(uintptr_t)mode;
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1638,7 +1822,7 @@ wfdSetPortAttribi_User(
 	set_port_attrib->req.attrib = (u32)attrib;
 	set_port_attrib->req.val = (i32)value;
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1687,7 +1871,7 @@ wfdSetPortAttribf_User(
 	set_port_attrib->req.attrib = (u32)attrib;
 	set_port_attrib->req.val = (float)value;
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1746,7 +1930,7 @@ wfdSetPortAttribiv_User(
 	for (i = 0; i < count; i++)
 		set_port_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1805,7 +1989,7 @@ wfdSetPortAttribfv_User(
 	for (i = 0; i < count; i++)
 		set_port_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -1888,6 +2072,8 @@ wfdBindPipelineToPort_User(
 
 	wire_user_profile_begin(WFD_BIND_PIPELINE_TO_PORT_PROFILING);
 
+	wire_pipeline->port = wire_port;
+
 	memset((char *)&req, 0x00, sizeof(struct wire_packet));
 	memset((char *)&resp, 0x00, sizeof(struct wire_packet));
 
@@ -1908,7 +2094,7 @@ wfdBindPipelineToPort_User(
 	bind_pipeline_to_port->req.port = (u32)(uintptr_t)wire_port->port;
 	bind_pipeline_to_port->req.pipe = (u32)(uintptr_t)wire_pipeline->pipeline;
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2138,7 +2324,7 @@ wfdBindSourceToPipeline_User(
 	//bind_source_to_pipe->req.region. = (struct rect *)region;
 	//memcpy(&(bind_source_to_pipe->req.region), region, sizeof(struct rect));
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_pipeline->port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2421,7 +2607,7 @@ wfdSetPipelineAttribi_User(
 	set_pipe_attrib->req.attrib = (u32)attrib;
 	set_pipe_attrib->req.val = (i32)value;
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_pipeline->port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2470,7 +2656,7 @@ wfdSetPipelineAttribf_User(
 	set_pipe_attrib->req.attrib = (u32)attrib;
 	set_pipe_attrib->req.val = (float)value;
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_pipeline->port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2531,7 +2717,7 @@ wfdSetPipelineAttribiv_User(
 	for (i = 0; i < count; i++)
 		set_pipe_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_pipeline->port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}
@@ -2590,7 +2776,7 @@ wfdSetPipelineAttribfv_User(
 	for (i = 0; i < count; i++)
 		set_pipe_attrib->req.vals[i] = (i32)value[i];
 
-	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
+	if (wire_port_send_recv(wire_dev, wire_pipeline->port, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
 	}

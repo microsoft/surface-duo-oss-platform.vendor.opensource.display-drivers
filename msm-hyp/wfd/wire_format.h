@@ -121,6 +121,7 @@ enum display_types_bitwise {
 #define MAX_BUFS_CNT				32
 #define MAX_CREATE_SOURCE_ATTRIBS		3
 #define MAX_PLANES_CNT				4
+#define ENABLE_BATCH_COMMIT			1
 
 enum openwfd_cmd_type {
 	/* Device Commands */
@@ -815,6 +816,18 @@ struct openwfd_resp {
 	u32 status;
 };
 
+struct openwfd_batch_cmd {
+	u32 display_id;
+	u32 client_id;
+	enum openwfd_cmd_type type;
+	u8 cmd[];
+};
+
+struct openwfd_batch_req {
+	u32 num_of_cmds;
+	struct openwfd_batch_cmd reqs[];
+};
+
 /*
  * ---------------------------------------------------------------------------
  * Event Definitions
@@ -878,6 +891,12 @@ struct wire_packet {
 	struct wire_header hdr;
 	union wire_payload payload;
 };
+
+struct wire_batch_packet {
+	struct wire_header hdr;
+	struct openwfd_batch_req wfd_req;
+};
+
 #pragma pack(pop)
 
 

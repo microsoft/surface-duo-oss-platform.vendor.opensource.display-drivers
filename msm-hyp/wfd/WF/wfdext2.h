@@ -52,6 +52,22 @@ enum WFDDeviceAttribEXT {
 };
 #endif
 
+#ifndef WFD_device_hdcp_min_enc_level
+#define WFD_device_hdcp_min_enc_level 1
+#define WFD_DEVICE_HDCP_MIN_ENC_LEVEL  0x7562
+#endif
+
+#ifndef WFD_device_oem_secure
+#define WFD_device_oem_secure  1
+#define WFD_DEVICE_OEM_SECURE  0x7563
+#endif
+
+#ifndef WFD_device_host_capabilities
+#define WFD_device_host_capabilities  1
+#define WFD_DEVICE_HOST_CAPABILITIES  0x7564
+#define WFD_DEVICE_HOST_CAP_BATCH_MODE 0x00000001
+#endif
+
 #ifndef WFD_cbabc
 #define WFD_cbabc 1
 #define WFD_PORT_CBABC_MODE 0x7670

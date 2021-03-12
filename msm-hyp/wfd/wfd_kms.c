@@ -947,6 +947,7 @@ static int wfd_kms_get_connector_infos(struct msm_hyp_kms *kms,
 	struct drm_display_mode *mode;
 	WFDint data[4];
 	WFDint port_connected;
+	WFDint host_cap;
 	WFDfloat physical_size[2];
 	WFDPortMode port_mode[MAX_PORT_MODES_CNT];
 	int num_mode;
@@ -964,6 +965,10 @@ static int wfd_kms_get_connector_infos(struct msm_hyp_kms *kms,
 	ddev->mode_config.max_width = data[1];
 	ddev->mode_config.min_height = data[2];
 	ddev->mode_config.max_height = data[3];
+
+	host_cap = wfdGetDeviceAttribi_User(wfd_kms->wfd_device[0],
+			WFD_DEVICE_HOST_CAPABILITIES);
+	wire_user_set_host_capabilities(wfd_kms->wfd_device[0], host_cap);
 
 	for (i = 0; i < wfd_kms->port_cnt; i++) {
 		priv = kzalloc(sizeof(*priv), GFP_KERNEL);

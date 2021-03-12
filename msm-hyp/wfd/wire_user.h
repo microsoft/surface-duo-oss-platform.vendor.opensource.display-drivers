@@ -100,6 +100,9 @@ int wire_user_init(uint32_t client_id,
 int wire_user_deinit(uint32_t client_id,
 		uint32_t flags);
 
+int wire_user_set_host_capabilities(WFDDevice device,
+		uint32_t capabilities);
+
 /* ========== OPENWFD ========== */
 
 /* Device */
