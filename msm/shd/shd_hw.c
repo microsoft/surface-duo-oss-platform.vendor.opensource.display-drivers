@@ -1,13 +1,6 @@
-/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-shd:%s:%d] " fmt, __func__, __LINE__
@@ -447,6 +440,9 @@ void sde_shd_hw_skip_sspp_clear(struct sde_hw_ctl *ctx,
 {
 	struct sde_shd_hw_ctl *hw_ctl;
 	int i;
+
+	if (!ctx)
+		return;
 
 	hw_ctl = container_of(ctx, struct sde_shd_hw_ctl, base);
 
