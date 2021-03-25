@@ -390,6 +390,11 @@ out:
 	mutex_unlock(&g_lease_mutex);
 }
 
+static int msm_lease_mastercreate(struct drm_device *dev, struct drm_master *master)
+{
+	return -EINVAL;
+}
+
 static long msm_lease_ioctl(struct file *filp,
 		unsigned int cmd, unsigned long arg)
 {
@@ -930,6 +935,7 @@ static int msm_lease_notifier(struct notifier_block *nb,
 		g_master_postclose = master_ddev->driver->postclose;
 		master_ddev->driver->open = msm_lease_open;
 		master_ddev->driver->postclose = msm_lease_postclose;
+		master_ddev->driver->master_create = msm_lease_mastercreate;
 	}
 
 	/* hook ioctl function if dev_name is defined */
