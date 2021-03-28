@@ -798,9 +798,9 @@ static void dsi_pll_init_val(struct mdss_pll_resources *rsc)
 	MDSS_PLL_REG_W(pll_base, PLL_SPARE_AND_JPC_OVERRIDES, 0x00000000);
 
 	if (dsi_pll_7nm_is_hw_revision_v1(rsc))
-		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000066);
+		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000067);
 	else
-		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000040);
+		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000041);
 
 	MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_2, 0x00000020);
 	MDSS_PLL_REG_W(pll_base, PLL_ALOG_OBSV_BUS_CTRL_1, 0x00000000);
