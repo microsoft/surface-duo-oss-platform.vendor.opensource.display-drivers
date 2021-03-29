@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  */
 
 /*
@@ -942,6 +942,102 @@ static int dp_mst_super_bridge_clear(struct dp_mst_bridge *bridge,
 	return rc;
 }
 
+static int dp_mst_super_bridge_clear_port(struct dp_mst_bridge *bridge,
+		struct dp_mst_bridge_state *bridge_state,
+		struct drm_atomic_state *state)
+{
+	struct dp_mst_private *mst;
+	struct dp_mst_bridge *sub_bridge;
+	struct dp_mst_bridge_state *sub_state;
+	int i, rc = 0;
+
+	mst = bridge->display->dp_mst_prv_info;
+
+	for (i = 0; i < MAX_DP_MST_DRM_BRIDGES; i++) {
+		sub_bridge = &mst->mst_bridge[i];
+		sub_state = dp_mst_get_bridge_atomic_state(state, sub_bridge);
+		if (IS_ERR(sub_state)) {
+			rc = PTR_ERR(sub_state);
+			break;
+		}
+
+		if (!sub_state->mst_port)
+			continue;
+
+		rc = mst->mst_fw_cbs->atomic_release_vcpi_slots(state,
+			&mst->mst_mgr, sub_state->mst_port);
+		if (rc) {
+			pr_err("failed releasing vcpi slots %d\n", rc);
+			break;
+		}
+
+		drm_dp_mst_put_port_malloc(sub_state->mst_port);
+		sub_state->mst_port = NULL;
+	}
+
+	bridge_state->num_slots = 0;
+
+	drm_dp_mst_put_port_malloc(bridge_state->mst_port);
+	bridge_state->mst_port = NULL;
+
+	return rc;
+}
+
+static int dp_mst_super_bridge_set_port(struct dp_mst_bridge *bridge,
+		struct dp_mst_bridge_state *bridge_state,
+		struct drm_crtc_state *crtc_state)
+{
+	struct dp_display *dp_display = bridge->display;
+	struct drm_atomic_state *state = crtc_state->state;
+	struct drm_display_mode tmp;
+	struct dp_display_mode dp_mode;
+	struct dp_mst_private *mst;
+	struct sde_connector *c_conn;
+	struct dp_mst_bridge *sub_bridge;
+	struct dp_mst_bridge_state *sub_state;
+	int i, rc, slots = 0;
+
+	mst = bridge->display->dp_mst_prv_info;
+
+	tmp = crtc_state->mode;
+	dp_mst_split_tile_timing(&tmp);
+
+	for (i = 0; i < MAX_DP_MST_DRM_BRIDGES; i++) {
+		sub_bridge = &mst->mst_bridge[i];
+		sub_state = dp_mst_get_bridge_atomic_state(state, sub_bridge);
+		if (IS_ERR(sub_state)) {
+			slots = PTR_ERR(sub_state);
+			break;
+		}
+
+		if (WARN_ON(!sub_state->connector))
+			return -EINVAL;
+
+		c_conn = to_sde_connector(sub_state->connector);
+
+		dp_display->convert_to_dp_mode(dp_display,
+				c_conn->drv_panel, &tmp, &dp_mode);
+
+		sub_state->mst_port = c_conn->mst_port;
+		drm_dp_mst_get_port_malloc(sub_state->mst_port);
+
+		rc = _dp_mst_compute_config(state, mst,
+				sub_state->connector, &dp_mode);
+		if (rc < 0)
+			return rc;
+
+		slots += rc;
+	}
+
+	bridge_state->num_slots = slots;
+
+	c_conn = to_sde_connector(bridge_state->connector);
+	bridge_state->mst_port = c_conn->mst_port;
+	drm_dp_mst_get_port_malloc(bridge_state->mst_port);
+
+	return 0;
+}
+
 /* DP MST Bridge APIs */
 
 static struct drm_connector *
@@ -1751,6 +1847,16 @@ static int dp_mst_connector_atomic_check(struct drm_connector *connector,
 		}
 
 		if (bridge_state->mst_port) {
+			if (bridge->id == MAX_DP_MST_DRM_BRIDGES) {
+				rc = dp_mst_super_bridge_clear_port(bridge,
+						bridge_state, state);
+				if (rc) {
+					pr_err("failed clearing super port\n");
+					goto end;
+				}
+				goto mode_set;
+			}
+
 			rc = mst->mst_fw_cbs->atomic_release_vcpi_slots(state,
 				&mst->mst_mgr, bridge_state->mst_port);
 			if (rc) {
@@ -1798,24 +1904,8 @@ mode_set:
 		}
 
 		if (dp_mst_is_tile_mode(&crtc_state->mode)) {
-			struct drm_display_mode tmp;
-
-			slots = 0;
-			tmp = crtc_state->mode;
-			dp_mst_split_tile_timing(&tmp);
-			dp_display->convert_to_dp_mode(dp_display,
-					c_conn->drv_panel, &tmp, &dp_mode);
-			for (i = 0; i < MAX_DP_MST_DRM_BRIDGES; i++) {
-				rc = _dp_mst_compute_config(state, mst,
-						connector, &dp_mode);
-				if (rc < 0)
-					goto end;
-				slots += rc;
-				rc = 0;
-			}
-			bridge_state->num_slots = slots;
-			bridge_state->mst_port = c_conn->mst_port;
-			drm_dp_mst_get_port_malloc(bridge_state->mst_port);
+			rc = dp_mst_super_bridge_set_port(bridge,
+					bridge_state, crtc_state);
 			goto end;
 		}
 
