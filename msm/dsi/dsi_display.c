@@ -811,7 +811,7 @@ int dsi_display_check_status(struct drm_connector *connector, void *display,
 		rc = -EINVAL;
 		goto release_panel_lock;
 	}
-	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY);
+	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY, status_mode, te_check_override);
 
 	if (te_check_override && gpio_is_valid(dsi_display->disp_te_gpio))
 		status_mode = ESD_MODE_PANEL_TE;
@@ -859,7 +859,7 @@ exit:
 
 release_panel_lock:
 	dsi_panel_release_panel_lock(panel);
-	SDE_EVT32(SDE_EVTLOG_FUNC_EXIT);
+	SDE_EVT32(SDE_EVTLOG_FUNC_EXIT, rc);
 
 	return rc;
 }
@@ -883,6 +883,9 @@ static int dsi_display_cmd_prepare(const char *cmd_buf, u32 cmd_buf_len,
 		       cmd->msg.tx_len, payload_len);
 		return -EINVAL;
 	}
+
+	if (cmd->last_command)
+		cmd->msg.flags |= MIPI_DSI_MSG_LASTCOMMAND;
 
 	for (i = 0; i < cmd->msg.tx_len; i++)
 		payload[i] = cmd_buf[7 + i];
@@ -1066,6 +1069,7 @@ int dsi_display_set_power(struct drm_connector *connector,
 		return rc;
 	}
 
+	SDE_EVT32(display->panel->power_mode, power_mode, rc);
 	DSI_DEBUG("Power mode transition from %d to %d %s",
 			display->panel->power_mode, power_mode,
 			rc ? "failed" : "successful");
@@ -2802,6 +2806,19 @@ static int dsi_display_broadcast_cmd(struct dsi_display *display,
 		goto error;
 	}
 
+	display_for_each_ctrl(i, display) {
+		ctrl = &display->ctrl[i];
+		if (ctrl == m_ctrl)
+			continue;
+
+		rc = dsi_ctrl_clear_slave_dma_status(ctrl->ctrl, flags);
+		if (rc) {
+			DSI_ERR("[%s] clear interrupt status failed, rc=%d\n",
+				display->name, rc);
+			goto error;
+		}
+	}
+
 error:
 	dsi_display_mask_overflow(display, m_flags, false);
 	return rc;
@@ -4060,6 +4077,7 @@ static int dsi_display_update_dsi_bitrate(struct dsi_display *display,
 		DSI_DEBUG("byte_clk_rate = %llu, byte_intf_clk_rate = %llu\n",
 			  byte_clk_rate, byte_intf_clk_rate);
 		DSI_DEBUG("pclk_rate = %llu\n", pclk_rate);
+		SDE_EVT32(i, bit_rate, byte_clk_rate, pclk_rate);
 
 		ctrl->clk_freq.byte_clk_rate = byte_clk_rate;
 		ctrl->clk_freq.byte_intf_clk_rate = byte_intf_clk_rate;
@@ -4550,6 +4568,9 @@ static int dsi_display_get_dfps_timing(struct dsi_display *display,
 				DSI_V_TOTAL(timing),
 				timing->v_front_porch,
 				&adj_mode->timing.v_front_porch);
+		SDE_EVT32(SDE_EVTLOG_FUNC_CASE1, DSI_DFPS_IMMEDIATE_VFP,
+			curr_refresh_rate, timing->refresh_rate,
+			timing->v_front_porch, adj_mode->timing.v_front_porch);
 		break;
 
 	case DSI_DFPS_IMMEDIATE_HFP:
@@ -4560,6 +4581,9 @@ static int dsi_display_get_dfps_timing(struct dsi_display *display,
 				DSI_H_TOTAL_DSC(timing),
 				timing->h_front_porch,
 				&adj_mode->timing.h_front_porch);
+		SDE_EVT32(SDE_EVTLOG_FUNC_CASE2, DSI_DFPS_IMMEDIATE_HFP,
+			curr_refresh_rate, timing->refresh_rate,
+			timing->h_front_porch, adj_mode->timing.h_front_porch);
 		if (!rc)
 			adj_mode->timing.h_front_porch *= display->ctrl_count;
 		break;
@@ -4636,7 +4660,7 @@ static int dsi_display_set_mode_sub(struct dsi_display *display,
 		return -EINVAL;
 	}
 
-	SDE_EVT32(mode->dsi_mode_flags);
+	SDE_EVT32(mode->dsi_mode_flags, mode->panel_mode);
 	if (mode->dsi_mode_flags & DSI_MODE_FLAG_POMS) {
 		display->config.panel_mode = mode->panel_mode;
 		display->panel->panel_mode = mode->panel_mode;
@@ -4764,7 +4788,7 @@ static int _dsi_display_dev_init(struct dsi_display *display)
 		return -EINVAL;
 	}
 
-	if (!display->panel_node)
+	if (!display->panel_node && !display->fw)
 		return 0;
 
 	mutex_lock(&display->display_lock);
@@ -4849,6 +4873,7 @@ int dsi_display_cont_splash_config(void *dsi_display)
 	/* Update splash status for clock manager */
 	dsi_display_clk_mngr_update_splash_status(display->clk_mngr,
 				display->is_cont_splash_enabled);
+	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY, display->is_cont_splash_enabled);
 
 	/* Set up ctrl isr before enabling core clk */
 	dsi_display_ctrl_isr_configure(display, true);
@@ -4920,6 +4945,7 @@ int dsi_display_splash_res_cleanup(struct  dsi_display *display)
 	dsi_display_clk_mngr_update_splash_status(display->clk_mngr,
 				display->is_cont_splash_enabled);
 
+	SDE_EVT32(SDE_EVTLOG_FUNC_EXIT, display->is_cont_splash_enabled);
 	return rc;
 }
 
@@ -5013,7 +5039,7 @@ static int dsi_display_bind(struct device *dev,
 				drm, display);
 		return -EINVAL;
 	}
-	if (!display->panel_node)
+	if (!display->panel_node && !display->fw)
 		return 0;
 
 	if (!display->fw)
@@ -5310,7 +5336,13 @@ static void dsi_display_firmware_display(const struct firmware *fw,
 			fw->size);
 
 		display->fw = fw;
-		display->name = "dsi_firmware_display";
+
+		if (!strcmp(display->display_type, "primary"))
+			display->name = "dsi_firmware_display";
+
+		else if (!strcmp(display->display_type, "secondary"))
+			display->name = "dsi_firmware_display_secondary";
+
 	} else {
 		DSI_INFO("no firmware available, fallback to device node\n");
 	}
@@ -5391,10 +5423,17 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 
 	/* initialize display in firmware callback */
 	if (!boot_disp->boot_disp_en && IS_ENABLED(CONFIG_DSI_PARSER)) {
-		firm_req = !request_firmware_nowait(
-			THIS_MODULE, 1, "dsi_prop",
-			&pdev->dev, GFP_KERNEL, display,
-			dsi_display_firmware_display);
+		if (!strcmp(display->display_type, "primary"))
+			firm_req = !request_firmware_nowait(
+				THIS_MODULE, 1, "dsi_prop",
+				&pdev->dev, GFP_KERNEL, display,
+				dsi_display_firmware_display);
+
+		else if (!strcmp(display->display_type, "secondary"))
+			firm_req = !request_firmware_nowait(
+				THIS_MODULE, 1, "dsi_prop_sec",
+				&pdev->dev, GFP_KERNEL, display,
+				dsi_display_firmware_display);
 	}
 
 	if (!firm_req) {
@@ -5453,7 +5492,8 @@ int dsi_display_get_num_of_displays(void)
 	for (i = 0; i < MAX_DSI_ACTIVE_DISPLAY; i++) {
 		struct dsi_display *display = boot_displays[i].disp;
 
-		if (display && display->panel_node)
+		if ((display && display->panel_node) ||
+					(display && display->fw))
 			count++;
 	}
 
@@ -5472,7 +5512,8 @@ int dsi_display_get_active_displays(void **display_array, u32 max_display_count)
 	for (index = 0; index < MAX_DSI_ACTIVE_DISPLAY; index++) {
 		struct dsi_display *display = boot_displays[index].disp;
 
-		if (display && display->panel_node)
+		if ((display && display->panel_node) ||
+					(display && display->fw))
 			display_array[count++] = display;
 	}
 
@@ -6023,7 +6064,10 @@ int dsi_display_get_info(struct drm_connector *connector,
 	info->max_width = 1920;
 	info->max_height = 1080;
 	info->qsync_min_fps =
-		display->panel->qsync_min_fps;
+		display->panel->qsync_caps.qsync_min_fps;
+	info->has_qsync_min_fps_list =
+		(display->panel->qsync_caps.qsync_min_fps_list_len > 0) ?
+		true : false;
 
 	switch (display->panel->panel_mode) {
 	case DSI_OP_VIDEO_MODE:
@@ -6468,6 +6512,25 @@ int dsi_display_get_default_lms(void *dsi_display, u32 *num_lm)
 	return rc;
 }
 
+int dsi_display_get_qsync_min_fps(void *display_dsi, u32 mode_fps)
+{
+	struct dsi_display *display = (struct dsi_display *)display_dsi;
+	struct dsi_panel *panel;
+	u32 i;
+
+	if (display == NULL || display->panel == NULL)
+		return -EINVAL;
+
+	panel = display->panel;
+	for (i = 0; i < panel->dfps_caps.dfps_list_len; i++) {
+		if (panel->dfps_caps.dfps_list[i] == mode_fps)
+			return panel->qsync_caps.qsync_min_fps_list[i];
+	}
+	SDE_EVT32(mode_fps);
+	DSI_DEBUG("Invalid mode_fps %d\n", mode_fps);
+	return -EINVAL;
+}
+
 int dsi_display_find_mode(struct dsi_display *display,
 		const struct dsi_display_mode *cmp,
 		struct dsi_display_mode **out_mode)
@@ -6575,10 +6638,13 @@ int dsi_display_validate_mode_change(struct dsi_display *display,
 				dyn_clk_caps->maintain_const_fps) {
 				DSI_DEBUG("Mode switch is seamless variable refresh\n");
 				adj_mode->dsi_mode_flags |= DSI_MODE_FLAG_VRR;
-				SDE_EVT32(cur_mode->timing.refresh_rate,
+				SDE_EVT32(SDE_EVTLOG_FUNC_CASE1,
+					cur_mode->timing.refresh_rate,
 					adj_mode->timing.refresh_rate,
 					cur_mode->timing.h_front_porch,
-					adj_mode->timing.h_front_porch);
+					adj_mode->timing.h_front_porch,
+					cur_mode->timing.v_front_porch,
+					adj_mode->timing.v_front_porch);
 			}
 		}
 
@@ -6596,8 +6662,9 @@ int dsi_display_validate_mode_change(struct dsi_display *display,
 
 				adj_mode->dsi_mode_flags |=
 						DSI_MODE_FLAG_DYN_CLK;
-				SDE_EVT32(cur_mode->pixel_clk_khz,
-						adj_mode->pixel_clk_khz);
+				SDE_EVT32(SDE_EVTLOG_FUNC_CASE2,
+					cur_mode->pixel_clk_khz,
+					adj_mode->pixel_clk_khz);
 			}
 		}
 	}
@@ -7295,7 +7362,7 @@ static int dsi_display_qsync(struct dsi_display *display, bool enable)
 	int i;
 	int rc = 0;
 
-	if (!display->panel->qsync_min_fps) {
+	if (!display->panel->qsync_caps.qsync_min_fps) {
 		DSI_ERR("%s:ERROR: qsync set, but no fps\n", __func__);
 		return 0;
 	}
@@ -7323,7 +7390,7 @@ static int dsi_display_qsync(struct dsi_display *display, bool enable)
 	}
 
 exit:
-	SDE_EVT32(enable, display->panel->qsync_min_fps, rc);
+	SDE_EVT32(enable, display->panel->qsync_caps.qsync_min_fps, rc);
 	mutex_unlock(&display->display_lock);
 	return rc;
 }
