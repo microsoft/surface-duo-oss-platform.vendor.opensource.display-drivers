@@ -872,6 +872,44 @@ static const struct attribute_group *sde_crtc_attr_groups[] = {
 	NULL,
 };
 
+static void sde_crtc_post_commit_init(struct sde_crtc *sde_crtc)
+{
+	struct sde_kms *kms = _sde_crtc_get_kms(&sde_crtc->base);
+
+	sde_post_commit_fence_ctx_init(
+			&sde_crtc->post_commit_fence_ctx,
+			sde_crtc->name,
+			&sde_crtc->output_fence->done_count);
+
+	if (kms->catalog->has_roi_misr)
+		sde_roi_misr_init(sde_crtc);
+}
+
+static void sde_crtc_post_commit_prepare_fence(
+		struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+	struct sde_crtc_state *cstate = to_sde_crtc_state(crtc->state);
+
+	sde_post_commit_fence_create(
+			&sde_crtc->post_commit_fence_ctx,
+			cstate->post_commit_fence_mask,
+			sde_crtc->output_fence->commit_count);
+}
+
+static void sde_crtc_post_commit_update_fence(
+		struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+	struct sde_crtc_state *cstate = to_sde_crtc_state(crtc->state);
+
+	if (!cstate->post_commit_fence_mask)
+		return;
+
+	sde_post_commit_fence_update(
+			&sde_crtc->post_commit_fence_ctx);
+}
+
 static void sde_crtc_destroy(struct drm_crtc *crtc)
 {
 	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
@@ -890,8 +928,6 @@ static void sde_crtc_destroy(struct drm_crtc *crtc)
 		drm_property_blob_put(sde_crtc->blob_info);
 	msm_property_destroy(&sde_crtc->property_info);
 	sde_cp_crtc_destroy_properties(crtc);
-
-	sde_roi_misr_deinit(sde_crtc);
 
 	sde_fence_deinit(sde_crtc->output_fence);
 	_sde_crtc_deinit_events(sde_crtc);
@@ -2862,9 +2898,6 @@ static void sde_crtc_frame_event_cb(void *data, u32 event)
 		sde_recovery_set_event(crtc->dev, DRM_EVENT_SDE_VSYNC_MISS,
 				crtc);
 
-	if (event & SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE)
-		sde_roi_misr_update_fence(sde_crtc, true);
-
 	fevent->event = event;
 	fevent->crtc = crtc;
 	fevent->connector = cb_data->connector;
@@ -2909,8 +2942,8 @@ void sde_crtc_prepare_commit(struct drm_crtc *crtc,
 	/* prepare main output fence */
 	sde_fence_prepare(sde_crtc->output_fence);
 
-	/* prepare roi misr fence */
-	sde_roi_misr_prepare_fence(sde_crtc, cstate);
+	/* prepare post-commit fence */
+	sde_crtc_post_commit_prepare_fence(crtc);
 	SDE_ATRACE_END("sde_crtc_prepare_commit");
 }
 
@@ -2982,6 +3015,8 @@ static void sde_crtc_vblank_cb(void *data)
 {
 	struct drm_crtc *crtc = (struct drm_crtc *)data;
 	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+
+	sde_post_commit_signal_fence(&sde_crtc->post_commit_fence_ctx);
 
 	/* keep statistics on vblank callback - with auto reset via debugfs */
 	if (ktime_compare(sde_crtc->vblank_cb_time, ktime_set(0, 0)) == 0)
@@ -3863,7 +3898,7 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 			(cont_splash_enabled || sde_crtc->enabled))
 		sde_cp_crtc_apply_properties(crtc);
 
-	sde_roi_misr_setup(crtc);
+	sde_crtc_post_commit_update_fence(crtc);
 
 	/*
 	 * PP_DONE irq is only used by command mode for now.
@@ -4647,6 +4682,7 @@ static struct drm_crtc_state *sde_crtc_duplicate_state(struct drm_crtc *crtc)
 	 * so we need clear these state when do state duplication operation
 	 */
 	cstate->misr_state.roi_misr_cfg.user_fence_fd_addr = NULL;
+	cstate->post_commit_fence_mask = 0;
 
 	/* duplicate base helper */
 	__drm_atomic_helper_crtc_duplicate_state(crtc, &cstate->base);
@@ -5807,8 +5843,9 @@ static void sde_crtc_install_properties(struct drm_crtc *crtc,
 			"output_fence_offset", 0x0, 0, 1, 0,
 			CRTC_PROP_OUTPUT_FENCE_OFFSET);
 
-	msm_property_install_volatile_range(&sde_crtc->property_info,
-			"roi_misr", 0x0, 0, ~0, 0, CRTC_PROP_ROI_MISR);
+	if (catalog->has_roi_misr)
+		msm_property_install_volatile_range(&sde_crtc->property_info,
+				"roi_misr", 0x0, 0, ~0, 0, CRTC_PROP_ROI_MISR);
 
 	msm_property_install_range(&sde_crtc->property_info,
 			"core_clk", 0x0, 0, U64_MAX,
@@ -7069,7 +7106,7 @@ struct drm_crtc *sde_crtc_init(struct drm_device *dev, struct drm_plane *plane)
 	kthread_init_delayed_work(&sde_crtc->idle_notify_work,
 					__sde_crtc_idle_notify_work);
 
-	sde_roi_misr_init(sde_crtc);
+	sde_crtc_post_commit_init(sde_crtc);
 
 	SDE_DEBUG("%s: successfully initialized crtc\n", sde_crtc->name);
 	return crtc;
