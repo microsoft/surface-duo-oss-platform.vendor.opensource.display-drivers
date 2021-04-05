@@ -40,11 +40,6 @@ struct shd_crtc {
 	struct shd_display *display;
 };
 
-struct shd_bridge {
-	struct drm_bridge base;
-	struct shd_display *display;
-};
-
 struct shd_kms {
 	struct msm_kms_funcs funcs;
 	const struct msm_kms_funcs *orig_funcs;
@@ -703,6 +698,8 @@ static int shd_connector_get_mode_info(struct drm_connector *connector,
 		u32 max_mixer_width, void *display)
 {
 	struct shd_display *shd_display = display;
+	struct sde_connector *base_conn;
+	struct msm_mode_info base_mode_info;
 
 	if (!drm_mode || !mode_info || !max_mixer_width || !display) {
 		SDE_ERROR("invalid params\n");
@@ -715,25 +712,13 @@ static int shd_connector_get_mode_info(struct drm_connector *connector,
 	mode_info->vtotal = drm_mode->vtotal;
 	mode_info->comp_info.comp_type = MSM_DISPLAY_COMPRESSION_NONE;
 
-	/*
-	 * When this function is called for resource allocation,
-	 * we return with zero topology as no h/w res is required. When
-	 * called for topology population, we return with base topology
-	 * as needed for user space pipe split.
-	 */
-	if (!(drm_mode->private_flags & MSM_MODE_FLAG_SHARED_DISPLAY)) {
-		struct sde_connector *base_conn;
-		struct msm_mode_info base_mode_info;
-
-		base_conn = to_sde_connector(shd_display->base->connector);
-		base_conn->ops.get_mode_info(shd_display->base->connector,
-			&shd_display->base->mode,
-			&base_mode_info,
-			max_mixer_width,
-			base_conn->display);
-
-		mode_info->topology = base_mode_info.topology;
-	}
+	base_conn = to_sde_connector(shd_display->base->connector);
+	base_conn->ops.get_mode_info(shd_display->base->connector,
+		&shd_display->base->mode,
+		&base_mode_info,
+		max_mixer_width,
+		base_conn->display);
+	mode_info->topology = base_mode_info.topology;
 
 	if (shd_display->src.h != shd_display->roi.h)
 		mode_info->vpadding = shd_display->roi.h;
@@ -1022,110 +1007,6 @@ static int shd_conn_set_property(struct drm_connector *connector,
 	return 0;
 }
 
-static inline
-int shd_bridge_attach(struct drm_bridge *shd_bridge)
-{
-	return 0;
-}
-
-static inline
-void shd_bridge_pre_enable(struct drm_bridge *drm_bridge)
-{
-}
-
-static inline
-void shd_bridge_enable(struct drm_bridge *drm_bridge)
-{
-}
-
-static inline
-void shd_bridge_disable(struct drm_bridge *drm_bridge)
-{
-}
-
-static inline
-void shd_bridge_post_disable(struct drm_bridge *drm_bridge)
-{
-}
-
-
-static inline
-void shd_bridge_mode_set(struct drm_bridge *drm_bridge,
-				const struct drm_display_mode *mode,
-				const struct drm_display_mode *adjusted_mode)
-{
-}
-
-static inline
-bool shd_bridge_mode_fixup(struct drm_bridge *drm_bridge,
-				  const struct drm_display_mode *mode,
-				  struct drm_display_mode *adjusted_mode)
-{
-	adjusted_mode->private_flags |= MSM_MODE_FLAG_SHARED_DISPLAY;
-	return true;
-}
-
-static const struct drm_bridge_funcs shd_bridge_ops = {
-	.attach       = shd_bridge_attach,
-	.mode_fixup   = shd_bridge_mode_fixup,
-	.pre_enable   = shd_bridge_pre_enable,
-	.enable       = shd_bridge_enable,
-	.disable      = shd_bridge_disable,
-	.post_disable = shd_bridge_post_disable,
-	.mode_set     = shd_bridge_mode_set,
-};
-
-static int shd_drm_bridge_init(void *data, struct drm_encoder *encoder)
-{
-	int rc = 0;
-	struct shd_bridge *bridge;
-	struct drm_device *dev;
-	struct shd_display *display = data;
-	struct msm_drm_private *priv = NULL;
-
-	bridge = kzalloc(sizeof(*bridge), GFP_KERNEL);
-	if (!bridge) {
-		rc = -ENOMEM;
-		goto error;
-	}
-
-	dev = display->drm_dev;
-	bridge->display = display;
-	bridge->base.funcs = &shd_bridge_ops;
-	bridge->base.encoder = encoder;
-
-	priv = dev->dev_private;
-
-	rc = drm_bridge_attach(encoder, &bridge->base, NULL);
-	if (rc) {
-		SDE_ERROR("failed to attach bridge, rc=%d\n", rc);
-		goto error_free_bridge;
-	}
-
-	encoder->bridge = &bridge->base;
-	priv->bridges[priv->num_bridges++] = &bridge->base;
-	display->bridge = &bridge->base;
-
-	return 0;
-
-error_free_bridge:
-	kfree(bridge);
-error:
-	return rc;
-}
-
-static void shd_drm_bridge_deinit(void *data)
-{
-	struct shd_display *display = data;
-	struct shd_bridge *bridge = container_of(display->bridge,
-		struct shd_bridge, base);
-
-	if (bridge && bridge->base.encoder)
-		bridge->base.encoder->bridge = NULL;
-
-	kfree(bridge);
-}
-
 static int shd_backlight_device_update_status(struct backlight_device *bd)
 {
 	return 0;
@@ -1171,6 +1052,7 @@ static int shd_drm_obj_init(struct shd_display *display)
 	struct drm_connector *connector;
 	struct sde_crtc *sde_crtc;
 	struct shd_crtc *shd_crtc;
+	struct sde_connector *sde_conn;
 	struct msm_display_info info;
 	int rc = 0;
 	uint32_t i;
@@ -1241,13 +1123,6 @@ static int shd_drm_obj_init(struct shd_display *display)
 
 	SDE_DEBUG("create encoder %d\n", DRMID(encoder));
 
-	rc = shd_drm_bridge_init(display, encoder);
-	if (rc) {
-		SDE_ERROR("shd bridge init failed, %d\n", rc);
-		sde_encoder_destroy(encoder);
-		goto end;
-	}
-
 	connector = sde_connector_init(dev,
 				encoder,
 				NULL,
@@ -1260,11 +1135,13 @@ static int shd_drm_obj_init(struct shd_display *display)
 		priv->connectors[priv->num_connectors++] = connector;
 	} else {
 		SDE_ERROR("shd connector init failed\n");
-		shd_drm_bridge_deinit(display);
 		sde_encoder_destroy(encoder);
 		rc = -ENOENT;
 		goto end;
 	}
+
+	sde_conn = to_sde_connector(connector);
+	sde_conn->shared = true;
 
 	if (display->name)
 		connector->name = kasprintf(GFP_KERNEL, "%s", display->name);
@@ -1286,6 +1163,12 @@ static int shd_drm_obj_init(struct shd_display *display)
 
 	/* update encoder's possible crtcs */
 	encoder->possible_crtcs = 1 << (priv->num_crtcs - 1);
+
+	/* add cwb support */
+	drm_for_each_encoder(encoder, dev) {
+		if (encoder->encoder_type == DRM_MODE_ENCODER_VIRTUAL)
+			encoder->possible_crtcs |= 1 << (priv->num_crtcs - 1);
+	}
 
 	/* update plane's possible crtcs */
 	for (i = 0; i < priv->num_planes; i++)

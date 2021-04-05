@@ -49,6 +49,10 @@
 
 #define CTL_SSPP_MAX_RECTS		2
 
+#define   CTL_MERGE_3D_ACTIVE           0x0E4
+#define   CTL_WB_ACTIVE                 0x0EC
+#define   CTL_CWB_ACTIVE                0x0F0
+
 static DEFINE_SPINLOCK(hw_ctl_lock);
 
 /**
@@ -239,6 +243,81 @@ exit:
 	hw_ctl->mixer_cfg[lm].mixercfg_skip_sspp_mask[1] = 0;
 }
 
+static int _sde_shd_setup_intf_cfg_v1(struct sde_hw_ctl *ctx,
+		struct sde_hw_intf_cfg_v1 *cfg)
+{
+	return 0;
+}
+
+static int _sde_shd_update_cwb_cfg(struct sde_hw_ctl *ctx,
+		struct sde_hw_intf_cfg_v1 *cfg, bool enable)
+{
+	int i;
+	u32 cwb_active = 0;
+	u32 merge_3d_active = 0;
+	struct sde_hw_blk_reg_map *c;
+	struct sde_shd_hw_ctl *hw_ctl;
+
+	c = &ctx->hw;
+	hw_ctl = container_of(ctx, struct sde_shd_hw_ctl, base);
+
+	if (enable) {
+		for (i = 0; i < cfg->cwb_count; i++) {
+			if (cfg->cwb[i])
+				cwb_active |= BIT(cfg->cwb[i] - CWB_0);
+		}
+
+		for (i = 0; i < cfg->merge_3d_count; i++) {
+			if (cfg->merge_3d[i])
+				merge_3d_active |=
+					BIT(cfg->merge_3d[i] - MERGE_3D_0);
+		}
+
+		hw_ctl->cwb_active = cwb_active;
+		hw_ctl->merge_3d_active = merge_3d_active;
+	}
+
+	hw_ctl->cwb_enable = enable;
+	hw_ctl->cwb_changed = true;
+
+	return 0;
+}
+
+static void _sde_shd_flush_cwb_cfg(struct sde_shd_hw_ctl *hw_ctl)
+{
+	struct sde_hw_blk_reg_map *c;
+	u32 tmp;
+
+	if (!hw_ctl->cwb_changed)
+		return;
+
+	c = &hw_ctl->base.hw;
+
+	if (hw_ctl->cwb_enable) {
+		SDE_REG_WRITE(c, CTL_WB_ACTIVE, BIT(2));
+
+		tmp = SDE_REG_READ(c, CTL_MERGE_3D_ACTIVE);
+		tmp |= hw_ctl->merge_3d_active;
+		SDE_REG_WRITE(c, CTL_MERGE_3D_ACTIVE, tmp);
+
+		tmp = SDE_REG_READ(c, CTL_CWB_ACTIVE);
+		tmp |= hw_ctl->cwb_active;
+		SDE_REG_WRITE(c, CTL_CWB_ACTIVE, tmp);
+	} else {
+		SDE_REG_WRITE(c, CTL_WB_ACTIVE, 0x0);
+
+		tmp = SDE_REG_READ(c, CTL_MERGE_3D_ACTIVE);
+		tmp &= ~hw_ctl->merge_3d_active;
+		SDE_REG_WRITE(c, CTL_MERGE_3D_ACTIVE, tmp);
+
+		tmp = SDE_REG_READ(c, CTL_CWB_ACTIVE);
+		tmp &= ~hw_ctl->cwb_active;
+		SDE_REG_WRITE(c, CTL_CWB_ACTIVE, tmp);
+	}
+
+	hw_ctl->cwb_changed = false;
+}
+
 static void _sde_shd_flush_hw_ctl(struct sde_hw_ctl *ctx)
 {
 	struct sde_shd_hw_ctl *hw_ctl;
@@ -280,6 +359,8 @@ static void _sde_shd_flush_hw_ctl(struct sde_hw_ctl *ctx)
 		SDE_REG_WRITE(c, CTL_LAYER_EXT2(lm), mixercfg_ext2);
 		SDE_REG_WRITE(c, CTL_LAYER_EXT3(lm), mixercfg_ext3);
 	}
+
+	_sde_shd_flush_cwb_cfg(hw_ctl);
 }
 
 static void _sde_shd_setup_blend_config(struct sde_hw_mixer *ctx,
@@ -417,7 +498,11 @@ void sde_shd_hw_ctl_init_op(struct sde_hw_ctl *ctx)
 	ctx->ops.setup_blendstage =
 		_sde_shd_hw_ctl_setup_blendstage;
 
-	ctx->ops.setup_intf_cfg_v1 = NULL;
+	ctx->ops.setup_intf_cfg_v1 =
+		_sde_shd_setup_intf_cfg_v1;
+
+	ctx->ops.update_cwb_cfg =
+		_sde_shd_update_cwb_cfg;
 }
 
 void sde_shd_hw_lm_init_op(struct sde_hw_mixer *ctx)
