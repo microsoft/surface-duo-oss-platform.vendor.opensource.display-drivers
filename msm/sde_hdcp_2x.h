@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_HDCP_2X_H__
@@ -59,6 +59,7 @@ enum sde_hdcp_2x_wakeup_cmd {
  * @HDCP_TRANSPORT_CMD_STATUS_FAILED:  failed to communicate with TrustZone
  * @HDCP_TRANSPORT_CMD_LINK_POLL:      poll the HDCP link
  * @HDCP_TRANSPORT_CMD_AUTHENTICATE:   start authentication
+ * @HDCP_TRANSPORT_CMD_RX_INFO:        RX Info from repeater
  */
 enum hdcp_transport_wakeup_cmd {
 	HDCP_TRANSPORT_CMD_INVALID,
@@ -67,7 +68,8 @@ enum hdcp_transport_wakeup_cmd {
 	HDCP_TRANSPORT_CMD_STATUS_SUCCESS,
 	HDCP_TRANSPORT_CMD_STATUS_FAILED,
 	HDCP_TRANSPORT_CMD_LINK_POLL,
-	HDCP_TRANSPORT_CMD_AUTHENTICATE
+	HDCP_TRANSPORT_CMD_AUTHENTICATE,
+	HDCP_TRANSPORT_CMD_RX_INFO
 };
 
 enum sde_hdcp_2x_device_type {
@@ -208,6 +210,8 @@ static inline const char *hdcp_transport_cmd_to_str(
 		return TO_STR(HDCP_TRANSPORT_CMD_LINK_POLL);
 	case HDCP_TRANSPORT_CMD_AUTHENTICATE:
 		return TO_STR(HDCP_TRANSPORT_CMD_AUTHENTICATE);
+	case HDCP_TRANSPORT_CMD_RX_INFO:
+		return TO_STR(HDCP_TRANSPORT_CMD_RX_INFO);
 	default:
 		return "UNKNOWN";
 	}
