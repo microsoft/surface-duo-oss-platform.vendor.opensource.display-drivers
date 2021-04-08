@@ -464,8 +464,60 @@ static void _sde_shd_flush_hw_lm(struct sde_hw_mixer *ctx)
 	}
 }
 
+static void _sde_shd_setup_roi_misr(struct sde_hw_roi_misr *ctx,
+		struct sde_roi_misr_hw_cfg *cfg)
+{
+	struct sde_shd_hw_roi_misr *hw_roi_misr;
+
+	if (!ctx || !cfg)
+		return;
+
+	hw_roi_misr = container_of(ctx, struct sde_shd_hw_roi_misr, base);
+	hw_roi_misr->misr_cfg = *cfg;
+}
+
+static void _sde_shd_flush_hw_roi_misr(struct sde_hw_roi_misr *ctx)
+{
+	struct sde_shd_hw_roi_misr *hw_roi_misr;
+
+	if (!ctx)
+		return;
+
+	hw_roi_misr = container_of(ctx, struct sde_shd_hw_roi_misr, base);
+
+	if (hw_roi_misr->misr_cfg.roi_mask
+		&& hw_roi_misr->orig->ops.setup_roi_misr)
+		hw_roi_misr->orig->ops.setup_roi_misr(ctx,
+				&hw_roi_misr->misr_cfg);
+}
+
+static int _sde_shd_setup_dsc_cfg(struct sde_hw_ctl *ctx,
+		struct sde_ctl_dsc_cfg *cfg)
+{
+	struct sde_shd_hw_ctl *hw_ctl;
+
+	if (!ctx || !cfg)
+		return -EINVAL;
+
+	hw_ctl = container_of(ctx, struct sde_shd_hw_ctl, base);
+	hw_ctl->dsc_cfg = *cfg;
+
+	return 0;
+}
+
+static void _sde_shd_flush_hw_dsc_config(struct sde_hw_ctl *ctl_ctx)
+{
+	struct sde_shd_hw_ctl *hw_ctl;
+
+	hw_ctl = container_of(ctl_ctx, struct sde_shd_hw_ctl, base);
+
+	if (hw_ctl->orig->ops.setup_dsc_cfg)
+		hw_ctl->orig->ops.setup_dsc_cfg(ctl_ctx, &hw_ctl->dsc_cfg);
+}
+
 void sde_shd_hw_flush(struct sde_hw_ctl *ctl_ctx,
-	struct sde_hw_mixer *lm_ctx[MAX_MIXERS_PER_CRTC], int lm_num)
+	struct sde_hw_mixer *lm_ctx[MAX_MIXERS_PER_CRTC], int lm_num,
+	struct sde_hw_roi_misr *misr_ctx[MAX_MIXERS_PER_CRTC], int misr_num)
 {
 	struct sde_hw_blk_reg_map *c;
 	unsigned long lock_flags;
@@ -481,6 +533,11 @@ void sde_shd_hw_flush(struct sde_hw_ctl *ctl_ctx,
 
 	for (i = 0; i < lm_num; i++)
 		_sde_shd_flush_hw_lm(lm_ctx[i]);
+
+	for (i = 0; i < misr_num; i++)
+		_sde_shd_flush_hw_roi_misr(misr_ctx[i]);
+
+	_sde_shd_flush_hw_dsc_config(ctl_ctx);
 
 	if (ctl_ctx->ops.trigger_flush)
 		ctl_ctx->ops.trigger_flush(ctl_ctx);
@@ -503,6 +560,9 @@ void sde_shd_hw_ctl_init_op(struct sde_hw_ctl *ctx)
 
 	ctx->ops.update_cwb_cfg =
 		_sde_shd_update_cwb_cfg;
+
+	ctx->ops.setup_dsc_cfg =
+		_sde_shd_setup_dsc_cfg;
 }
 
 void sde_shd_hw_lm_init_op(struct sde_hw_mixer *ctx)
@@ -518,6 +578,12 @@ void sde_shd_hw_lm_init_op(struct sde_hw_mixer *ctx)
 
 	ctx->ops.clear_dim_layer =
 			_sde_shd_clear_dim_layer;
+}
+
+void sde_shd_hw_roi_misr_init_op(struct sde_hw_roi_misr *ctx)
+{
+	ctx->ops.setup_roi_misr =
+			_sde_shd_setup_roi_misr;
 }
 
 void sde_shd_hw_skip_sspp_clear(struct sde_hw_ctl *ctx,

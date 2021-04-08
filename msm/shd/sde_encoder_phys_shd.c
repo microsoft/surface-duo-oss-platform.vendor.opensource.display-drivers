@@ -301,8 +301,8 @@ static int _sde_encoder_phys_shd_rm_reserve(
 		hw_roi_misr = container_of(shd_enc->hw_roi_misr[i],
 				struct sde_shd_hw_roi_misr, base);
 		hw_roi_misr->base = *(struct sde_hw_roi_misr *)roi_misr_iter.hw;
-		hw_roi_misr->range = display->roi_range;
 		hw_roi_misr->orig = roi_misr_iter.hw;
+		sde_shd_hw_roi_misr_init_op(&hw_roi_misr->base);
 
 		SDE_DEBUG("reserve ROI_MISR%d from enc %d to %d\n",
 			hw_roi_misr->base.idx,
@@ -556,7 +556,8 @@ void sde_encoder_phys_shd_trigger_flush(
 	shd_enc = container_of(phys_enc, struct sde_encoder_phys_shd, base);
 
 	sde_shd_hw_flush(phys_enc->hw_ctl,
-			shd_enc->hw_lm, shd_enc->num_mixers);
+			shd_enc->hw_lm, shd_enc->num_mixers,
+			shd_enc->hw_roi_misr, shd_enc->num_roi_misrs);
 }
 
 static int sde_encoder_phys_shd_control_vblank_irq(
