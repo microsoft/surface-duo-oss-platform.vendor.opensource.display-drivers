@@ -284,19 +284,14 @@ static int msm_lease_open(struct drm_device *dev, struct drm_file *file)
 	if (!dev->registered)
 		return -ENOENT;
 
-	if (!dev->mode_config.poll_enabled)
-		return g_master_open(dev, file);
+	rc = g_master_open(dev, file);
+	if (rc)
+		return rc;
 
 	mutex_lock(&g_lease_mutex);
 
 	lease = _find_lease_from_minor(file->minor);
-	if (!lease) {
-		rc = -ENODEV;
-		goto out2;
-	}
-
-	rc = g_master_open(dev, file);
-	if (rc)
+	if (!lease)
 		goto out2;
 
 	mutex_lock(&dev->master_mutex);
