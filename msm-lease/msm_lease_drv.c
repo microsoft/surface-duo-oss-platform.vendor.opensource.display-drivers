@@ -284,19 +284,14 @@ static int msm_lease_open(struct drm_device *dev, struct drm_file *file)
 	if (!dev->registered)
 		return -ENOENT;
 
-	if (!dev->mode_config.poll_enabled)
-		return g_master_open(dev, file);
+	rc = g_master_open(dev, file);
+	if (rc)
+		return rc;
 
 	mutex_lock(&g_lease_mutex);
 
 	lease = _find_lease_from_minor(file->minor);
-	if (!lease) {
-		rc = -ENODEV;
-		goto out2;
-	}
-
-	rc = g_master_open(dev, file);
-	if (rc)
+	if (!lease)
 		goto out2;
 
 	mutex_lock(&dev->master_mutex);
@@ -393,11 +388,6 @@ static void msm_lease_postclose(struct drm_device *dev, struct drm_file *file)
 
 out:
 	mutex_unlock(&g_lease_mutex);
-}
-
-static int msm_lease_mastercreate(struct drm_device *dev, struct drm_master *master)
-{
-	return -EINVAL;
 }
 
 static long msm_lease_ioctl(struct file *filp,
@@ -940,7 +930,6 @@ static int msm_lease_notifier(struct notifier_block *nb,
 		g_master_postclose = master_ddev->driver->postclose;
 		master_ddev->driver->open = msm_lease_open;
 		master_ddev->driver->postclose = msm_lease_postclose;
-		master_ddev->driver->master_create = msm_lease_mastercreate;
 	}
 
 	/* hook ioctl function if dev_name is defined */
