@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 
 #define CONFIG_DRM_MSM 1
@@ -21,4 +21,5 @@
 #define CONFIG_DRM_SDE_SHD 1
 #define CONFIG_DRM_SDE_SHP 1
 #define CONFIG_DRM_MSM_LEASE 1
+#define CONFIG_DRM_MSM_CFG 1
 #define CONFIG_DRM_ANALOGIX_ANX7625 1
