@@ -258,6 +258,29 @@ static int shd_crtc_validate_shared_display(struct drm_crtc *crtc,
 	shd_crtc = sde_crtc->priv_handle;
 	sde_crtc_state = to_sde_crtc_state(state);
 
+	/* check shared display roi */
+	if (state->mode_changed && state->active) {
+		struct shd_display *display = shd_crtc->display;
+		struct drm_crtc_state *base_crtc_state;
+
+		base_crtc_state = drm_atomic_get_existing_crtc_state(
+				state->state, display->base->crtc);
+		if (!base_crtc_state)
+			base_crtc_state = display->base->crtc->state;
+
+		if (state->mode.hdisplay + display->roi.x >
+				base_crtc_state->mode.hdisplay ||
+				state->mode.vdisplay + display->roi.y >
+				base_crtc_state->mode.vdisplay) {
+			SDE_ERROR("roi %d,%d,%dx%d exceeds base mode %dx%d\n",
+				display->roi.x, display->roi.y,
+				state->mode.hdisplay, state->mode.vdisplay,
+				base_crtc_state->mode.hdisplay,
+				base_crtc_state->mode.vdisplay);
+			return -EINVAL;
+		}
+	}
+
 	/* check z-pos for all planes */
 	drm_atomic_crtc_state_for_each_plane_state(plane, pstate, state) {
 		sde_pstate = to_sde_plane_state(pstate);
