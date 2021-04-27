@@ -472,7 +472,7 @@ static void msm_lease_postclose(struct drm_device *dev, struct drm_file *file)
 	if (!lease)
 		goto out;
 
-	if (file->master)
+	if (drm_is_current_master(file))
 		msm_lease_lastclose(lease);
 
 	mutex_lock(&dev->master_mutex);
