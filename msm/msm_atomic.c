@@ -750,7 +750,8 @@ int msm_atomic_commit(struct drm_device *dev,
 	 *
 	 * swap driver private state while still holding state_lock
 	 */
-	if (to_kms_state(state)->state)
+	if (to_kms_state(state)->state && priv->kms &&
+			priv->kms->funcs && priv->kms->funcs->swap_state)
 		priv->kms->funcs->swap_state(priv->kms, state);
 
 	/*

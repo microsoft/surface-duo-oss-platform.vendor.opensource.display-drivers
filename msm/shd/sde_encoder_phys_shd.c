@@ -753,7 +753,8 @@ int sde_encoder_phys_shd_atomic_check(struct sde_encoder_phys *phys_enc,
 {
 	struct shd_display *display;
 
-	if (!phys_enc || !crtc_state || !conn_state || !conn_state->state) {
+	if (!phys_enc || !crtc_state || !conn_state || !conn_state->state ||
+			!conn_state->connector) {
 		SDE_ERROR("invalid encoder/device\n");
 		return -EINVAL;
 	}
