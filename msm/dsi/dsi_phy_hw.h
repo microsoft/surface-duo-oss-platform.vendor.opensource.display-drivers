@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_PHY_HW_H_
@@ -86,6 +86,7 @@ struct dsi_phy_per_lane_cfgs {
  * @regulators:       Regulator settings for lanes.
  * @pll_source:       PLL source.
  * @lane_map:         DSI logical to PHY lane mapping.
+ * @is_lane_map_present:Override the display DSI logical to PHY lane mapping.
  * @lane_pnswap:      P/N swap status on each lane.
  * @force_clk_lane_hs:Boolean whether to force clock lane in HS mode.
  * @phy_type:         Phy-type (Dphy/Cphy).
@@ -99,6 +100,7 @@ struct dsi_phy_cfg {
 	struct dsi_phy_per_lane_cfgs regulators;
 	enum dsi_phy_pll_source pll_source;
 	struct dsi_lane_map lane_map;
+	bool is_lane_map_present;
 	u8 lane_pnswap;
 	bool force_clk_lane_hs;
 	enum dsi_phy_type phy_type;

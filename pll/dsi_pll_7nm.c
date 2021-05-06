@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -11,7 +11,7 @@
 #include <linux/delay.h>
 #include "dsi_pll.h"
 #include "pll_drv.h"
-#include <dt-bindings/clock/mdss-10nm-pll-clk.h>
+#include <dt-bindings/clock/mdss-7nm-pll-clk.h>
 
 #define VCO_DELAY_USEC 1
 
@@ -581,10 +581,18 @@ static void dsi_pll_calc_dec_frac(struct dsi_pll_7nm *pll,
 
 	dec = div_u64(dec_multiple, multiplier);
 
-	if (dsi_pll_7nm_is_hw_revision_v1(rsc))
+	if (dsi_pll_7nm_is_hw_revision_v1(rsc)) {
 		regs->pll_clock_inverters = 0x0;
-	else
-		regs->pll_clock_inverters = 0x28;
+	} else {
+		if (pll_freq > 3020000000UL)
+			regs->pll_clock_inverters = 0x40;
+		else if (pll_freq > 2500000000UL)
+			regs->pll_clock_inverters = 0;
+		else if (pll_freq > 1100000000UL)
+			regs->pll_clock_inverters = 0x20;
+		else
+			regs->pll_clock_inverters = 0x28;
+	}
 
 	regs->pll_lockdet_rate = config->lock_timer;
 	regs->decimal_div_start = dec;
@@ -697,11 +705,7 @@ static void dsi_pll_config_hzindep_reg(struct dsi_pll_7nm *pll,
 	MDSS_PLL_REG_W(pll_base, PLL_PFILT, 0x29);
 	MDSS_PLL_REG_W(pll_base, PLL_PFILT, 0x2f);
 	MDSS_PLL_REG_W(pll_base, PLL_IFILT, 0x2a);
-
-	if (dsi_pll_7nm_is_hw_revision_v1(rsc))
-		MDSS_PLL_REG_W(pll_base, PLL_IFILT, 0x30);
-	else
-		MDSS_PLL_REG_W(pll_base, PLL_IFILT, 0x22);
+	MDSS_PLL_REG_W(pll_base, PLL_IFILT, 0x30);
 }
 
 static void dsi_pll_init_val(struct mdss_pll_resources *rsc)
@@ -794,9 +798,9 @@ static void dsi_pll_init_val(struct mdss_pll_resources *rsc)
 	MDSS_PLL_REG_W(pll_base, PLL_SPARE_AND_JPC_OVERRIDES, 0x00000000);
 
 	if (dsi_pll_7nm_is_hw_revision_v1(rsc))
-		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000066);
+		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000067);
 	else
-		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000040);
+		MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_1, 0x00000041);
 
 	MDSS_PLL_REG_W(pll_base, PLL_BIAS_CONTROL_2, 0x00000020);
 	MDSS_PLL_REG_W(pll_base, PLL_ALOG_OBSV_BUS_CTRL_1, 0x00000000);
@@ -1997,6 +2001,12 @@ int dsi_pll_clock_register_7nm(struct platform_device *pdev,
 		dsi0pll_cphy_pclk_src_mux.clkr.regmap = rmap;
 
 		dsi0pll_vco_clk.priv = pll_res;
+
+		if (pll_res->vco_max_rate) {
+			dsi0pll_vco_clk.min_rate = pll_res->vco_min_rate;
+			dsi0pll_vco_clk.max_rate = pll_res->vco_max_rate;
+		}
+
 		for (i = VCO_CLK_0; i <= CPHY_PCLK_SRC_0_CLK; i++) {
 			clk = devm_clk_register(&pdev->dev,
 						mdss_dsi_pllcc_7nm[i]);
@@ -2049,6 +2059,12 @@ int dsi_pll_clock_register_7nm(struct platform_device *pdev,
 		dsi1pll_cphy_pclk_src_mux.clkr.regmap = rmap;
 
 		dsi1pll_vco_clk.priv = pll_res;
+
+		if (pll_res->vco_max_rate) {
+			dsi1pll_vco_clk.min_rate = pll_res->vco_min_rate;
+			dsi1pll_vco_clk.max_rate = pll_res->vco_max_rate;
+		}
+
 		for (i = VCO_CLK_1; i <= CPHY_PCLK_SRC_1_CLK; i++) {
 			clk = devm_clk_register(&pdev->dev,
 						mdss_dsi_pllcc_7nm[i]);

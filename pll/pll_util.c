@@ -150,7 +150,7 @@ static int mdss_pll_util_parse_dt_supply(struct platform_device *pdev,
 	supply_root_node = of_get_child_by_name(of_node,
 						"qcom,platform-supply-entries");
 	if (!supply_root_node) {
-		pr_err("no supply entry present\n");
+		pr_debug("no supply entry present\n");
 		return rc;
 	}
 
@@ -384,6 +384,20 @@ pnode_err:
 	return rc;
 }
 
+static void mdss_pll_util_parse_dt_vco_range(struct platform_device *pdev,
+					struct mdss_pll_resources *pll_res)
+{
+	u32 rc;
+	u64 range[2];
+
+	rc = of_property_read_u64_array(pdev->dev.of_node, "vco-range",
+			range, 2);
+	if (!rc) {
+		pll_res->vco_min_rate = range[0];
+		pll_res->vco_max_rate = range[1];
+	}
+}
+
 int mdss_pll_util_resource_parse(struct platform_device *pdev,
 				struct mdss_pll_resources *pll_res)
 {
@@ -401,6 +415,8 @@ int mdss_pll_util_resource_parse(struct platform_device *pdev,
 		pr_err("clock name parsing failed rc=%d", rc);
 		goto clk_err;
 	}
+
+	mdss_pll_util_parse_dt_vco_range(pdev, pll_res);
 
 	return rc;
 

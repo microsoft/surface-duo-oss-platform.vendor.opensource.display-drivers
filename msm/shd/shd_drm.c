@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-shd] %s: " fmt, __func__
@@ -46,11 +37,6 @@ struct shd_crtc {
 	const struct drm_crtc_helper_funcs *orig_helper_funcs;
 	struct drm_crtc_funcs funcs;
 	const struct drm_crtc_funcs *orig_funcs;
-	struct shd_display *display;
-};
-
-struct shd_bridge {
-	struct drm_bridge base;
 	struct shd_display *display;
 };
 
@@ -272,6 +258,29 @@ static int shd_crtc_validate_shared_display(struct drm_crtc *crtc,
 	shd_crtc = sde_crtc->priv_handle;
 	sde_crtc_state = to_sde_crtc_state(state);
 
+	/* check shared display roi */
+	if (state->mode_changed && state->active) {
+		struct shd_display *display = shd_crtc->display;
+		struct drm_crtc_state *base_crtc_state;
+
+		base_crtc_state = drm_atomic_get_existing_crtc_state(
+				state->state, display->base->crtc);
+		if (!base_crtc_state)
+			base_crtc_state = display->base->crtc->state;
+
+		if (state->mode.hdisplay + display->roi.x >
+				base_crtc_state->mode.hdisplay ||
+				state->mode.vdisplay + display->roi.y >
+				base_crtc_state->mode.vdisplay) {
+			SDE_ERROR("roi %d,%d,%dx%d exceeds base mode %dx%d\n",
+				display->roi.x, display->roi.y,
+				state->mode.hdisplay, state->mode.vdisplay,
+				base_crtc_state->mode.hdisplay,
+				base_crtc_state->mode.vdisplay);
+			return -EINVAL;
+		}
+	}
+
 	/* check z-pos for all planes */
 	drm_atomic_crtc_state_for_each_plane_state(plane, pstate, state) {
 		sde_pstate = to_sde_plane_state(pstate);
@@ -411,7 +420,7 @@ void shd_skip_shared_plane_update(struct drm_plane *plane,
 	sspp = sde_plane_pipe(plane);
 	is_virtual = is_sde_plane_virtual(plane);
 
-	for (i = 0; i < sde_crtc->num_ctls; i++)
+	for (i = 0; i < sde_crtc->num_mixers; i++)
 		sde_shd_hw_skip_sspp_clear(
 			sde_crtc->mixers[i].hw_ctl, sspp, is_virtual);
 }
@@ -712,6 +721,8 @@ static int shd_connector_get_mode_info(struct drm_connector *connector,
 		u32 max_mixer_width, void *display)
 {
 	struct shd_display *shd_display = display;
+	struct sde_connector *base_conn;
+	struct msm_mode_info base_mode_info;
 
 	if (!drm_mode || !mode_info || !max_mixer_width || !display) {
 		SDE_ERROR("invalid params\n");
@@ -724,25 +735,13 @@ static int shd_connector_get_mode_info(struct drm_connector *connector,
 	mode_info->vtotal = drm_mode->vtotal;
 	mode_info->comp_info.comp_type = MSM_DISPLAY_COMPRESSION_NONE;
 
-	/*
-	 * When this function is called for resource allocation,
-	 * we return with zero topology as no h/w res is required. When
-	 * called for topology population, we return with base topology
-	 * as needed for user space pipe split.
-	 */
-	if (!(drm_mode->private_flags & MSM_MODE_FLAG_SHARED_DISPLAY)) {
-		struct sde_connector *base_conn;
-		struct msm_mode_info base_mode_info;
-
-		base_conn = to_sde_connector(shd_display->base->connector);
-		base_conn->ops.get_mode_info(shd_display->base->connector,
-			&shd_display->base->mode,
-			&base_mode_info,
-			max_mixer_width,
-			base_conn->display);
-
-		mode_info->topology = base_mode_info.topology;
-	}
+	base_conn = to_sde_connector(shd_display->base->connector);
+	base_conn->ops.get_mode_info(shd_display->base->connector,
+		&shd_display->base->mode,
+		&base_mode_info,
+		max_mixer_width,
+		base_conn->display);
+	mode_info->topology = base_mode_info.topology;
 
 	if (shd_display->src.h != shd_display->roi.h)
 		mode_info->vpadding = shd_display->roi.h;
@@ -769,8 +768,6 @@ enum drm_connector_status shd_connector_detect(struct drm_connector *conn,
 		sde_conn = to_sde_connector(b_conn);
 		status = disp->base->ops.detect(b_conn,
 						force, sde_conn->display);
-		conn->display_info.width_mm = b_conn->display_info.width_mm;
-		conn->display_info.height_mm = b_conn->display_info.height_mm;
 	}
 
 end:
@@ -899,6 +896,14 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 			base_mode = &disp->base->mode;
 			base_mode->private = (int *)&shd_default_priv_info;
 		}
+
+		/* check display info override */
+		if (disp->base->info.width_mm)
+			disp->base->connector->display_info.width_mm =
+					disp->base->info.width_mm;
+		if (disp->base->info.height_mm)
+			disp->base->connector->display_info.height_mm =
+					disp->base->info.height_mm;
 	}
 
 	if (!base_mode) {
@@ -952,6 +957,18 @@ static int shd_connector_get_modes(struct drm_connector *connector,
 	}
 
 	drm_mode_probed_add(connector, m);
+
+	if (disp->info.width_mm)
+		connector->display_info.width_mm = disp->info.width_mm;
+	else
+		connector->display_info.width_mm =
+				disp->base->connector->display_info.width_mm;
+
+	if (disp->info.height_mm)
+		connector->display_info.height_mm = disp->info.height_mm;
+	else
+		connector->display_info.height_mm =
+				disp->base->connector->display_info.height_mm;
 
 	return 1;
 }
@@ -1013,110 +1030,6 @@ static int shd_conn_set_property(struct drm_connector *connector,
 	return 0;
 }
 
-static inline
-int shd_bridge_attach(struct drm_bridge *shd_bridge)
-{
-	return 0;
-}
-
-static inline
-void shd_bridge_pre_enable(struct drm_bridge *drm_bridge)
-{
-}
-
-static inline
-void shd_bridge_enable(struct drm_bridge *drm_bridge)
-{
-}
-
-static inline
-void shd_bridge_disable(struct drm_bridge *drm_bridge)
-{
-}
-
-static inline
-void shd_bridge_post_disable(struct drm_bridge *drm_bridge)
-{
-}
-
-
-static inline
-void shd_bridge_mode_set(struct drm_bridge *drm_bridge,
-				const struct drm_display_mode *mode,
-				const struct drm_display_mode *adjusted_mode)
-{
-}
-
-static inline
-bool shd_bridge_mode_fixup(struct drm_bridge *drm_bridge,
-				  const struct drm_display_mode *mode,
-				  struct drm_display_mode *adjusted_mode)
-{
-	adjusted_mode->private_flags |= MSM_MODE_FLAG_SHARED_DISPLAY;
-	return true;
-}
-
-static const struct drm_bridge_funcs shd_bridge_ops = {
-	.attach       = shd_bridge_attach,
-	.mode_fixup   = shd_bridge_mode_fixup,
-	.pre_enable   = shd_bridge_pre_enable,
-	.enable       = shd_bridge_enable,
-	.disable      = shd_bridge_disable,
-	.post_disable = shd_bridge_post_disable,
-	.mode_set     = shd_bridge_mode_set,
-};
-
-static int shd_drm_bridge_init(void *data, struct drm_encoder *encoder)
-{
-	int rc = 0;
-	struct shd_bridge *bridge;
-	struct drm_device *dev;
-	struct shd_display *display = data;
-	struct msm_drm_private *priv = NULL;
-
-	bridge = kzalloc(sizeof(*bridge), GFP_KERNEL);
-	if (!bridge) {
-		rc = -ENOMEM;
-		goto error;
-	}
-
-	dev = display->drm_dev;
-	bridge->display = display;
-	bridge->base.funcs = &shd_bridge_ops;
-	bridge->base.encoder = encoder;
-
-	priv = dev->dev_private;
-
-	rc = drm_bridge_attach(encoder, &bridge->base, NULL);
-	if (rc) {
-		SDE_ERROR("failed to attach bridge, rc=%d\n", rc);
-		goto error_free_bridge;
-	}
-
-	encoder->bridge = &bridge->base;
-	priv->bridges[priv->num_bridges++] = &bridge->base;
-	display->bridge = &bridge->base;
-
-	return 0;
-
-error_free_bridge:
-	kfree(bridge);
-error:
-	return rc;
-}
-
-static void shd_drm_bridge_deinit(void *data)
-{
-	struct shd_display *display = data;
-	struct shd_bridge *bridge = container_of(display->bridge,
-		struct shd_bridge, base);
-
-	if (bridge && bridge->base.encoder)
-		bridge->base.encoder->bridge = NULL;
-
-	kfree(bridge);
-}
-
 static int shd_backlight_device_update_status(struct backlight_device *bd)
 {
 	return 0;
@@ -1162,6 +1075,7 @@ static int shd_drm_obj_init(struct shd_display *display)
 	struct drm_connector *connector;
 	struct sde_crtc *sde_crtc;
 	struct shd_crtc *shd_crtc;
+	struct sde_connector *sde_conn;
 	struct msm_display_info info;
 	int rc = 0;
 	uint32_t i;
@@ -1232,13 +1146,6 @@ static int shd_drm_obj_init(struct shd_display *display)
 
 	SDE_DEBUG("create encoder %d\n", DRMID(encoder));
 
-	rc = shd_drm_bridge_init(display, encoder);
-	if (rc) {
-		SDE_ERROR("shd bridge init failed, %d\n", rc);
-		sde_encoder_destroy(encoder);
-		goto end;
-	}
-
 	connector = sde_connector_init(dev,
 				encoder,
 				NULL,
@@ -1251,11 +1158,13 @@ static int shd_drm_obj_init(struct shd_display *display)
 		priv->connectors[priv->num_connectors++] = connector;
 	} else {
 		SDE_ERROR("shd connector init failed\n");
-		shd_drm_bridge_deinit(display);
 		sde_encoder_destroy(encoder);
 		rc = -ENOENT;
 		goto end;
 	}
+
+	sde_conn = to_sde_connector(connector);
+	sde_conn->shared = true;
 
 	if (display->name)
 		connector->name = kasprintf(GFP_KERNEL, "%s", display->name);
@@ -1277,6 +1186,12 @@ static int shd_drm_obj_init(struct shd_display *display)
 
 	/* update encoder's possible crtcs */
 	encoder->possible_crtcs = 1 << (priv->num_crtcs - 1);
+
+	/* add cwb support */
+	drm_for_each_encoder(encoder, dev) {
+		if (encoder->encoder_type == DRM_MODE_ENCODER_VIRTUAL)
+			encoder->possible_crtcs |= 1 << (priv->num_crtcs - 1);
+	}
 
 	/* update plane's possible crtcs */
 	for (i = 0; i < priv->num_planes; i++)
@@ -1452,6 +1367,12 @@ static int shd_parse_display(struct shd_display *display)
 	display->roi.w = dst_w;
 	display->roi.h = dst_h;
 
+	of_property_read_u32(of_node, "qcom,mode-width-mm",
+			&display->info.width_mm);
+
+	of_property_read_u32(of_node, "qcom,mode-height-mm",
+			&display->info.height_mm);
+
 next:
 	rc = of_property_read_u32_array(of_node, "qcom,blend-stage-range",
 		range, 2);
@@ -1609,6 +1530,12 @@ static int shd_parse_base(struct drm_device *drm_dev,
 
 	tile_mode = of_property_read_bool(of_node,
 					"qcom,mode-tile");
+
+	of_property_read_u32(node, "qcom,mode-width-mm",
+			&base->info.width_mm);
+
+	of_property_read_u32(node, "qcom,mode-height-mm",
+			&base->info.height_mm);
 
 	mode->hsync_start = mode->hdisplay + h_front_porch;
 	mode->hsync_end = mode->hsync_start + h_pulse_width;

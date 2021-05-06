@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -34,13 +34,9 @@ struct shd_stage_range {
 	u32 size;
 };
 
-struct shd_roi_range {
-	u32 start;
-	u32 size;
-};
-
 struct shd_display_base {
 	struct drm_display_mode mode;
+	struct drm_display_info info;
 	struct drm_crtc       *crtc;
 	struct drm_encoder    *encoder;
 	struct drm_connector  *connector;
@@ -59,6 +55,7 @@ struct shd_display {
 	struct drm_device *drm_dev;
 	const char *name;
 	const char *display_type;
+	struct drm_display_info info;
 
 	struct shd_display_base *base;
 	struct drm_bridge *bridge;
@@ -68,7 +65,6 @@ struct shd_display {
 	struct sde_rect roi;
 	struct shd_stage_range stage_range;
 	bool full_screen;
-	struct shd_roi_range roi_range;
 
 	struct platform_device *pdev;
 	struct list_head head;

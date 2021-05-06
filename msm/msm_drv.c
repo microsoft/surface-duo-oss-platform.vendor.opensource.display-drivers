@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -709,7 +709,7 @@ static int msm_drm_init(struct device *dev, struct drm_driver *drv)
 #endif
 
 	/* create drm client only when fbdev is not supported */
-	if (!priv->fbdev) {
+	if (kms && !priv->fbdev) {
 		ret = drm_client_init(ddev, &kms->client, "kms_client", NULL);
 		if (ret) {
 			DRM_ERROR("failed to init kms_client: %d\n", ret);
@@ -1815,7 +1815,7 @@ static const struct component_master_ops msm_drm_ops = {
 /*
  * Platform driver:
  */
-static DECLARE_COMPLETION(display_dev_done);
+
 static int msm_pdev_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -1834,7 +1834,7 @@ static int msm_pdev_probe(struct platform_device *pdev)
 	ret = component_master_add_with_match(&pdev->dev, &msm_drm_ops, match);
 	if (ret)
 		goto fail;
-	complete(&display_dev_done);
+
 	return 0;
 
 fail:
@@ -1898,6 +1898,7 @@ static int __init msm_drm_register(void)
 {
 	if (!modeset)
 		return -EINVAL;
+
 	DBG("init");
 	mdss_pll_driver_init();
 	sde_rsc_register();
@@ -1930,16 +1931,7 @@ static void __exit msm_drm_unregister(void)
 	mdss_pll_driver_deinit();
 }
 
-static int __init display_subsys_wait(void)
-{
-	pr_info("display subsys wait start\n");
-	wait_for_completion(&display_dev_done);
-	pr_info("display subsys wait end\n");
-	return 0;
-}
-early_init(display_subsys_wait, EARLY_SUBSYS_1, EARLY_INIT_LEVEL7);
-early_module_init(msm_drm_register, EARLY_SUBSYS_2,
-EARLY_INIT_LEVEL6);
+module_init(msm_drm_register);
 module_exit(msm_drm_unregister);
 
 MODULE_AUTHOR("Rob Clark <robdclark@gmail.com");

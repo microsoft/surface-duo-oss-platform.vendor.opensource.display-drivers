@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm-dp]: %s: " fmt, __func__
@@ -206,6 +206,11 @@ static void dp_bridge_pre_enable(struct drm_bridge *drm_bridge)
 		       bridge->id, rc);
 		dp->unprepare(dp, bridge->dp_panel);
 	}
+
+	rc = dp_display_splash_res_cleanup(dp);
+	if (rc)
+		pr_err("Continuous splash pipeline cleanup failed, rc=%d\n",
+			rc);
 }
 
 static void dp_bridge_enable(struct drm_bridge *drm_bridge)
@@ -1532,6 +1537,12 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 			struct dp_display *dp;
 			int i;
 
+			/* check new crtc's active state */
+			crtc_state = drm_atomic_get_new_crtc_state(state,
+					new_conn_state->crtc);
+			if (!crtc_state->active)
+				goto disable_check;
+
 			/* no check for single display */
 			if (new_conn_state->best_encoder ==
 					dp_display->bridge->base.encoder)
@@ -1552,6 +1563,7 @@ int dp_connector_atomic_check(struct drm_connector *connector,
 			return 0;
 		}
 
+disable_check:
 		bond_info = dp_display->dp_bond_prv_info;
 		bond_state = dp_bond_get_mgr_atomic_state(state,
 				bond_info->bond_mgr);

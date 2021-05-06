@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DP_DISPLAY_H_
@@ -121,6 +121,7 @@ struct dp_display {
 };
 
 #if IS_ENABLED(CONFIG_DRM_MSM_DP)
+int dp_display_get_num_of_boot_displays(void);
 int dp_display_get_num_of_displays(void);
 int dp_display_get_displays(void **displays, int count);
 int dp_display_get_num_of_streams(void *dp_display);
@@ -128,8 +129,14 @@ int dp_display_get_num_of_bonds(void *dp_display);
 int dp_display_get_info(void *dp_display, struct dp_display_info *dp_info);
 int dp_display_get_bond_displays(void *dp_display, enum dp_bond_type type,
 		struct dp_display_bond_displays *dp_bond_info);
+int dp_display_cont_splash_config(void *display);
+int dp_display_splash_res_cleanup(struct dp_display *dp_display);
 #else
-static inline int dp_display_get_num_of_displays(void);
+static inline int dp_display_get_num_of_boot_displays(void)
+{
+	return 0;
+}
+static inline int dp_display_get_num_of_displays(void)
 {
 	return 0;
 }
@@ -151,6 +158,14 @@ static inline int dp_display_get_info(void *dp_display, struct dp_display_info *
 }
 static inline int dp_display_get_bond_displays(void *dp_display, enum dp_bond_type type,
 	struct dp_display_bond_displays *dp_bond_info)
+{
+	return 0;
+}
+static inline int dp_display_cont_splash_config(void *display)
+{
+	return 0;
+}
+static inline int dp_display_splash_res_cleanup(struct dp_display *dp_display)
 {
 	return 0;
 }

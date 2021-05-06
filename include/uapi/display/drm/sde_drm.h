@@ -1,12 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_DRM_H_
 #define _SDE_DRM_H_
 
 #include <drm/drm.h>
+
+#ifndef __KERNEL__
+#include <stdint.h>
+#else
+#include <linux/types.h>
+#endif
 
 /* Total number of supported color planes */
 #define SDE_MAX_PLANES  4

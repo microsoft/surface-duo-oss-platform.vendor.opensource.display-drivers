@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"msm-dsi-phy:[%s] " fmt, __func__
@@ -315,6 +315,8 @@ static int dsi_phy_settings_init(struct platform_device *pdev,
 	struct dsi_phy_per_lane_cfgs *strength = &phy->cfg.strength;
 	struct dsi_phy_per_lane_cfgs *timing = &phy->cfg.timing;
 	struct dsi_phy_per_lane_cfgs *regs = &phy->cfg.regulators;
+	u8 temp[DSI_LANE_MAX - 1];
+	int i;
 
 	lane->count_per_lane = phy->ver_info->lane_cfg_count;
 	rc = dsi_phy_parse_dt_per_lane_cfgs(pdev, lane,
@@ -347,6 +349,19 @@ static int dsi_phy_settings_init(struct platform_device *pdev,
 	if (rc) {
 		pr_err("failed to parse lane P/N swap map, rc=%d\n", rc);
 		goto err;
+	}
+
+	/*
+	 * Override the display lane mapping setting.
+	 * Supersedes lane mapping setting from dsi_display.
+	 */
+	phy->cfg.is_lane_map_present = false;
+	rc = of_property_read_u8_array(pdev->dev.of_node,
+		"qcom,platform-lane-map-v2", temp, (DSI_LANE_MAX - 1));
+	if (!rc) {
+		for (i = DSI_LOGICAL_LANE_0; i < (DSI_LANE_MAX - 1); i++)
+			phy->cfg.lane_map.lane_map_v2[i] = BIT(temp[i]);
+		phy->cfg.is_lane_map_present = true;
 	}
 
 	/* Actual timing values are dependent on panel */
@@ -905,7 +920,9 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
 		pr_debug("[PHY_%d] TODO: perform validation\n", phy->index);
 
 	memcpy(&phy->mode, &config->video_timing, sizeof(phy->mode));
-	memcpy(&phy->cfg.lane_map, &config->lane_map, sizeof(config->lane_map));
+	if (!phy->cfg.is_lane_map_present)
+		memcpy(&phy->cfg.lane_map, &config->lane_map,
+				sizeof(config->lane_map));
 	phy->data_lanes = config->common_config.data_lanes;
 	phy->dst_format = config->common_config.dst_format;
 	phy->cfg.pll_source = pll_source;

@@ -134,18 +134,12 @@ msm_drm-$(CONFIG_DRM_MSM_LEASE) += ../msm-lease/msm_lease_drv.o
 
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/pll_util.o
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/pll_drv.o
-msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/dsi_pll_10nm.o
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/dsi_pll_7nm.o
-msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/dsi_pll_28lpm.o
-msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/dsi_pll_28nm_util.o
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/dsi_pll_14nm.o
 msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/dsi_pll_14nm_util.o
-msm_drm-$(CONFIG_QCOM_MDSS_PLL) += ../pll/hdmi_pll_28lpm.o
 
 msm_drm-$(CONFIG_QCOM_MDSS_DP_PLL) += ../pll/dp_pll_7nm.o \
 	../pll/dp_pll_7nm_util.o \
-	../pll/dp_pll_10nm.o \
-	../pll/dp_pll_10nm_util.o \
 	../pll/dp_pll_14nm.o \
 	../pll/edp_pll_7nm.o \
 	../pll/edp_pll_7nm_util.o

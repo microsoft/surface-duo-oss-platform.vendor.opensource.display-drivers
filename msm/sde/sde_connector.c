@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
@@ -1845,6 +1845,71 @@ sde_connector_atomic_best_encoder(struct drm_connector *connector,
 	return encoder;
 }
 
+static inline bool sde_connector_is_seamless(
+		struct drm_connector_state *old_conn_state,
+		struct drm_connector_state *new_conn_state,
+		struct drm_crtc_state *crtc_state)
+{
+	if (!crtc_state->mode_changed &&
+			!crtc_state->active_changed &&
+			crtc_state->connectors_changed) {
+		if (old_conn_state->crtc == new_conn_state->crtc)
+			return true;
+	}
+
+	if (!new_conn_state->crtc && crtc_state->connectors_changed)
+		return false;
+
+	if (msm_is_mode_seamless(&crtc_state->mode))
+		return true;
+
+	if (msm_is_mode_seamless_vrr(&crtc_state->adjusted_mode))
+		return true;
+
+	if (msm_is_mode_seamless_dyn_clk(&crtc_state->adjusted_mode))
+		return true;
+
+	if (msm_is_mode_seamless_dms(&crtc_state->adjusted_mode))
+		return true;
+
+	return false;
+}
+
+static int sde_connector_rm_check(struct drm_connector *connector,
+		struct drm_atomic_state *state)
+{
+	struct drm_connector_state *old_conn_state, *new_conn_state;
+	struct drm_crtc_state *crtc_state;
+	struct msm_drm_private *priv;
+	struct sde_kms *sde_kms;
+	int ret = 0;
+
+	/* free up previous rm resources */
+	old_conn_state = drm_atomic_get_old_connector_state(state, connector);
+	if (old_conn_state && old_conn_state->crtc) {
+		crtc_state = drm_atomic_get_new_crtc_state(state,
+				old_conn_state->crtc);
+		if (crtc_state && drm_atomic_crtc_needs_modeset(crtc_state)) {
+			new_conn_state = drm_atomic_get_new_connector_state(
+					state, connector);
+			if (new_conn_state) {
+				if (sde_connector_is_seamless(old_conn_state,
+						new_conn_state, crtc_state))
+					return 0;
+			}
+
+			priv = connector->dev->dev_private;
+			sde_kms = to_sde_kms(priv->kms);
+			if (old_conn_state->best_encoder)
+				ret = sde_rm_release(&sde_kms->rm,
+						old_conn_state->best_encoder,
+						state);
+		}
+	}
+
+	return ret;
+}
+
 static int sde_connector_atomic_check(struct drm_connector *connector,
 		struct drm_atomic_state *state)
 {
@@ -1853,6 +1918,7 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 	struct sde_connector_state *c_state;
 	bool qsync_dirty;
 	struct drm_connector_state *new_conn_state;
+	int ret;
 
 	if (!connector) {
 		SDE_ERROR("invalid connector\n");
@@ -1882,6 +1948,10 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 			return -EINVAL;
 		}
 	}
+
+	ret = sde_connector_rm_check(connector, state);
+	if (ret)
+		return ret;
 
 	if (c_conn->ops.atomic_check)
 		return c_conn->ops.atomic_check(connector,
@@ -2018,6 +2088,7 @@ static const struct drm_connector_helper_funcs sde_connector_helper_ops = {
 	.get_modes =    sde_connector_get_modes,
 	.mode_valid =   sde_connector_mode_valid,
 	.best_encoder = sde_connector_best_encoder,
+	.atomic_check = sde_connector_rm_check,
 };
 
 static const struct drm_connector_helper_funcs sde_connector_helper_ops_v2 = {

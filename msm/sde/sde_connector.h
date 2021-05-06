@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_CONNECTOR_H_
@@ -404,6 +404,7 @@ struct sde_connector_evt {
  * last_cmd_tx_sts: status of the last command transfer
  * @hdr_capable: external hdr support present
  * @cached_edid: cached edid data for the connector
+ * @shared: If a connector is sharing resource of its parent
  */
 struct sde_connector {
 	struct drm_connector base;
@@ -467,6 +468,8 @@ struct sde_connector {
 	bool last_cmd_tx_sts;
 	bool hdr_capable;
 	struct edid *cached_edid;
+
+	bool shared;
 };
 
 /**

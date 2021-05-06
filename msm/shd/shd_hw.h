@@ -1,14 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2018-2020 The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <drm/sde_drm.h>
@@ -39,6 +31,13 @@ struct sde_shd_hw_ctl {
 	u32 flush_mask;
 	u32 old_mask;
 	struct sde_shd_ctl_mixer_cfg mixer_cfg[MAX_BLOCKS];
+
+	bool cwb_enable;
+	bool cwb_changed;
+	u32 cwb_active;
+	u32 merge_3d_active;
+
+	struct sde_ctl_dsc_cfg dsc_cfg;
 };
 
 struct sde_shd_mixer_cfg {
@@ -61,16 +60,19 @@ struct sde_shd_hw_mixer {
 
 struct sde_shd_hw_roi_misr {
 	struct sde_hw_roi_misr base;
-	struct shd_roi_range range;
 	struct sde_hw_roi_misr *orig;
+	struct sde_roi_misr_hw_cfg misr_cfg;
 };
 
 void sde_shd_hw_flush(struct sde_hw_ctl *ctl_ctx,
-	struct sde_hw_mixer *lm_ctx[MAX_MIXERS_PER_CRTC], int lm_num);
+	struct sde_hw_mixer *lm_ctx[MAX_MIXERS_PER_CRTC], int lm_num,
+	struct sde_hw_roi_misr *misr_ctx[MAX_MIXERS_PER_CRTC], int misr_num);
 
 void sde_shd_hw_ctl_init_op(struct sde_hw_ctl *ctx);
 
 void sde_shd_hw_lm_init_op(struct sde_hw_mixer *ctx);
+
+void sde_shd_hw_roi_misr_init_op(struct sde_hw_roi_misr *ctx);
 
 void sde_shd_hw_skip_sspp_clear(struct sde_hw_ctl *ctx,
 	enum sde_sspp sspp, int multirect_idx);

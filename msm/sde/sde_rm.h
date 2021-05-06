@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_RM_H__
@@ -111,22 +111,17 @@ struct sde_rm_topology_def {
 /**
  * struct sde_rm - SDE dynamic hardware resource manager
  * @dev: device handle for event logging purposes
- * @rsvps: list of hardware reservations by each crtc->encoder->connector
- * @hw_blks: array of lists of hardware resources present in the system, one
- *	list per type of hardware block
+ * @obj: DRM private state object
  * @hw_mdp: hardware object for mdp_top
  * @lm_max_width: cached layer mixer maximum width
- * @rsvp_next_seq: sequence number for next reservation for debugging purposes
- * @rm_lock: resource manager mutex
+ * @next_uuid: sequence number for next HW uuid
  */
 struct sde_rm {
 	struct drm_device *dev;
-	struct list_head rsvps;
-	struct list_head hw_blks[SDE_HW_BLK_MAX];
+	struct drm_private_obj obj;
 	struct sde_hw_mdp *hw_mdp;
 	uint32_t lm_max_width;
-	uint32_t rsvp_next_seq;
-	struct mutex rm_lock;
+	uint32_t next_uuid;
 	const struct sde_rm_topology_def *topology_tbl;
 };
 
@@ -222,23 +217,24 @@ int sde_rm_destroy(struct sde_rm *rm);
  * @drm_enc: DRM Encoder handle
  * @crtc_state: Proposed Atomic DRM CRTC State handle
  * @conn_state: Proposed Atomic DRM Connector State handle
- * @test_only: Atomic-Test phase, discard results (unless property overrides)
  * @Return: 0 on Success otherwise -ERROR
  */
 int sde_rm_reserve(struct sde_rm *rm,
 		struct drm_encoder *drm_enc,
 		struct drm_crtc_state *crtc_state,
-		struct drm_connector_state *conn_state,
-		bool test_only);
+		struct drm_connector_state *conn_state);
 
 /**
- * sde_rm_reserve - Given the encoder for the display chain, release any
+ * sde_rm_release - Given the encoder for the display chain, release any
  *	HW blocks previously reserved for that use case.
  * @rm: SDE Resource Manager handle
  * @enc: DRM Encoder handle
+ * @state: Proposed Atomic DRM State handle
  * @Return: 0 on Success otherwise -ERROR
  */
-void sde_rm_release(struct sde_rm *rm, struct drm_encoder *enc);
+int sde_rm_release(struct sde_rm *rm,
+		struct drm_encoder *drm_enc,
+		struct drm_atomic_state *state);
 
 /**
  * sde_rm_get_mdp - Retrieve HW block for MDP TOP.
@@ -273,6 +269,17 @@ void sde_rm_init_hw_iter(
  * @Return: true on match found, false on no match found
  */
 bool sde_rm_get_hw(struct sde_rm *rm, struct sde_rm_hw_iter *iter);
+
+/**
+ * sde_rm_atomic_get_hw - atomic version of sde_rm_get_hw
+ * @rm: SDE Resource Manager handle
+ * @state: Proposed Atomic DRM State handle
+ * @iter: iterator object
+ * @Return: true on match found, false on no match found
+ */
+bool sde_rm_atomic_get_hw(struct sde_rm *rm,
+		struct drm_atomic_state *state,
+		struct sde_rm_hw_iter *iter);
 
 /**
  * sde_rm_request_hw_blk - retrieve the requested hardware block
@@ -346,21 +353,23 @@ static inline bool sde_rm_is_3dmux_case(enum sde_rm_topology_name top_name)
  * sde_rm_ext_blk_create_reserve - Create external HW blocks
  *	in resource manager and reserve for specific encoder.
  * @rm: SDE Resource Manager handle
+ * @state: Proposed Atomic DRM State handle
  * @hw: external HW block
  * @drm_enc: DRM Encoder handle
  * @Return: 0 on Success otherwise -ERROR
  */
 int sde_rm_ext_blk_create_reserve(struct sde_rm *rm,
+				struct drm_atomic_state *state,
 				struct sde_hw_blk *hw,
 				struct drm_encoder *enc);
 
 /**
- * sde_rm_ext_blk_destroy - Given the encoder for the display chain, release
- *	external HW blocks created for that.
- * @rm: SDE Resource Manager handle
- * @enc: DRM Encoder handle
- * @Return: 0 on Success otherwise -ERROR
+ * sde_rm_atomic_get_resource_mask - returns resource mask
+ * @rm: sde rm object
+ * @state: Proposed Atomic DRM State handle
+ * @Return: resource bitmask
  */
-int sde_rm_ext_blk_destroy(struct sde_rm *rm,
-				struct drm_encoder *enc);
+uint64_t sde_rm_atomic_get_resource_mask(struct sde_rm *rm,
+		struct drm_atomic_state *state);
+
 #endif /* __SDE_RM_H__ */

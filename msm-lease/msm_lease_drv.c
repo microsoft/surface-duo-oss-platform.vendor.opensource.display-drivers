@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
  */
 
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -53,6 +53,7 @@
 #include <linux/component.h>
 #include <drm/drm_of.h>
 #include <drm/drmP.h>
+#include <drm/drm_atomic_uapi.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_auth.h>
@@ -365,6 +366,100 @@ out2:
 	return rc;
 }
 
+static int msm_lease_lastclose(struct msm_lease *lease)
+{
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_atomic_state *state;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
+	struct drm_connector *connector;
+	struct drm_connector_state *conn_state;
+	struct drm_connector_list_iter conn_iter;
+	struct drm_plane *plane;
+	struct drm_plane_state *plane_state;
+	int ret;
+
+	state = drm_atomic_state_alloc(lease->drm_dev);
+	if (!state)
+		return -ENOMEM;
+
+	drm_modeset_acquire_init(&ctx, 0);
+	state->acquire_ctx = &ctx;
+retry:
+	drm_for_each_crtc(crtc, lease->drm_dev) {
+		if (!_find_obj_id(crtc->base.id,
+				lease->object_ids, lease->obj_cnt))
+			continue;
+
+		crtc_state = drm_atomic_get_crtc_state(state, crtc);
+		if (IS_ERR(crtc_state)) {
+			ret = PTR_ERR(crtc_state);
+			goto end;
+		}
+
+		/* disable connectors */
+		drm_connector_list_iter_begin(lease->drm_dev, &conn_iter);
+		drm_for_each_connector_iter(connector, &conn_iter) {
+			if (!(drm_connector_mask(connector) &
+					crtc_state->connector_mask))
+				continue;
+
+			conn_state = drm_atomic_get_connector_state(state,
+					connector);
+			if (IS_ERR(conn_state)) {
+				ret = PTR_ERR(conn_state);
+				goto end;
+			}
+
+			ret = drm_atomic_set_crtc_for_connector(conn_state,
+					NULL);
+			if (ret)
+				goto end;
+		}
+		drm_connector_list_iter_end(&conn_iter);
+
+		/* disable mode */
+		ret = drm_atomic_set_mode_for_crtc(crtc_state, NULL);
+		if (ret)
+			goto end;
+
+		/* disable planes */
+		drm_for_each_plane_mask(plane, lease->drm_dev,
+				crtc_state->plane_mask) {
+			plane_state = drm_atomic_get_plane_state(state,
+					plane);
+			if (IS_ERR(plane_state)) {
+				ret = PTR_ERR(plane_state);
+				goto end;
+			}
+
+			ret = drm_atomic_set_crtc_for_plane(plane_state,
+					NULL);
+			if (ret)
+				goto end;
+
+			drm_atomic_set_fb_for_plane(plane_state, NULL);
+		}
+
+		/* disable crtc */
+		crtc_state->active = false;
+	}
+
+	ret = drm_atomic_commit(state);
+end:
+	if (ret == -EDEADLK) {
+		drm_atomic_state_clear(state);
+		drm_modeset_backoff(&ctx);
+		goto retry;
+	}
+
+	drm_atomic_state_put(state);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+
+	return ret;
+}
+
 static void msm_lease_postclose(struct drm_device *dev, struct drm_file *file)
 {
 	struct msm_lease *lease;
@@ -376,6 +471,9 @@ static void msm_lease_postclose(struct drm_device *dev, struct drm_file *file)
 	lease = _find_lease_from_minor(file->minor);
 	if (!lease)
 		goto out;
+
+	if (drm_is_current_master(file))
+		msm_lease_lastclose(lease);
 
 	mutex_lock(&dev->master_mutex);
 	if (drm_is_current_master(file)) {
@@ -601,7 +699,7 @@ static void msm_lease_fixup_crtc_primary(struct drm_device *dev,
 	}
 
 	/* setup new primary planes */
-	for (i = 0; i < crtc_count; i++) {
+	for (i = 0; i < crtc_count && i < plane_count; i++) {
 		if (crtcs[i]->primary) {
 			crtcs[i]->primary->type = DRM_PLANE_TYPE_OVERLAY;
 		}
