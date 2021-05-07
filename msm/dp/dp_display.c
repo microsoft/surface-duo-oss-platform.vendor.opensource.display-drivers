@@ -3266,6 +3266,17 @@ static int dp_pm_prepare(struct device *dev)
 		dp->ctrl->abort(dp->ctrl, false);
 	}
 
+	/*
+	 * If DP is not enabled but powered and suspend state
+	 * is entered, we need to power off the host to disable all
+	 * clocks. This is needed when link training failed.
+	 */
+	if (!dp->power_on && dp->aux->state != DP_STATE_CTRL_POWERED_OFF) {
+		dp->ctrl->off(dp->ctrl);
+		dp_display_host_deinit(dp);
+		dp->aux->state = DP_STATE_CTRL_POWERED_OFF;
+	}
+
 	return 0;
 }
 
