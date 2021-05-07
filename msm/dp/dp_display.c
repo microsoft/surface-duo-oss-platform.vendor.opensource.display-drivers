@@ -2144,11 +2144,11 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
 
 	/*
-	 * If connector is in MST mode, skip
+	 * If connector is in MST mode and not in suspend state, skip
 	 * powering down host as aux need keep alive
 	 * to handle hot-plug sideband message.
 	 */
-	if (dp->active_stream_cnt || dp->mst.mst_active)
+	if (dp->active_stream_cnt || (dp->mst.mst_active && !dp->suspended))
 		goto end;
 
 	/*
