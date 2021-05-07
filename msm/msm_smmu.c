@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -30,6 +30,7 @@
 
 struct msm_smmu_client {
 	struct device *dev;
+	struct device *host_dev;
 	const char *compat;
 	struct iommu_domain *domain;
 	const struct dma_map_ops *dma_ops;
@@ -395,6 +396,8 @@ static struct device *msm_smmu_device_add(struct device *dev,
 		return ERR_PTR(-ENODEV);
 	}
 
+	smmu->client->host_dev = dev;
+
 	return smmu->client->dev;
 }
 
@@ -439,8 +442,8 @@ static int msm_smmu_fault_handler(struct iommu_domain *domain,
 	DRM_ERROR("trigger dump, iova=0x%08lx, flags=0x%x\n", iova, flags);
 	DRM_ERROR("SMMU device:%s", client->dev ? client->dev->kobj.name : "");
 
-	if (client->dev)
-		sde_recovery_set_event(dev_get_drvdata(client->dev),
+	if (client->host_dev)
+		sde_recovery_set_event(dev_get_drvdata(client->host_dev),
 				DRM_EVENT_SDE_SMMUFAULT, NULL);
 	/*
 	 * return -ENOSYS to allow smmu driver to dump out useful
