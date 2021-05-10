@@ -2144,11 +2144,11 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 		flags |= DP_PANEL_SRC_INITIATED_POWER_DOWN;
 
 	/*
-	 * If connector is in MST mode, skip
+	 * If connector is in MST mode and not in suspend state, skip
 	 * powering down host as aux need keep alive
 	 * to handle hot-plug sideband message.
 	 */
-	if (dp->active_stream_cnt || dp->mst.mst_active)
+	if (dp->active_stream_cnt || (dp->mst.mst_active && !dp->suspended))
 		goto end;
 
 	/*
@@ -3264,6 +3264,17 @@ static int dp_pm_prepare(struct device *dev)
 	if (dp->is_connected && !dp->power_on) {
 		dp->aux->abort(dp->aux, false);
 		dp->ctrl->abort(dp->ctrl, false);
+	}
+
+	/*
+	 * If DP is not enabled but powered and suspend state
+	 * is entered, we need to power off the host to disable all
+	 * clocks. This is needed when link training failed.
+	 */
+	if (!dp->power_on && dp->aux->state != DP_STATE_CTRL_POWERED_OFF) {
+		dp->ctrl->off(dp->ctrl);
+		dp_display_host_deinit(dp);
+		dp->aux->state = DP_STATE_CTRL_POWERED_OFF;
 	}
 
 	return 0;
