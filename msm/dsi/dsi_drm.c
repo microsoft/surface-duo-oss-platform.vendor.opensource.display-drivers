@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 
@@ -324,6 +324,9 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 		pr_err("Invalid params\n");
 		return false;
 	}
+
+	if (!drm_atomic_crtc_needs_modeset(crtc_state))
+		return true;
 
 	display = c_bridge->display;
 	if (!display) {

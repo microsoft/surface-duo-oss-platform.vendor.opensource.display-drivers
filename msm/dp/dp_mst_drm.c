@@ -299,6 +299,9 @@ static bool dp_mst_bridge_mode_fixup(struct drm_bridge *drm_bridge,
 	bridge = to_dp_mst_bridge(drm_bridge);
 
 	crtc_state = container_of(mode, struct drm_crtc_state, mode);
+	if (!drm_atomic_crtc_needs_modeset(crtc_state))
+		goto end;
+
 	bridge_state = dp_mst_get_bridge_atomic_state(crtc_state->state,
 				bridge);
 	if (IS_ERR(bridge_state)) {
@@ -787,6 +790,9 @@ static bool dp_mst_super_bridge_mode_fixup(struct drm_bridge *drm_bridge,
 
 	bridge = to_dp_mst_bridge(drm_bridge);
 	crtc_state = container_of(mode, struct drm_crtc_state, mode);
+	if (!drm_atomic_crtc_needs_modeset(crtc_state))
+		goto end;
+
 	bridge_state = dp_mst_get_bridge_atomic_state(crtc_state->state,
 				bridge);
 	if (IS_ERR(bridge_state)) {
