@@ -881,7 +881,7 @@ static void sde_crtc_post_commit_init(struct sde_crtc *sde_crtc)
 			sde_crtc->name,
 			&sde_crtc->output_fence->done_count);
 
-	if (kms->catalog->has_roi_misr)
+	if (kms && kms->catalog && kms->catalog->has_roi_misr)
 		sde_roi_misr_init(sde_crtc);
 }
 
