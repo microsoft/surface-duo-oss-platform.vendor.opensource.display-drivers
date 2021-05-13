@@ -82,6 +82,11 @@ int sde_post_commit_add_sub_fence_ctx(
 		return -EINVAL;
 	}
 
+	if (sub_fence_ctx->type >= SDE_SUB_FENCE_MAX) {
+		pr_err("%s: invalid sub-fence type\n", __func__);
+		return -EINVAL;
+	}
+
 	ctx->sub_fence_ctx[sub_fence_ctx->type] = sub_fence_ctx;
 
 	return 0;

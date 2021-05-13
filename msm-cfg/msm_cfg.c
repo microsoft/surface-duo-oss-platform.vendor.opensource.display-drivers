@@ -101,6 +101,11 @@ static int msm_cfg_probe(struct platform_device *pdev)
 		component_match_add(&pdev->dev, &match, compare_of, node);
 	}
 
+	if (!match) {
+		pr_err("failed to find connector\n");
+		return -ENODEV;
+	}
+
 	for_each_child_of_node(cfg_node, node) {
 		/* create all sub devices */
 		of_platform_device_create(node, NULL, NULL);

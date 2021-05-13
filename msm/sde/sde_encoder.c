@@ -1852,6 +1852,11 @@ static int _sde_encoder_dsc_2_lm_2_enc_1_intf(struct sde_encoder_virt *sde_enc,
 
 	memset(&cfg, 0, sizeof(cfg));
 
+	if (params->num_channels < 2) {
+		SDE_ERROR_ENC(sde_enc, "invalid enc number for DSC\n");
+		return -EINVAL;
+	}
+
 	for (i = 0; i < params->num_channels; i++) {
 		hw_pp[i] = sde_enc->hw_pp[i];
 		hw_dsc[i] = sde_enc->hw_dsc[i];
