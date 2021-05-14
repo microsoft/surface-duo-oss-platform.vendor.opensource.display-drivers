@@ -846,6 +846,9 @@ static void msm_lease_parse_remain_objs(void)
 
 			found = false;
 			drm_for_each_encoder(encoder, dev) {
+				if (encoder->encoder_type ==
+						DRM_MODE_ENCODER_VIRTUAL)
+					continue;
 				if ((encoder->possible_crtcs &
 						drm_crtc_mask(crtc)) &&
 						(encoder->possible_crtcs !=
