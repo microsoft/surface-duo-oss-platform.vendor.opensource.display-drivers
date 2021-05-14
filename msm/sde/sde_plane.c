@@ -3458,7 +3458,7 @@ static int _sde_plane_validate_scaler_v2(struct sde_plane *psde,
 		return -EINVAL;
 	}
 
-	if (psde->debugfs_default_scale || !pstate->scaler3_cfg.sep_lut ||
+	if (psde->debugfs_default_scale ||
 	   (pstate->scaler_check_state != SDE_PLANE_SCLCHECK_SCALER_V2 &&
 	    pstate->scaler_check_state != SDE_PLANE_SCLCHECK_SCALER_V2_CHECK))
 		return 0;
