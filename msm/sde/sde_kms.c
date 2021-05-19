@@ -1341,6 +1341,7 @@ int sde_kms_vm_pre_release(struct sde_kms *sde_kms,
 	struct drm_encoder *encoder;
 	struct drm_connector *connector;
 	int rc = 0;
+	struct msm_drm_private *priv;
 
 	ddev = sde_kms->dev;
 
@@ -1348,6 +1349,7 @@ int sde_kms_vm_pre_release(struct sde_kms *sde_kms,
 	if (!crtc)
 		return 0;
 
+	priv = crtc->dev->dev_private;
 	/* if vm_req is enabled, once CRTC on the commit is guaranteed */
 	sde_kms_wait_for_frame_transfer_complete(&sde_kms->base, crtc);
 
@@ -1372,6 +1374,12 @@ int sde_kms_vm_pre_release(struct sde_kms *sde_kms,
 
 	/* disable vblank events */
 	drm_crtc_vblank_off(crtc);
+
+	/*
+	 * Flush event thread queue for any pending events as vblank work
+	 * might get scheduled from drm_crtc_vblank_off
+	 */
+	kthread_flush_worker(&priv->event_thread[crtc->index].worker);
 
 	/* reset sw state */
 	sde_crtc_reset_sw_state(crtc);
@@ -1581,7 +1589,7 @@ static void sde_kms_prepare_fence(struct msm_kms *kms,
 {
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *old_crtc_state;
-	int i, rc;
+	int i;
 
 	if (!kms || !old_state || !old_state->dev || !old_state->acquire_ctx) {
 		SDE_ERROR("invalid argument(s)\n");
@@ -1589,15 +1597,6 @@ static void sde_kms_prepare_fence(struct msm_kms *kms,
 	}
 
 	SDE_ATRACE_BEGIN("sde_kms_prepare_fence");
-retry:
-	/* attempt to acquire ww mutex for connection */
-	rc = drm_modeset_lock(&old_state->dev->mode_config.connection_mutex,
-			       old_state->acquire_ctx);
-
-	if (rc == -EDEADLK) {
-		drm_modeset_backoff(old_state->acquire_ctx);
-		goto retry;
-	}
 
 	/* old_state actually contains updated crtc pointers */
 	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i) {
@@ -3493,6 +3492,11 @@ static void _sde_kms_pm_suspend_idle_helper(struct sde_kms *sde_kms,
 		if (sde_encoder_in_clone_mode(conn->encoder))
 			continue;
 
+		crtc_id = drm_crtc_index(conn->state->crtc);
+		if (priv->disp_thread[crtc_id].thread)
+			kthread_flush_worker(
+				&priv->disp_thread[crtc_id].worker);
+
 		ret = sde_encoder_wait_for_event(conn->encoder,
 						MSM_ENC_TX_COMPLETE);
 		if (ret && ret != -EWOULDBLOCK) {
@@ -3500,7 +3504,6 @@ static void _sde_kms_pm_suspend_idle_helper(struct sde_kms *sde_kms,
 				"[conn: %d] wait for commit done returned %d\n",
 				conn->base.id, ret);
 		} else if (!ret) {
-			crtc_id = drm_crtc_index(conn->state->crtc);
 			if (priv->event_thread[crtc_id].thread)
 				kthread_flush_worker(
 					&priv->event_thread[crtc_id].worker);
