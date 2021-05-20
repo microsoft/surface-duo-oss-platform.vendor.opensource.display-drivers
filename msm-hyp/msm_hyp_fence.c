@@ -298,6 +298,7 @@ int msm_hyp_fence_create(struct msm_hyp_fence_context *ctx,
 {
 	uint32_t trigger_value;
 	int fd, rc = -EINVAL;
+	uint64_t user_fd;
 	unsigned long flags;
 
 	if (!ctx || !user_fd_addr) {
@@ -311,8 +312,8 @@ int msm_hyp_fence_create(struct msm_hyp_fence_context *ctx,
 	spin_unlock_irqrestore(&ctx->lock, flags);
 
 	fd = _msm_hyp_fence_create_fd(ctx, trigger_value);
-
-	copy_to_user(user_fd_addr, &fd, sizeof(uint64_t));
+	user_fd = fd;
+	copy_to_user(user_fd_addr, &user_fd, sizeof(uint64_t));
 
 	pr_debug("fence_create::fd:%d trigger:%d commit:%d\n",
 			fd, trigger_value, ctx->commit_count);
