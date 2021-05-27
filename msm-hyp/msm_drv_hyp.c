@@ -780,6 +780,8 @@ static void msm_hyp_crtc_reset(struct drm_crtc *crtc)
 				crtc->state);
 
 	__drm_atomic_helper_crtc_reset(crtc, &c_state->base);
+
+	c_state->input_fence_timeout = CRTC_INPUT_FENCE_TIMEOUT;
 }
 
 static int msm_hyp_crtc_set_property(
