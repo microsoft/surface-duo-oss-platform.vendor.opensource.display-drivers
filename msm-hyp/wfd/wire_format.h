@@ -191,6 +191,7 @@ enum openwfd_cmd_type {
 union msg_enumerate_devices {
 	struct {
 		u32 dev_ids_cnt;
+		i32 filter_list[MAX_CREATE_DEVICE_ATTRIBS];
 	} req;
 
 	struct {

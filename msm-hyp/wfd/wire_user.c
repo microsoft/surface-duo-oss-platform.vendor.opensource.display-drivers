@@ -688,6 +688,18 @@ wfdEnumerateDevices_User(
 
 	enum_devs->req.dev_ids_cnt = (deviceIds) ? (u32)deviceIdsCount : 0;
 
+	/* loop through attribList and copy items, one at a time, until WFD_NONE
+	 * or NULL is found
+	 */
+	tmp = (WFDint *)filterList;
+	i = 0;
+	while ((tmp) && (*tmp != WFD_NONE) && (i < MAX_CREATE_DEVICE_ATTRIBS - 1)) {
+		enum_devs->req.filter_list[i] = *tmp;
+		i++; tmp++;
+	}
+	/* server expects last item to be WFD_NONE */
+	enum_devs->req.filter_list[i] = WFD_NONE;
+
 	if (user_os_utils_send_recv(handle, &req, &resp, 0x00)) {
 		WIRE_LOG_ERROR("RPC call failed");
 		goto end;
