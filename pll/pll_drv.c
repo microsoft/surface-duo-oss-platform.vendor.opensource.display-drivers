@@ -255,7 +255,6 @@ static int mdss_pll_probe(struct platform_device *pdev)
 
 	pll_res->ssc_en = of_property_read_bool(pdev->dev.of_node,
 						"qcom,dsi-pll-ssc-en");
-	pll_res->ssc_en = 0;
 
 	if (pll_res->ssc_en) {
 		pr_info("%s: label=%s PLL SSC enabled\n", __func__, label);
