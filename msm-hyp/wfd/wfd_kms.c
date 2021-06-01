@@ -636,26 +636,16 @@ static int _wfd_kms_create_image(struct msm_hyp_framebuffer *fb)
 		return -EINVAL;
 	}
 
-	dma_buf = fb->bo->dma_buf;
-
-	if (!dma_buf) {
-		mutex_lock(&fb->base.dev->object_name_lock);
-
+	if (fb->bo->import_attach) {
+		dma_buf = fb->bo->import_attach->dmabuf;
+		get_dma_buf(dma_buf);
+	} else if (fb->bo->dma_buf) {
+		dma_buf = fb->bo->dma_buf;
+		get_dma_buf(dma_buf);
+	} else {
 		dma_buf = drm_gem_prime_export(fb->bo, 0);
-		if (IS_ERR(dma_buf)) {
-			ret = PTR_ERR(dma_buf);
-			dma_buf = NULL;
-		} else {
-			fb->bo->dma_buf = dma_buf;
-			get_dma_buf(dma_buf);
-		}
-
-		mutex_unlock(&fb->base.dev->object_name_lock);
-
-		if (!dma_buf) {
-			pr_err("failed to create dma buf\n");
-			return ret;
-		}
+		if (IS_ERR(dma_buf))
+			return PTR_ERR(dma_buf);
 	}
 
 	wfd_err = wfdCreateWFDEGLImagesPreAlloc_User(
@@ -675,6 +665,8 @@ static int _wfd_kms_create_image(struct msm_hyp_framebuffer *fb)
 		pr_err("failed to create wfd image\n");
 		ret = -EINVAL;
 	}
+
+	dma_buf_put(dma_buf);
 
 	return ret;
 }
