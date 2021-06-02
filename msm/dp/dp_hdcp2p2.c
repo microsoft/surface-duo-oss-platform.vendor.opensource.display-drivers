@@ -57,7 +57,7 @@ struct dp_hdcp2p2_ctrl {
 	u8 rx_status;
 	char abort_mask;
 	u32 downstream_version;
-
+	u8 min_enc_level;
 	bool polling;
 };
 
@@ -142,7 +142,19 @@ static int dp_hdcp2p2_copy_buf(struct dp_hdcp2p2_ctrl *ctrl,
 
 	return 0;
 }
+static inline void dp_hdcp2p2_send_nofication(struct dp_hdcp2p2_ctrl *ctrl,
+		int version,
+		int state,
+		u8 min_enc_level)
+{
+	struct msm_hdcp_status status;
 
+	status.state = state;
+	status.version = version;
+	status.min_enc_level = min_enc_level;
+	msm_hdcp_notify_status(ctrl->init_data.msm_hdcp_dev,
+				&status);
+}
 static void dp_hdcp2p2_send_auth_status(struct dp_hdcp2p2_ctrl *ctrl)
 {
 	int version = HDCP_VERSION_2P2;
@@ -151,9 +163,10 @@ static void dp_hdcp2p2_send_auth_status(struct dp_hdcp2p2_ctrl *ctrl)
 	if (ctrl->downstream_version)
 		version = HDCP_VERSION_1X;
 
-	msm_hdcp_notify_status(ctrl->init_data.msm_hdcp_dev,
-				state,
-				version);
+	dp_hdcp2p2_send_nofication(ctrl,
+			version,
+			state,
+			ctrl->min_enc_level);
 
 	ctrl->init_data.notify_status(ctrl->init_data.cb_data,
 		state);
@@ -246,6 +259,12 @@ static int dp_hdcp2p2_wakeup(struct hdcp_transport_wakeup_data *data)
 		break;
 	case HDCP_TRANSPORT_CMD_RX_INFO:
 		ctrl->downstream_version = data->buf[1] & 0x1;
+		break;
+	case HDCP_TRANSPORT_CMD_FORCED_ENCRYPTION:
+		dp_hdcp2p2_send_nofication(ctrl,
+				HDCP_VERSION_2P2,
+				atomic_read(&ctrl->auth_state),
+				ctrl->min_enc_level);
 		break;
 	default:
 		pr_err("invalid wakeup command %d\n", ctrl->wakeup_cmd);
@@ -340,9 +359,10 @@ static void dp_hdcp2p2_off(void *input)
 	if (rc)
 		return;
 
-	msm_hdcp_notify_status(ctrl->init_data.msm_hdcp_dev,
-				HDCP_STATE_INACTIVE,
-				HDCP_VERSION_NONE);
+	dp_hdcp2p2_send_nofication(ctrl,
+			HDCP_VERSION_NONE,
+			HDCP_STATE_INACTIVE,
+			ctrl->min_enc_level);
 
 	dp_hdcp2p2_set_interrupts(ctrl, false);
 
@@ -392,10 +412,26 @@ static int dp_hdcp2p2_reauthenticate(void *input)
 	return  dp_hdcp2p2_authenticate(input);
 }
 
+static void dp_hdcp2p2_force_encryption(void *data, bool enable)
+{
+	int rc;
+	struct dp_hdcp2p2_ctrl *ctrl = data;
+	struct sde_hdcp_2x_ops *lib = NULL;
+
+	rc = dp_hdcp2p2_valid_handle(ctrl);
+	if (rc)
+		return;
+
+	lib = ctrl->lib;
+	if (lib->force_encryption)
+		lib->force_encryption(ctrl->lib_ctx, enable);
+}
+
 static void dp_hdcp2p2_min_level_change(void *client_ctx,
 		u8 min_enc_level)
 {
 	struct dp_hdcp2p2_ctrl *ctrl = (struct dp_hdcp2p2_ctrl *)client_ctx;
+	bool encryption_enabled = min_enc_level > 0;
 	struct sde_hdcp_2x_wakeup_data cdata = {
 		HDCP_2X_CMD_MIN_ENC_LEVEL};
 
@@ -409,6 +445,9 @@ static void dp_hdcp2p2_min_level_change(void *client_ctx,
 		return;
 	}
 
+	if (ctrl->init_data.forced_encryption)
+		dp_hdcp2p2_force_encryption(client_ctx, encryption_enabled);
+	ctrl->min_enc_level = !!min_enc_level;
 	cdata.context = ctrl->lib_ctx;
 	cdata.min_enc_level = min_enc_level;
 	dp_hdcp2p2_wakeup_lib(ctrl, &cdata);
@@ -509,21 +548,6 @@ static bool dp_hdcp2p2_feature_supported(void *input)
 			ctrl->lib_ctx);
 
 	return supported;
-}
-
-static void dp_hdcp2p2_force_encryption(void *data, bool enable)
-{
-	int rc;
-	struct dp_hdcp2p2_ctrl *ctrl = data;
-	struct sde_hdcp_2x_ops *lib = NULL;
-
-	rc = dp_hdcp2p2_valid_handle(ctrl);
-	if (rc)
-		return;
-
-	lib = ctrl->lib;
-	if (lib->force_encryption)
-		lib->force_encryption(ctrl->lib_ctx, enable);
 }
 
 static void dp_hdcp2p2_send_msg_work(struct kthread_work *work)

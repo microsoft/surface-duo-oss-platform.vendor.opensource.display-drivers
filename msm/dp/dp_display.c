@@ -529,7 +529,7 @@ static int dp_display_initialize_hdcp(struct dp_display_private *dp)
 						"hdcp_physical")->io;
 	hdcp_init_data.revision      = &dp->panel->link_info.revision;
 	hdcp_init_data.msm_hdcp_dev  = dp->msm_hdcp_dev;
-
+	hdcp_init_data.forced_encryption = parser->has_force_encryption;
 	fd = sde_hdcp_1x_init(&hdcp_init_data);
 	if (IS_ERR_OR_NULL(fd)) {
 		pr_err("Error initializing HDCP 1.x\n");
