@@ -1022,6 +1022,18 @@ error:
 	return rc;
 }
 
+static inline void sde_hdcp_1x_send_notification(struct sde_hdcp_1x *hdcp,
+		int version,
+		int state)
+{
+	struct msm_hdcp_status status;
+
+	status.state = state;
+	status.version = version;
+	msm_hdcp_notify_status(hdcp->init_data.msm_hdcp_dev,
+			&status);
+
+}
 static void sde_hdcp_1x_update_auth_status(struct sde_hdcp_1x *hdcp)
 {
 	if (IS_ENABLED(CONFIG_HDCP_QSEECOM) &&
@@ -1036,8 +1048,8 @@ static void sde_hdcp_1x_update_auth_status(struct sde_hdcp_1x *hdcp)
 		hdcp->init_data.notify_status(
 			hdcp->init_data.cb_data,
 			hdcp->hdcp_state);
-		msm_hdcp_notify_status(hdcp->init_data.msm_hdcp_dev,
-				hdcp->hdcp_state, HDCP_VERSION_1X);
+		sde_hdcp_1x_send_notification(hdcp, HDCP_VERSION_1X,
+				 hdcp->hdcp_state);
 	}
 }
 
@@ -1221,8 +1233,10 @@ static void sde_hdcp_1x_off(void *input)
 	DSS_REG_W(io, isr->int_reg,
 		DSS_REG_R(io, isr->int_reg) & ~HDCP_INT_EN);
 	hdcp->hdcp_state = HDCP_STATE_INACTIVE;
-	msm_hdcp_notify_status(hdcp->init_data.msm_hdcp_dev,
-				HDCP_STATE_INACTIVE, HDCP_VERSION_1X);
+
+	sde_hdcp_1x_send_notification(hdcp,
+			HDCP_VERSION_1X,
+			HDCP_STATE_INACTIVE);
 
 	/* complete any wait pending */
 	complete_all(&hdcp->sink_r0_available);

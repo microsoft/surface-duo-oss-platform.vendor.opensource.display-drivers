@@ -581,11 +581,24 @@ static void sde_hdcp_2x_set_hw_key(struct sde_hdcp_2x_ctrl *hdcp)
 	hdcp->authenticated = true;
 	pr_debug("authenticated\n");
 
-	if (hdcp->force_encryption)
-		hdcp2_force_encryption(hdcp->hdcp2_ctx, 1);
-
 	cdata.cmd = HDCP_TRANSPORT_CMD_STATUS_SUCCESS;
 	sde_hdcp_2x_wakeup_client(hdcp, &cdata);
+}
+
+static void sde_hdcp_set_forced_encryption(struct sde_hdcp_2x_ctrl *hdcp)
+{
+	struct hdcp_transport_wakeup_data cdata = {
+						HDCP_TRANSPORT_CMD_INVALID };
+	cdata.context = hdcp->client_data;
+	if (hdcp->force_encryption) {
+		hdcp2_force_encryption(hdcp->hdcp2_ctx, 1);
+		sde_hdcp_2x_initialize_command(hdcp,
+				HDCP_TRANSPORT_CMD_FORCED_ENCRYPTION,
+				&cdata);
+		sde_hdcp_2x_wakeup_client(hdcp, &cdata);
+	} else {
+		hdcp2_force_encryption(hdcp->hdcp2_ctx, 0);
+	}
 }
 
 static void sde_hdcp_2x_msg_sent(struct sde_hdcp_2x_ctrl *hdcp)
@@ -603,6 +616,7 @@ static void sde_hdcp_2x_msg_sent(struct sde_hdcp_2x_ctrl *hdcp)
 	case SKE_SEND_TYPE_ID:
 		sde_hdcp_2x_set_hw_key(hdcp);
 
+		sde_hdcp_set_forced_encryption(hdcp);
 		/* poll for link check */
 		sde_hdcp_2x_initialize_command(hdcp,
 				HDCP_TRANSPORT_CMD_LINK_POLL, &cdata);
@@ -806,6 +820,7 @@ static void sde_hdcp_2x_msg_recvd(struct sde_hdcp_2x_ctrl *hdcp)
 
 		sde_hdcp_2x_set_hw_key(hdcp);
 
+		sde_hdcp_set_forced_encryption(hdcp);
 		sde_hdcp_2x_initialize_command(hdcp,
 				HDCP_TRANSPORT_CMD_LINK_POLL, &cdata);
 		goto exit;

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2018,2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018,2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[msm-hdcp] %s: " fmt, __func__
@@ -36,6 +36,7 @@ struct msm_hdcp {
 	void (*cb)(void *ctx, u8 data);
 	int state;
 	int version;
+	u8 min_enc_level;
 	u32 cell_idx;
 };
 
@@ -60,7 +61,7 @@ void msm_hdcp_register_cb(struct device *dev, void *ctx,
 }
 
 void msm_hdcp_notify_status(struct device *dev,
-	       int state, int version)
+		struct msm_hdcp_status *status)
 {
 	char *envp[2];
 	struct msm_hdcp *hdcp = NULL;
@@ -75,11 +76,12 @@ void msm_hdcp_notify_status(struct device *dev,
 		pr_err("invalid driver pointer\n");
 		return;
 	}
-
-	if ((state != hdcp->state) ||
-			(version != hdcp->version)) {
-		hdcp->state = state;
-		hdcp->version = version;
+	if ((status->state != hdcp->state) ||
+			(status->version != hdcp->version) ||
+			(status->min_enc_level != hdcp->min_enc_level)) {
+		hdcp->state = status->state;
+		hdcp->version = status->version;
+		hdcp->min_enc_level = status->min_enc_level;
 
 		envp[0] = "HDCP_UPDATE=1";
 		envp[1] = NULL;
@@ -137,7 +139,7 @@ void msm_hdcp_cache_repeater_topology(struct device *dev,
 		   sizeof(struct HDCP_V2V1_MSG_TOPOLOGY));
 }
 
-static ssize_t msm_hdcp_1x_sysfs_rda_tp(struct device *dev,
+static ssize_t tp_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	ssize_t ret = 0;
@@ -176,7 +178,7 @@ static ssize_t msm_hdcp_1x_sysfs_rda_tp(struct device *dev,
 	return ret;
 }
 
-static ssize_t msm_hdcp_1x_sysfs_wta_tp(struct device *dev,
+static ssize_t tp_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	int msgid = 0;
@@ -276,8 +278,27 @@ static ssize_t msm_hdcp_sysfs_hdcp_version(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%zu\n", hdcp->version);
 }
 
-static DEVICE_ATTR(tp, 0644, msm_hdcp_1x_sysfs_rda_tp,
-	msm_hdcp_1x_sysfs_wta_tp);
+static ssize_t hdcp_mel_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct msm_hdcp *hdcp = NULL;
+
+	if (!dev) {
+		pr_err("invalid device pointer\n");
+		return -ENODEV;
+	}
+
+	hdcp = dev_get_drvdata(dev);
+	if (!hdcp) {
+		pr_err("invalid driver pointer\n");
+		return -ENODEV;
+	}
+	return scnprintf(buf, PAGE_SIZE, "%zu\n", hdcp->min_enc_level);
+}
+
+static DEVICE_ATTR_RO(hdcp_mel);
+
+static DEVICE_ATTR_RW(tp);
 
 static DEVICE_ATTR(min_level_change, 0200, NULL,
 	msm_hdcp_2x_sysfs_wta_min_level_change);
@@ -288,11 +309,13 @@ static DEVICE_ATTR(hdcp_state, 0444, msm_hdcp_sysfs_hdcp_state,
 static DEVICE_ATTR(hdcp_version, 0444, msm_hdcp_sysfs_hdcp_version,
 	NULL);
 
+
 static struct attribute *msm_hdcp_fs_attrs[] = {
 	&dev_attr_tp.attr,
 	&dev_attr_min_level_change.attr,
 	&dev_attr_hdcp_state.attr,
 	&dev_attr_hdcp_version.attr,
+	&dev_attr_hdcp_mel.attr,
 	NULL
 };
 
@@ -336,6 +359,7 @@ static int msm_hdcp_probe(struct platform_device *pdev)
 	hdcp->pdev = pdev;
 	hdcp->state = 0;
 	hdcp->version = 0;
+	hdcp->min_enc_level = 0;
 	platform_set_drvdata(pdev, hdcp);
 
 	of_property_read_u32(of_node, "cell-index", &hdcp->cell_idx);
