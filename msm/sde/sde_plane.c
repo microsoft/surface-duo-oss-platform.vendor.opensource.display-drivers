@@ -897,8 +897,9 @@ int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms)
 
 			switch (rc) {
 			case 0:
-				SDE_ERROR_PLANE(psde, "%ums timeout on %08X\n",
-						wait_ms, prefix);
+				SDE_ERROR_PLANE(psde, "%ums timeout on %08X fd %d\n",
+						wait_ms, prefix, sde_plane_get_property(pstate,
+						PLANE_PROP_INPUT_FENCE));
 				psde->is_error = true;
 				sde_kms_timeline_status(plane->dev);
 				ret = -ETIMEDOUT;
@@ -3458,7 +3459,7 @@ static int _sde_plane_validate_scaler_v2(struct sde_plane *psde,
 		return -EINVAL;
 	}
 
-	if (psde->debugfs_default_scale || !pstate->scaler3_cfg.sep_lut ||
+	if (psde->debugfs_default_scale ||
 	   (pstate->scaler_check_state != SDE_PLANE_SCLCHECK_SCALER_V2 &&
 	    pstate->scaler_check_state != SDE_PLANE_SCLCHECK_SCALER_V2_CHECK))
 		return 0;

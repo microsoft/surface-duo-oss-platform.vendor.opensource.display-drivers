@@ -106,6 +106,11 @@ static int msm_cfg_probe(struct platform_device *pdev)
 		of_platform_device_create(node, NULL, NULL);
 	}
 
+	if (!match) {
+		pr_info("ignore empty connectors\n");
+		return 0;
+	}
+
 	rc = component_master_add_with_match(&pdev->dev,
 			&msm_cfg_master_ops, match);
 	if (rc) {

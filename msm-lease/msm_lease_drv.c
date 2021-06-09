@@ -285,14 +285,19 @@ static int msm_lease_open(struct drm_device *dev, struct drm_file *file)
 	if (!dev->registered)
 		return -ENOENT;
 
-	rc = g_master_open(dev, file);
-	if (rc)
-		return rc;
+	if (!dev->mode_config.poll_enabled || drm_is_render_client(file))
+		return g_master_open(dev, file);
 
 	mutex_lock(&g_lease_mutex);
 
 	lease = _find_lease_from_minor(file->minor);
-	if (!lease)
+	if (!lease) {
+		rc = -ENODEV;
+		goto out2;
+	}
+
+	rc = g_master_open(dev, file);
+	if (rc)
 		goto out2;
 
 	mutex_lock(&dev->master_mutex);
@@ -846,6 +851,9 @@ static void msm_lease_parse_remain_objs(void)
 
 			found = false;
 			drm_for_each_encoder(encoder, dev) {
+				if (encoder->encoder_type ==
+						DRM_MODE_ENCODER_VIRTUAL)
+					continue;
 				if ((encoder->possible_crtcs &
 						drm_crtc_mask(crtc)) &&
 						(encoder->possible_crtcs !=
