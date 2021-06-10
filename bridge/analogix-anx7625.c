@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  *
  * Copyright(c) 2016, Analogix Semiconductor. All rights reserved.
  *
@@ -1217,6 +1217,8 @@ static int anx7625_bridge_attach(struct drm_bridge *bridge)
 		return err;
 	}
 
+	device_link_add(bridge->dev->dev, &anx7625->client->dev,
+			DL_FLAG_PM_RUNTIME);
 	return 0;
 }
 
