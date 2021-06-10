@@ -1564,9 +1564,7 @@ static int anx7625_restore(struct device *dev)
 }
 
 static const struct dev_pm_ops anx7625_pm = {
-	.freeze = anx7625_freeze,
-	.restore = anx7625_restore,
-	.thaw = anx7625_restore,
+	SET_SYSTEM_SLEEP_PM_OPS(anx7625_freeze, anx7625_restore)
 };
 #endif
 
