@@ -4225,6 +4225,9 @@ static ssize_t sde_dbg_ctrl_read(struct file *file, char __user *buff,
 		return 0;	/* the end */
 
 	len = snprintf(buf, sizeof(buf), "0x%x\n", sde_dbg_base.debugfs_ctrl);
+	if (len < 0)
+		return -EFAULT;
+
 	pr_debug("%s: ctrl:0x%x len:0x%zx\n",
 		__func__, sde_dbg_base.debugfs_ctrl, len);
 
