@@ -814,10 +814,8 @@ static int _wfd_kms_hw_init(struct wfd_kms *kms)
 		}
 	}
 
-	if (!kms->wfd_device_cnt) {
-		pr_err("can't find valid WFD device\n");
-		return -ENODEV;
-	}
+	if (!kms->wfd_device_cnt)
+		pr_info("can't find valid WFD device\n");
 
 	return 0;
 }
@@ -949,6 +947,9 @@ static int wfd_kms_get_connector_infos(struct msm_hyp_kms *kms,
 		*connector_num = wfd_kms->port_cnt;
 		return 0;
 	}
+
+	if (!wfd_kms->wfd_device_cnt)
+		return 0;
 
 	wfdGetDeviceAttribiv_User(wfd_kms->wfd_device[0],
 		WFD_DEVICE_MIN_MAX_WIDTH_HEIGHT, 4, data);
