@@ -17,6 +17,7 @@ endif
 
 obj-$(CONFIG_DRM_MSM) += msm/
 obj-$(CONFIG_DRM_MSM_HYP) += msm-hyp/
+obj-$(CONFIG_DRM_MSM_HYP_LEGACY) += msm-hyp-legacy/
 obj-$(CONFIG_MSM_SDE_ROTATOR) += rotator/
 obj-$(CONFIG_DRM_ANALOGIX_ANX7625_TECHPACK) += bridge/analogix-anx7625.o
 obj-$(CONFIG_DRM_MSM_CFG) += msm-cfg/

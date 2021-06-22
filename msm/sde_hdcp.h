@@ -72,6 +72,7 @@ struct sde_hdcp_init_data {
 	bool sec_access;
 	enum sde_hdcp_client_id client_id;
 	u8 client_index;
+	bool forced_encryption;
 };
 
 struct sde_hdcp_ops {
