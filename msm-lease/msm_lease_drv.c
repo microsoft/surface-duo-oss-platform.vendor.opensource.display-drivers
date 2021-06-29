@@ -1025,7 +1025,8 @@ static int msm_lease_notifier(struct notifier_block *nb,
 	/* update ids list */
 	lease_drv->minor = ddev->primary;
 	lease_drv->obj_cnt = object_count;
-	memcpy(lease_drv->object_ids, object_ids, sizeof(u32) * object_count);
+	if (object_count > 0)
+		memcpy(lease_drv->object_ids, object_ids, sizeof(u32) * object_count);
 
 	/* fixup crtcs' primary planes */
 	msm_lease_fixup_crtc_primary(master_ddev, object_ids, object_count);
