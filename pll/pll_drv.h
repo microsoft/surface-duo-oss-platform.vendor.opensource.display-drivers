@@ -196,6 +196,7 @@ struct mdss_pll_resources {
 	 * suspend/resume and handoff is not finished.
 	 */
 	bool dfps_trigger;
+	bool pll_vco_first;
 };
 
 struct mdss_pll_vco_calc {

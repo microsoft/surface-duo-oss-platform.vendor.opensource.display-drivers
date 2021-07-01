@@ -1501,6 +1501,17 @@ long vco_7nm_round_rate(struct clk_hw *hw, unsigned long rate,
 	return rrate;
 }
 
+void vco_7nm_set_hw_status(struct clk_hw *hw, bool enable)
+{
+	struct dsi_pll_vco_clk *vco = to_vco_clk_hw(hw);
+	struct mdss_pll_resources *pll = vco->priv;
+
+	if (enable)
+		pll->pll_vco_first = true;
+	else
+		pll->pll_vco_first = false;
+}
+
 static void vco_7nm_unprepare(struct clk_hw *hw)
 {
 	struct dsi_pll_vco_clk *vco = to_vco_clk_hw(hw);
@@ -1586,12 +1597,21 @@ static int vco_7nm_prepare(struct clk_hw *hw)
 		}
 		pr_debug("cfg0=%d, cfg1=%d\n", pll->cached_cfg0,
 			pll->cached_cfg1);
+
 		MDSS_PLL_REG_W(pll->phy_base, PHY_CMN_CLK_CFG0,
 					pll->cached_cfg0);
 		if (pll->slave)
 			MDSS_PLL_REG_W(pll->slave->phy_base, PHY_CMN_CLK_CFG0,
 				       pll->cached_cfg0);
-		MDSS_PLL_REG_W(pll->pll_base, PLL_PLL_OUTDIV_RATE,
+
+		if (pll->pll_vco_first) {
+			/* when vco rate doesn't change but actual rate changes,
+			 * need to clear cached div.
+			 */
+			MDSS_PLL_REG_W(pll->pll_base, PLL_PLL_OUTDIV_RATE, 0);
+			pll->pll_vco_first = false;
+		} else
+			MDSS_PLL_REG_W(pll->pll_base, PLL_PLL_OUTDIV_RATE,
 					pll->cached_outdiv);
 	}
 
@@ -1809,6 +1829,7 @@ static const struct clk_ops clk_ops_vco_7nm = {
 	.round_rate = vco_7nm_round_rate,
 	.prepare = vco_7nm_prepare,
 	.unprepare = vco_7nm_unprepare,
+	.set_hw_status = vco_7nm_set_hw_status,
 };
 
 static const struct clk_ops clk_ops_shadow_vco_7nm = {
