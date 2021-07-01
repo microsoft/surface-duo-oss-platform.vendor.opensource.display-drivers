@@ -385,6 +385,7 @@ struct sde_crtc_respool {
  * @bw_control    : true if bw/clk controlled by core bw/clk properties
  * @bw_split_vote : true if bw controlled by llcc/dram bw properties
  * @topology_name : Current topology name
+ * @mode_info     : Local copy of msm_mode_info struct
  * @num_mixers    : Number of mixers in current topology
  * @crtc_roi      : Current CRTC ROI. Possibly sub-rectangle of mode.
  *                  Origin top left of CRTC.
@@ -426,6 +427,7 @@ struct sde_crtc_state {
 	bool bw_split_vote;
 
 	enum sde_rm_topology_name topology_name;
+	struct msm_mode_info mode_info;
 	u32 num_mixers;
 	bool is_ppsplit;
 	struct sde_rect crtc_roi;
