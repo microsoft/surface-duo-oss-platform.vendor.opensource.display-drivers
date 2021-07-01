@@ -995,7 +995,7 @@ static int msm_lease_notifier(struct notifier_block *nb,
 {
 	struct msm_lease *lease_drv;
 	struct drm_device *ddev, *master_ddev;
-	u32 object_ids[MAX_LEASE_OBJECT_COUNT];
+	u32 object_ids[MAX_LEASE_OBJECT_COUNT] = {0};
 	int object_count = 0;
 	int ret;
 
