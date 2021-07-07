@@ -1525,7 +1525,7 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 
 	dp->hpd = dp_hpd_get(dev, dp->parser, &dp->catalog->hpd,
 			dp->aux_bridge, cb);
-	if (IS_ERR(dp->hpd)) {
+	if (IS_ERR_OR_NULL(dp->hpd)) {
 		rc = PTR_ERR(dp->hpd);
 		pr_err("failed to initialize hpd, rc = %d\n", rc);
 		dp->hpd = NULL;
