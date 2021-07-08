@@ -549,7 +549,7 @@ static int shp_parse(struct shp_device *shp)
 	struct shp_plane *shp_plane, *parent, *p;
 	struct shp_plane_state *shp_state;
 	struct drm_plane *plane;
-	enum sde_sspp sspp;
+	enum sde_sspp sspp = SSPP_NONE;
 	const char *name;
 	int dup_count, system_count, total_count, i, j;
 	int rc = 0;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 #define pr_fmt(fmt)	"[drm-dp] %s: " fmt, __func__
 
@@ -78,7 +78,7 @@ struct dp_hpd *dp_hpd_get(struct device *dev, struct dp_parser *parser,
 				PTR_ERR(dp_hpd));
 
 		dp_hpd = dp_usbpd_init(dev, cb);
-		if (IS_ERR(dp_hpd)) {
+		if (IS_ERR_OR_NULL(dp_hpd)) {
 			pr_err("failed to get usbpd\n");
 			goto out;
 		}

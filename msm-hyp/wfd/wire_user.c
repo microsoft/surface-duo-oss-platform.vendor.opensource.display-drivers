@@ -815,6 +815,9 @@ wfdCreateDevice_User(
 		goto end;
 
 	wire_dev = kzalloc(sizeof(*wire_dev), GFP_KERNEL);
+	if (!wire_dev)
+		goto end;
+
 	wire_dev->device = dev_hdl;
 	wire_dev->ctx = ctx;
 end:

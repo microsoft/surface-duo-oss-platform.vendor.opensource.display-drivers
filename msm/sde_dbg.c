@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2009-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
@@ -4176,7 +4176,7 @@ static ssize_t sde_evtlog_dump_read(struct file *file, char __user *buff,
 		size_t count, loff_t *ppos)
 {
 	ssize_t len = 0;
-	char evtlog_buf[SDE_EVTLOG_BUF_MAX];
+	char evtlog_buf[SDE_EVTLOG_BUF_MAX] = {0};
 
 	if (!buff || !ppos)
 		return -EINVAL;
@@ -4225,6 +4225,9 @@ static ssize_t sde_dbg_ctrl_read(struct file *file, char __user *buff,
 		return 0;	/* the end */
 
 	len = snprintf(buf, sizeof(buf), "0x%x\n", sde_dbg_base.debugfs_ctrl);
+	if (len < 0)
+		return -EFAULT;
+
 	pr_debug("%s: ctrl:0x%x len:0x%zx\n",
 		__func__, sde_dbg_base.debugfs_ctrl, len);
 

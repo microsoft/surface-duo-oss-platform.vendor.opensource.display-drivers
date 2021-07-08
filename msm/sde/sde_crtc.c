@@ -1883,6 +1883,9 @@ static int pstate_cmp(const void *a, const void *b)
 	pa_zpos = sde_plane_get_property(pa->sde_pstate, PLANE_PROP_ZPOS);
 	pb_zpos = sde_plane_get_property(pb->sde_pstate, PLANE_PROP_ZPOS);
 
+	if (!pa->sde_pstate || !pb->sde_pstate)
+		return rc;
+
 	pa_layout = pa->sde_pstate->layout;
 	pb_layout = pb->sde_pstate->layout;
 

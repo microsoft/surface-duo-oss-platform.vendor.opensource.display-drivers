@@ -452,6 +452,9 @@ static void msm_hyp_connector_reset(struct drm_connector *connector)
 	struct msm_hyp_connector_state *conn_state =
 		kzalloc(sizeof(*conn_state), GFP_KERNEL);
 
+	if (!conn_state)
+		return;
+
 	if (connector->state)
 		msm_hyp_connector_destroy_state(connector,
 				connector->state);
@@ -775,6 +778,9 @@ static void msm_hyp_crtc_reset(struct drm_crtc *crtc)
 	struct msm_hyp_crtc_state *c_state =
 		kzalloc(sizeof(*c_state), GFP_KERNEL);
 
+	if (!c_state)
+		return;
+
 	if (crtc->state)
 		msm_hyp_crtc_destroy_state(crtc,
 				crtc->state);
@@ -1042,6 +1048,9 @@ static void msm_hyp_plane_reset(struct drm_plane *plane)
 {
 	struct msm_hyp_plane_state *p_state =
 		kzalloc(sizeof(*p_state), GFP_KERNEL);
+
+	if (!p_state)
+		return;
 
 	if (plane->state)
 		msm_hyp_plane_destroy_state(plane,
