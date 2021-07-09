@@ -787,6 +787,8 @@ static void msm_hyp_crtc_reset(struct drm_crtc *crtc)
 
 	__drm_atomic_helper_crtc_reset(crtc, &c_state->base);
 
+	c_state->base.no_vblank = true;
+
 	c_state->input_fence_timeout = CRTC_INPUT_FENCE_TIMEOUT;
 }
 
@@ -1688,6 +1690,8 @@ static void _msm_hyp_complete_commit(struct msm_hyp_commit *c)
 	_msm_hyp_atomic_commit(dev, old_state);
 
 	_msm_hyp_atomic_wait_for_commit_done(dev, old_state);
+
+	drm_atomic_helper_fake_vblank(old_state);
 
 	drm_atomic_helper_cleanup_planes(dev, old_state);
 
