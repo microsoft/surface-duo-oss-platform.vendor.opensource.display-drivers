@@ -1227,7 +1227,8 @@ static int _sde_rm_reserve_ctls(
 	while (_sde_rm_get_hw_locked(rm, &iter)) {
 		const struct sde_hw_ctl *ctl = to_sde_hw_ctl(iter.blk->hw);
 		unsigned long features = ctl->caps->features;
-		bool has_split_display, has_ppsplit, primary_pref;
+		bool has_split_display, has_ppsplit, primary_pref, secondary_pref;
+		bool is_conn_primary, is_conn_secondary;
 
 		if (RESERVED_BY_OTHER(iter.blk, rsvp))
 			continue;
@@ -1235,6 +1236,11 @@ static int _sde_rm_reserve_ctls(
 		has_split_display = BIT(SDE_CTL_SPLIT_DISPLAY) & features;
 		has_ppsplit = BIT(SDE_CTL_PINGPONG_SPLIT) & features;
 		primary_pref = BIT(SDE_CTL_PRIMARY_PREF) & features;
+		secondary_pref = BIT(SDE_CTL_SECONDARY_PREF) & features;
+		is_conn_primary = (reqs->hw_res.display_type ==
+					SDE_CONNECTOR_PRIMARY) ? true : false;
+		is_conn_secondary = (reqs->hw_res.display_type ==
+					SDE_CONNECTOR_SECONDARY) ? true : false;
 
 		SDE_DEBUG("ctl %d caps 0x%lX\n", iter.blk->id, features);
 
@@ -1242,18 +1248,21 @@ static int _sde_rm_reserve_ctls(
 		 * bypass rest feature checks on finding CTL preferred
 		 * for primary displays.
 		 */
-		if (!primary_pref && !_ctl_ids) {
+		if (!primary_pref && !secondary_pref && !_ctl_ids) {
 			if (top->needs_split_display != has_split_display)
 				continue;
 
 			if (top->top_name == SDE_RM_TOPOLOGY_PPSPLIT &&
 					!has_ppsplit)
 				continue;
-		} else if (!(reqs->hw_res.display_type ==
-				SDE_CONNECTOR_PRIMARY && primary_pref) && !_ctl_ids) {
+
+			if (is_conn_primary || is_conn_secondary)
+				continue;
+		} else if (!((is_conn_primary && primary_pref) ||
+				(is_conn_secondary && secondary_pref)) && !_ctl_ids) {
 			SDE_DEBUG(
-				"display pref not met. display_type: %d primary_pref: %d\n",
-				reqs->hw_res.display_type, primary_pref);
+				"display pref not met. display_type: %d features: 0x%lX\n",
+				reqs->hw_res.display_type, features);
 			continue;
 		}
 
@@ -2453,11 +2462,14 @@ int sde_rm_reserve(
 	 * Poll for rsvp_nxt clear, allow the check_only commit if rsvp_nxt
 	 * gets cleared and bailout if it does not get cleared before timeout.
 	 */
-	if (test_only && rsvp_cur && rsvp_nxt) {
+	if (test_only && rsvp_nxt) {
 		rsvp_nxt = _sde_rm_poll_get_rsvp_nxt_locked(rm, enc);
 		if (rsvp_nxt) {
 			SDE_ERROR("poll timeout cur %d nxt %d enc %d\n",
-				rsvp_cur->seq, rsvp_nxt->seq, enc->base.id);
+				(rsvp_cur) ? rsvp_cur->seq : -1,
+				rsvp_nxt->seq, enc->base.id);
+			SDE_EVT32(enc->base.id, (rsvp_cur) ? rsvp_cur->seq : -1,
+					rsvp_nxt->seq, SDE_EVTLOG_ERROR);
 			ret = -EINVAL;
 			goto end;
 		}
