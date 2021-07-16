@@ -1512,14 +1512,14 @@ static int anx7625_i2c_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id anx7625_id[] = {
-	{ "anx7625", 0 },
+	{ "anx7625hd", 0 },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(i2c, anx7625_id);
 
 #if IS_ENABLED(CONFIG_OF)
 static const struct of_device_id anx7625_id_match_table[] = {
-	{ .compatible = "analogix,anx7625", },
+	{ .compatible = "analogix,anx7625hd", },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, anx7625_id_match_table);
@@ -1570,7 +1570,7 @@ static const struct dev_pm_ops anx7625_pm = {
 
 static struct i2c_driver anx7625_driver = {
 	.driver = {
-		.name = "anx7625",
+		.name = "anx7625hd",
 		.owner = THIS_MODULE,
 #ifdef CONFIG_PM_SLEEP
 		.pm = &anx7625_pm,
