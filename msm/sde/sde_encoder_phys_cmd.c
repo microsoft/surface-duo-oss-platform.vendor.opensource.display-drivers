@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
@@ -22,8 +22,6 @@
 
 #define to_sde_encoder_phys_cmd(x) \
 	container_of(x, struct sde_encoder_phys_cmd, base)
-
-#define PP_TIMEOUT_MAX_TRIALS	4
 
 /*
  * Tearcheck sync start and continue thresholds are empirically found
@@ -507,7 +505,6 @@ static int _sde_encoder_phys_cmd_handle_ppdone_timeout(
 	u32 frame_event = SDE_ENCODER_FRAME_EVENT_ERROR
 				| SDE_ENCODER_FRAME_EVENT_SIGNAL_RELEASE_FENCE;
 	struct drm_connector *conn;
-	int event;
 	u32 pending_kickoff_cnt;
 	unsigned long lock_flags;
 
@@ -541,26 +538,25 @@ static int _sde_encoder_phys_cmd_handle_ppdone_timeout(
 				pending_kickoff_cnt);
 
 		SDE_EVT32(DRMID(phys_enc->parent), SDE_EVTLOG_FATAL);
+		mutex_lock(phys_enc->vblank_ctl_lock);
 		sde_encoder_helper_unregister_irq(phys_enc, INTR_IDX_RDPTR);
 		if (sde_kms_is_secure_session_inprogress(phys_enc->sde_kms))
 			SDE_DBG_DUMP("secure", "all", "dbg_bus");
 		else
 			SDE_DBG_DUMP("all", "dbg_bus", "vbif_dbg_bus");
 		sde_encoder_helper_register_irq(phys_enc, INTR_IDX_RDPTR);
+		mutex_unlock(phys_enc->vblank_ctl_lock);
 	}
 
 	/*
 	 * if the recovery event is registered by user, don't panic
 	 * trigger panic on first timeout if no listener registered
 	 */
-	if (recovery_events) {
-		event = cmd_enc->pp_timeout_report_cnt > PP_TIMEOUT_MAX_TRIALS ?
-			SDE_RECOVERY_HARD_RESET : SDE_RECOVERY_CAPTURE;
+	if (recovery_events)
 		sde_connector_event_notify(conn, DRM_EVENT_SDE_HW_RECOVERY,
-				sizeof(uint8_t), event);
-	} else if (cmd_enc->pp_timeout_report_cnt) {
+				sizeof(uint8_t), SDE_RECOVERY_CAPTURE);
+	else if (cmd_enc->pp_timeout_report_cnt)
 		SDE_DBG_DUMP("dsi_dbg_bus", "panic");
-	}
 
 	/* request a ctl reset before the next kickoff */
 	phys_enc->enable_state = SDE_ENC_ERR_NEEDS_HW_RESET;
@@ -1349,6 +1345,8 @@ static void sde_encoder_phys_cmd_disable(struct sde_encoder_phys *phys_enc)
 		else if (phys_enc->hw_pp->ops.enable_tearcheck)
 			phys_enc->hw_pp->ops.enable_tearcheck(phys_enc->hw_pp,
 					false);
+		if (sde_encoder_phys_cmd_is_master(phys_enc))
+			sde_encoder_helper_phys_disable(phys_enc, NULL);
 	}
 
 	phys_enc->enable_state = SDE_ENC_DISABLED;
@@ -1511,20 +1509,27 @@ static int _sde_encoder_phys_cmd_wait_for_wr_ptr(
 	struct sde_encoder_phys_cmd *cmd_enc =
 			to_sde_encoder_phys_cmd(phys_enc);
 	struct sde_encoder_wait_info wait_info = {0};
-	int ret;
+	struct sde_connector *c_conn;
 	bool frame_pending = true;
 	struct sde_hw_ctl *ctl;
 	unsigned long lock_flags;
+	int ret, timeout_ms;
 
-	if (!phys_enc || !phys_enc->hw_ctl) {
+	if (!phys_enc || !phys_enc->hw_ctl || !phys_enc->connector) {
 		SDE_ERROR("invalid argument(s)\n");
 		return -EINVAL;
 	}
 	ctl = phys_enc->hw_ctl;
+	c_conn = to_sde_connector(phys_enc->connector);
+	timeout_ms = KICKOFF_TIMEOUT_MS;
+
+	if (c_conn->lp_mode == SDE_MODE_DPMS_LP1 ||
+		c_conn->lp_mode == SDE_MODE_DPMS_LP2)
+		timeout_ms = (KICKOFF_TIMEOUT_MS) * 2;
 
 	wait_info.wq = &phys_enc->pending_kickoff_wq;
 	wait_info.atomic_cnt = &phys_enc->pending_retire_fence_cnt;
-	wait_info.timeout_ms = KICKOFF_TIMEOUT_MS;
+	wait_info.timeout_ms = timeout_ms;
 
 	/* slave encoder doesn't enable for ppsplit */
 	if (_sde_encoder_phys_is_ppsplit_slave(phys_enc))

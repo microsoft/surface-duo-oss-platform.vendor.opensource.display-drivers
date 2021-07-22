@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[drm:%s:%d] " fmt, __func__, __LINE__
@@ -419,6 +419,20 @@ static void sde_connector_get_avail_res_info(struct drm_connector *conn,
 	sde_rm_get_resource_info(&sde_kms->rm, drm_enc, avail_res);
 
 	avail_res->max_mixer_width = sde_kms->catalog->max_mixer_width;
+}
+
+int sde_connector_get_lm_cnt_from_topology(struct drm_connector *conn,
+		const struct drm_display_mode *drm_mode)
+{
+	struct sde_connector *c_conn;
+
+	c_conn = to_sde_connector(conn);
+
+	if (!c_conn || c_conn->connector_type != DRM_MODE_CONNECTOR_DSI ||
+		!c_conn->ops.get_num_lm_from_mode)
+		return -EINVAL;
+
+	return c_conn->ops.get_num_lm_from_mode(c_conn->display, drm_mode);
 }
 
 int sde_connector_get_mode_info(struct drm_connector *conn,
@@ -1901,6 +1915,8 @@ static ssize_t _sde_debugfs_conn_cmd_tx_write(struct file *file,
 {
 	struct drm_connector *connector = file->private_data;
 	struct sde_connector *c_conn = NULL;
+	struct sde_vm_ops *vm_ops;
+	struct sde_kms *sde_kms;
 	char *input, *token, *input_copy, *input_dup = NULL;
 	const char *delim = " ";
 	char buffer[MAX_CMD_PAYLOAD_SIZE] = {0};
@@ -1911,8 +1927,13 @@ static ssize_t _sde_debugfs_conn_cmd_tx_write(struct file *file,
 		SDE_ERROR("invalid argument(s), conn %d\n", connector != NULL);
 		return -EINVAL;
 	}
-
 	c_conn = to_sde_connector(connector);
+
+	sde_kms = _sde_connector_get_kms(&c_conn->base);
+	if (!sde_kms) {
+		SDE_ERROR("invalid kms\n");
+		return -EINVAL;
+	}
 
 	if (!c_conn->ops.cmd_transfer) {
 		SDE_ERROR("no cmd transfer support for connector name %s\n",
@@ -1923,6 +1944,14 @@ static ssize_t _sde_debugfs_conn_cmd_tx_write(struct file *file,
 	input = kzalloc(count + 1, GFP_KERNEL);
 	if (!input)
 		return -ENOMEM;
+
+	vm_ops = sde_vm_get_ops(sde_kms);
+	sde_vm_lock(sde_kms);
+	if (vm_ops && vm_ops->vm_owns_hw && !vm_ops->vm_owns_hw(sde_kms)) {
+		SDE_DEBUG("op not supported due to HW unavailablity\n");
+		rc = -EOPNOTSUPP;
+		goto end;
+	}
 
 	if (copy_from_user(input, p, count)) {
 		SDE_ERROR("copy from user failed\n");
@@ -1973,6 +2002,7 @@ static ssize_t _sde_debugfs_conn_cmd_tx_write(struct file *file,
 end1:
 	kfree(input_dup);
 end:
+	sde_vm_unlock(sde_kms);
 	kfree(input);
 	return rc;
 }
@@ -2364,10 +2394,6 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 		struct drm_atomic_state *state)
 {
 	struct sde_connector *c_conn;
-	struct sde_connector_state *c_state;
-	bool qsync_dirty = false, has_modeset = false;
-	struct drm_connector_state *new_conn_state;
-	struct drm_crtc_state *new_crtc_state = NULL;
 
 	if (!connector) {
 		SDE_ERROR("invalid connector\n");
@@ -2375,32 +2401,6 @@ static int sde_connector_atomic_check(struct drm_connector *connector,
 	}
 
 	c_conn = to_sde_connector(connector);
-	new_conn_state = drm_atomic_get_new_connector_state(state, connector);
-
-	if (!new_conn_state) {
-		SDE_ERROR("invalid connector state\n");
-		return -EINVAL;
-	}
-
-	c_state = to_sde_connector_state(new_conn_state);
-	if (new_conn_state->crtc)
-		new_crtc_state = drm_atomic_get_new_crtc_state(state,
-					new_conn_state->crtc);
-
-	has_modeset = sde_crtc_atomic_check_has_modeset(new_conn_state->state,
-						new_conn_state->crtc);
-	qsync_dirty = msm_property_is_dirty(&c_conn->property_info,
-					&c_state->property_state,
-					CONNECTOR_PROP_QSYNC_MODE);
-
-	SDE_DEBUG("has_modeset %d qsync_dirty %d\n", has_modeset, qsync_dirty);
-	if (has_modeset && qsync_dirty && new_crtc_state &&
-		!msm_is_mode_seamless_vrr(&new_crtc_state->adjusted_mode)) {
-		SDE_ERROR("invalid qsync update during modeset\n");
-		return -EINVAL;
-	}
-	new_conn_state = drm_atomic_get_new_connector_state(state, connector);
-
 	if (c_conn->ops.atomic_check)
 		return c_conn->ops.atomic_check(connector,
 				c_conn->display, state);
@@ -2584,6 +2584,8 @@ static int sde_connector_populate_mode_info(struct drm_connector *conn,
 			SDE_ERROR_CONN(c_conn, "invalid topology\n");
 			continue;
 		}
+
+		sde_kms_info_add_keyint(info, "has_cwb_crop", sde_kms->catalog->has_cwb_crop);
 
 		sde_kms_info_add_keyint(info, "mdp_transfer_time_us",
 			mode_info.mdp_transfer_time_us);
@@ -2992,6 +2994,9 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 	_sde_connector_lm_preference(c_conn, sde_kms,
 			display_info.display_type);
 
+	sde_hw_ctl_set_preference(sde_kms->catalog,
+			  display_info.display_type);
+
 	SDE_DEBUG("connector %d attach encoder %d\n",
 			c_conn->base.base.id, encoder->base.id);
 
@@ -3024,8 +3029,7 @@ error_free_conn:
 	return ERR_PTR(rc);
 }
 
-static int _sde_conn_hw_recovery_handler(
-		struct drm_connector *connector, bool val)
+static int _sde_conn_enable_hw_recovery(struct drm_connector *connector)
 {
 	struct sde_connector *c_conn;
 
@@ -3036,7 +3040,7 @@ static int _sde_conn_hw_recovery_handler(
 	c_conn = to_sde_connector(connector);
 
 	if (c_conn->encoder)
-		sde_encoder_recovery_events_handler(c_conn->encoder, val);
+		sde_encoder_enable_recovery_event(c_conn->encoder);
 
 	return 0;
 }
@@ -3054,7 +3058,7 @@ int sde_connector_register_custom_event(struct sde_kms *kms,
 		ret = 0;
 		break;
 	case DRM_EVENT_SDE_HW_RECOVERY:
-		ret = _sde_conn_hw_recovery_handler(conn_drm, val);
+		ret = _sde_conn_enable_hw_recovery(conn_drm);
 		break;
 	default:
 		break;
