@@ -360,6 +360,9 @@ struct msm_roi_caps {
  * @range_bpg_offset:        Bits per group adjustment.
  * @extra_width:             Extra width required in timing calculations.
  * @pps_delay_ms:            Post PPS command delay in milliseconds.
+ * @dsc_4hs_merge_en:         Using DSC 4HS merge topology
+ * @dsc_4hs_merge_padding     4HS merge DSC pair padding value in bytes
+ * @dsc_4hs_merge_alignment   4HS merge DSC alignment value in bytes
  */
 struct msm_display_dsc_info {
 	u8 version;
@@ -418,6 +421,9 @@ struct msm_display_dsc_info {
 
 	u32 extra_width;
 	u32 pps_delay_ms;
+	bool dsc_4hs_merge_en;
+	u32 dsc_4hs_merge_padding;
+	u32 dsc_4hs_merge_alignment;
 };
 
 /**
@@ -460,6 +466,7 @@ struct msm_display_topology {
  * @comp_info:       compression info supported
  * @roi_caps:        panel roi capabilities
  * @wide_bus_en:	wide-bus mode cfg for interface module
+ * @dsc_4hs_merge_en:   mode support DSC 4 hard slice merge topology
  * @mdp_transfer_time_us   Specifies the mdp transfer time for command mode
  *                         panels in microseconds.
  */
@@ -474,6 +481,7 @@ struct msm_mode_info {
 	struct msm_compression_info comp_info;
 	struct msm_roi_caps roi_caps;
 	bool wide_bus_en;
+	bool dsc_4hs_merge_en;
 	u32 mdp_transfer_time_us;
 };
 
@@ -514,6 +522,10 @@ struct msm_resource_caps_info {
  * @roi_caps:           Region of interest capability info
  * @qsync_min_fps	Minimum fps supported by Qsync feature
  * @te_source		vsync source pin information
+ * @dsc_count:		max dsc hw blocks used by display (only available
+ *			for dsi display)
+ * @lm_count:		max layer mixer blocks used by display (only available
+ *			for dsi display)
  */
 struct msm_display_info {
 	int intf_type;
@@ -537,6 +549,9 @@ struct msm_display_info {
 
 	uint32_t qsync_min_fps;
 	uint32_t te_source;
+
+	uint32_t dsc_count;
+	uint32_t lm_count;
 };
 
 #define MSM_MAX_ROI	4
@@ -1040,5 +1055,10 @@ static inline unsigned long timeout_to_jiffies(const ktime_t *timeout)
 int msm_get_mixer_count(struct msm_drm_private *priv,
 		const struct drm_display_mode *mode,
 		const struct msm_resource_caps_info *res, u32 *num_lm);
+
+int msm_get_dsc_count(struct msm_drm_private *priv,
+	u32 hdisplay, u32 *num_dsc);
+
+
 
 #endif /* __MSM_DRV_H__ */

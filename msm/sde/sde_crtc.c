@@ -45,6 +45,15 @@
 #define SDE_PSTATES_MAX (SDE_STAGE_MAX * 4)
 #define SDE_MULTIRECT_PLANE_MAX (SDE_STAGE_MAX * 2)
 
+/*
+ * if width of left rect and right rect added is greater than
+ * combined width of left and rect (x of left to x+w of right),
+ * then fsc planes are overlapping.
+ */
+#define FSC_PLANE_OVERLAP(left_rect, right_rect) ( \
+		((left_rect.w + right_rect.w) > \
+		(right_rect.x + right_rect.w - left_rect.x) ? 1 : 0))
+
 struct sde_crtc_custom_events {
 	u32 event;
 	int (*func)(struct drm_crtc *crtc, bool en,
@@ -377,6 +386,88 @@ static ssize_t vsync_event_show(struct device *device,
 			ktime_to_ns(sde_crtc->vblank_last_cb_time));
 }
 
+static ssize_t lineptr_event_show(struct device *device,
+	struct device_attribute *attr, char *buf)
+{
+	struct drm_crtc *crtc;
+	struct sde_crtc *sde_crtc;
+	ssize_t ret;
+	unsigned long flags;
+
+	if (!device || !buf) {
+		SDE_ERROR("invalid input param(s)\n");
+		return -EAGAIN;
+	}
+
+	crtc = dev_get_drvdata(device);
+	if (!crtc)
+		return -EINVAL;
+
+	sde_crtc = to_sde_crtc(crtc);
+
+	spin_lock_irqsave(&sde_crtc->lineptr_lock, flags);
+	ret = scnprintf(buf, PAGE_SIZE, "LINEPTR=%llu\n",
+			ktime_to_ns(sde_crtc->lineptr_cb_ts));
+	spin_unlock_irqrestore(&sde_crtc->lineptr_lock, flags);
+
+	return ret;
+}
+
+static ssize_t lineptr_value_store(struct device *device,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct drm_crtc *crtc;
+	struct drm_encoder *encoder;
+	u32 line_value;
+	int ret;
+
+	if (!device || !buf) {
+		SDE_ERROR("invalid input param(s)\n");
+		return -EAGAIN;
+	}
+
+	crtc = dev_get_drvdata(device);
+	if (!crtc)
+		return -EINVAL;
+
+	ret = kstrtou32(buf, 10, &line_value);
+	if (ret < 0) {
+		SDE_ERROR(
+		"ret=%d: failed to convert buf to an unsigned int\n", ret);
+		return ret;
+	}
+	SDE_EVT32_VERBOSE(DRMID(crtc), line_value);
+
+	drm_for_each_encoder_mask(encoder, crtc->dev,
+				crtc->state->encoder_mask) {
+		if ((encoder->crtc != crtc) ||
+				sde_encoder_in_clone_mode(encoder))
+			continue;
+
+		if (!sde_encoder_is_dsi_display(encoder) ||
+				!sde_encoder_check_curr_mode(
+				encoder, MSM_DISPLAY_VIDEO_MODE)) {
+			SDE_ERROR(
+				"Feature supported only in builtin video mode display\n");
+			return -EINVAL;
+		}
+
+		drm_modeset_lock(&crtc->mutex, NULL);
+		if (!crtc->state->active) {
+			ret = -EOPNOTSUPP;
+			SDE_ERROR("crtc state inactive\n");
+		} else {
+			ret = sde_encoder_set_lineptr_value(encoder,
+						line_value, false);
+		}
+		drm_modeset_unlock(&crtc->mutex);
+	}
+
+	return ret ? ret : count;
+}
+
+static DEVICE_ATTR_RO(lineptr_event);
+static DEVICE_ATTR_WO(lineptr_value);
 static DEVICE_ATTR_RO(vsync_event);
 static DEVICE_ATTR_RO(measured_fps);
 static DEVICE_ATTR_RW(fps_periodicity_ms);
@@ -385,6 +476,8 @@ static struct attribute *sde_crtc_dev_attrs[] = {
 	&dev_attr_vsync_event.attr,
 	&dev_attr_measured_fps.attr,
 	&dev_attr_fps_periodicity_ms.attr,
+	&dev_attr_lineptr_event.attr,
+	&dev_attr_lineptr_value.attr,
 	NULL
 };
 
@@ -690,7 +783,9 @@ static bool _sde_crtc_setup_is_quad_pipe(struct drm_crtc_state *state)
 				(topology ==
 				SDE_RM_TOPOLOGY_QUADPIPE_DSCMERGE) ||
 				(topology ==
-				SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC))
+				SDE_RM_TOPOLOGY_QUADPIPE_3DMERGE_DSC) ||
+				(topology ==
+				SDE_RM_TOPOLOGY_QUADPIPE_DSC4HSMERGE))
 			return true;
 	}
 
@@ -828,6 +923,32 @@ static int _sde_crtc_check_autorefresh(struct drm_crtc *crtc,
 	}
 
 	return 0;
+}
+
+static bool  _sde_check_fsc_layer(struct drm_crtc_state *crtc_state)
+{
+	struct sde_format *format = NULL;
+	struct drm_plane *plane = NULL;
+	struct drm_plane_state *plane_state = NULL;
+
+	drm_atomic_crtc_state_for_each_plane(plane, crtc_state) {
+		plane_state = drm_atomic_get_existing_plane_state(
+				crtc_state->state, plane);
+		if (!plane_state)
+			continue;
+
+		format = to_sde_format(msm_framebuffer_format(
+				plane_state->fb));
+		if (!format) {
+			SDE_ERROR("invalid format\n");
+			return false;
+		}
+
+		if (SDE_FORMAT_IS_FSC(format))
+			return true;
+	}
+
+	return false;
 }
 
 static int _sde_crtc_set_lm_roi(struct drm_crtc *crtc,
@@ -1160,6 +1281,13 @@ static void _sde_crtc_program_lm_output_roi(struct drm_crtc *crtc)
 		cfg.out_height = lm_roi->h;
 		cfg.right_mixer = right_mixer;
 		cfg.flags = 0;
+
+		if (crtc_state->in_fsc_mode) {
+			cfg.out_width = (lm_roi->w / 3);
+			cfg.out_height = (lm_roi->h * 3);
+		}
+		SDE_DEBUG("LM out_w:%d out_h:%d fsc_mode:%d\n", cfg.out_width,
+				cfg.out_height, crtc_state->in_fsc_mode);
 		hw_lm->ops.setup_mixer_out(hw_lm, &cfg);
 	}
 }
@@ -2318,6 +2446,20 @@ static void sde_crtc_vblank_cb(void *data)
 
 	drm_crtc_handle_vblank(crtc);
 	DRM_DEBUG_VBL("crtc%d\n", crtc->base.id);
+	SDE_EVT32_VERBOSE(DRMID(crtc));
+}
+
+static void sde_crtc_lineptr_cb(void *data, ktime_t timestamp)
+{
+	struct drm_crtc *crtc = (struct drm_crtc *)data;
+	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+	unsigned long flags;
+
+	spin_lock_irqsave(&sde_crtc->lineptr_lock, flags);
+	sde_crtc->lineptr_cb_ts = timestamp;
+	spin_unlock_irqrestore(&sde_crtc->lineptr_lock, flags);
+
+	sysfs_notify_dirent(sde_crtc->lineptr_event_sf);
 	SDE_EVT32_VERBOSE(DRMID(crtc));
 }
 
@@ -4142,6 +4284,8 @@ static void sde_crtc_enable(struct drm_crtc *crtc,
 			crtc->state->encoder_mask) {
 		sde_encoder_register_frame_event_callback(encoder,
 				sde_crtc_frame_event_cb, crtc);
+		sde_encoder_register_lineptr_callback(encoder,
+				sde_crtc_lineptr_cb);
 	}
 
 	sde_crtc->enabled = true;
@@ -4777,6 +4921,72 @@ static int _sde_crtc_check_plane_layout(struct drm_crtc *crtc,
 	return 0;
 }
 
+static int _sde_crtc_check_fsc_planes(struct drm_crtc *crtc,
+		struct drm_crtc_state *crtc_state)
+{
+	struct sde_format *format = NULL;
+	struct drm_plane *plane = NULL;
+	struct drm_plane_state *plane_state = NULL;
+	int fsc_plane_count = 0, non_fsc_plane_count = 0;
+	struct sde_rect fsc_rects[CRTC_DUAL_MIXERS];
+	struct sde_rect fsc_left_rect, fsc_right_rect;
+
+	drm_atomic_crtc_state_for_each_plane(plane, crtc_state) {
+		plane_state = drm_atomic_get_existing_plane_state(
+				crtc_state->state, plane);
+		if (!plane_state)
+			continue;
+
+		format = to_sde_format(msm_framebuffer_format(
+				plane_state->fb));
+		if (!format) {
+			SDE_ERROR("invalid format\n");
+			return -EINVAL;
+		} else if (SDE_FORMAT_IS_FSC(format)) {
+			fsc_plane_count++;
+			if (fsc_plane_count > CRTC_DUAL_MIXERS) {
+				SDE_ERROR("%d fsc planes unsupported",
+					fsc_plane_count);
+				SDE_ERROR("plane:%d\n", plane->base.id);
+				return -EINVAL;
+			}
+			/* Populate fsc_rects */
+			fsc_rects[fsc_plane_count-1].x = plane_state->crtc_x;
+			fsc_rects[fsc_plane_count-1].y = plane_state->crtc_y;
+			fsc_rects[fsc_plane_count-1].w = plane_state->crtc_w;
+			fsc_rects[fsc_plane_count-1].h = plane_state->crtc_h;
+		} else {
+			non_fsc_plane_count++;
+		}
+	}
+
+	if (fsc_rects[0].x > fsc_rects[1].x) {
+		fsc_right_rect = fsc_rects[0];
+		fsc_left_rect = fsc_rects[1];
+	} else {
+		fsc_right_rect = fsc_rects[1];
+		fsc_left_rect = fsc_rects[0];
+	}
+
+	if ((fsc_plane_count > 1) &&
+			FSC_PLANE_OVERLAP(fsc_left_rect, fsc_right_rect)) {
+		SDE_ERROR("fsc planes are overlapping,blending not allowed\n");
+		SDE_ERROR("left rect x:%d,y:%d,w:%d,h:%d\n",
+				fsc_left_rect.x, fsc_left_rect.y,
+				fsc_left_rect.w, fsc_left_rect.h);
+		SDE_ERROR("right rect x:%d, y:%d, w:%d, h:%d\n",
+				fsc_right_rect.x, fsc_right_rect.y,
+				fsc_right_rect.w, fsc_right_rect.h);
+		return -EINVAL;
+	} else if (fsc_plane_count && non_fsc_plane_count) {
+		SDE_ERROR("%d fsc and %d other planes detected together\n",
+				fsc_plane_count, non_fsc_plane_count);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 		struct drm_crtc_state *state)
 {
@@ -4798,6 +5008,7 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 	dev = crtc->dev;
 	sde_crtc = to_sde_crtc(crtc);
 	cstate = to_sde_crtc_state(state);
+	cstate->in_fsc_mode = _sde_check_fsc_layer(state) ? true : false;
 
 	if (!state->enable || !state->active) {
 		SDE_DEBUG("crtc%d -> enable %d, active %d, skip atomic_check\n",
@@ -4849,6 +5060,14 @@ static int sde_crtc_atomic_check(struct drm_crtc *crtc,
 		goto end;
 	}
 
+	if (cstate->in_fsc_mode) {
+		rc = _sde_crtc_check_fsc_planes(crtc, state);
+		if (rc) {
+			SDE_ERROR("crtc%d failed fsc planes check %d\n",
+					crtc->base.id, rc);
+			goto end;
+		}
+	}
 	_sde_crtc_setup_is_ppsplit(state);
 	_sde_crtc_setup_lm_bounds(crtc, state);
 
@@ -6173,6 +6392,7 @@ struct drm_crtc *sde_crtc_init(struct drm_device *dev, struct drm_plane *plane)
 
 	mutex_init(&sde_crtc->crtc_lock);
 	spin_lock_init(&sde_crtc->spin_lock);
+	spin_lock_init(&sde_crtc->lineptr_lock);
 	atomic_set(&sde_crtc->frame_pending, 0);
 
 	sde_crtc->enabled = false;
@@ -6282,6 +6502,11 @@ int sde_crtc_post_init(struct drm_device *dev, struct drm_crtc *crtc)
 	if (!sde_crtc->vsync_event_sf)
 		SDE_ERROR("crtc:%d vsync_event sysfs create failed\n",
 						crtc->base.id);
+	sde_crtc->lineptr_event_sf = sysfs_get_dirent(
+		sde_crtc->sysfs_dev->kobj.sd, "lineptr_event");
+	if (!sde_crtc->lineptr_event_sf)
+		SDE_ERROR("crtc:%d lineptr_event sysfs create failed\n",
+						DRMID(crtc));
 
 end:
 	return rc;

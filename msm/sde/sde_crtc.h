@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -263,6 +263,9 @@ struct sde_crtc_misr_info {
  * @ltm_buffer_lock : muttx to protect ltm_buffers allcation and free
  * @ltm_lock        : Spinlock to protect ltm buffer_cnt, hist_en and ltm lists
  * @needs_hw_reset  : Initiate a hw ctl reset
+ * @lineptr_event_sf : lineptr event notifier sysfs device
+ * @lineptr_lock  : spin_lock for lineptr event
+ * @lineptr_cb_ts : ktime at lineptr irq
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -342,6 +345,10 @@ struct sde_crtc {
 	struct mutex ltm_buffer_lock;
 	spinlock_t ltm_lock;
 	bool needs_hw_reset;
+
+	struct kernfs_node *lineptr_event_sf;
+	spinlock_t lineptr_lock;
+	ktime_t lineptr_cb_ts;
 };
 
 #define to_sde_crtc(x) container_of(x, struct sde_crtc, base)
@@ -353,6 +360,7 @@ struct sde_crtc {
  * @num_connectors: Number of associated drm connectors
  * @rsc_client    : sde rsc client when mode is valid
  * @is_ppsplit    : Whether current topology requires PPSplit special handling
+ * @in_fsc_mode   : Whether current state is in fsc mode
  * @bw_control    : true if bw/clk controlled by core bw/clk properties
  * @bw_split_vote : true if bw controlled by llcc/dram bw properties
  * @crtc_roi      : Current CRTC ROI. Possibly sub-rectangle of mode.
@@ -385,6 +393,7 @@ struct sde_crtc_state {
 	bool bw_split_vote;
 
 	bool is_ppsplit;
+	bool in_fsc_mode;
 	struct sde_rect crtc_roi;
 	struct sde_rect lm_bounds[MAX_MIXERS_PER_CRTC];
 	struct sde_rect lm_roi[MAX_MIXERS_PER_CRTC];

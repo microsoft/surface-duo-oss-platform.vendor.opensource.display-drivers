@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 #include <linux/iopoll.h>
 
@@ -61,6 +61,7 @@
 #define INTF_MISR_CTRL			0x180
 #define INTF_MISR_SIGNATURE		0x184
 
+#define INTF_PROG_LINE_INTR_CONF        0x250
 #define INTF_MUX                        0x25C
 #define INTF_STATUS                     0x26C
 #define INTF_AVR_CONTROL                0x270
@@ -82,6 +83,25 @@
 #define INTF_TEAR_LINE_COUNT            0x2B0
 #define INTF_TEAR_AUTOREFRESH_CONFIG    0x2B4
 #define INTF_TEAR_TEAR_DETECT_CTRL      0x2B8
+
+static int sde_hw_intf_set_lineptr(struct sde_hw_intf *ctx,
+			u32 lineptr)
+{
+	struct sde_hw_blk_reg_map *c;
+	u32 val;
+
+	if (!ctx) {
+		SDE_ERROR("invalid input parameter(s)\n");
+		return -EINVAL;
+	}
+
+	c = &ctx->hw;
+	val = lineptr ? lineptr : 0xFFFFFFFF;
+
+	SDE_REG_WRITE(c, INTF_PROG_LINE_INTR_CONF, val);
+
+	return 0;
+}
 
 static struct sde_intf_cfg *_intf_offset(enum sde_intf intf,
 		struct sde_mdss_cfg *m,
@@ -177,6 +197,14 @@ static void sde_hw_intf_avr_ctrl(struct sde_hw_intf *ctx,
 	SDE_REG_WRITE(c, INTF_AVR_MODE, avr_mode);
 }
 
+static inline void _check_and_set_comp_bit(struct sde_hw_intf *ctx,
+		bool dsc_4hs_merge, u32 *intf_cfg2)
+{
+	if ((IS_SDE_MAJOR_SAME(ctx->mdss->hwversion,
+			SDE_HW_VER_600) && dsc_4hs_merge)) {
+		(*intf_cfg2) |= BIT(12);
+	}
+}
 
 static void sde_hw_intf_setup_timing_engine(struct sde_hw_intf *ctx,
 		const struct intf_timing_params *p,
@@ -255,6 +283,8 @@ static void sde_hw_intf_setup_timing_engine(struct sde_hw_intf *ctx,
 	}
 
 	intf_cfg2 = 0;
+
+	_check_and_set_comp_bit(ctx, p->dsc_4hs_merge_en, &intf_cfg2);
 
 	if (dp_intf && p->compression_en) {
 		active_data_hctl = (hsync_start_x + p->extra_dto_cycles) << 16;
@@ -670,6 +700,23 @@ static void sde_hw_intf_vsync_sel(struct sde_hw_intf *intf,
 	SDE_REG_WRITE(c, INTF_TEAR_MDP_VSYNC_SEL, (vsync_source & 0xf));
 }
 
+static void sde_hw_intf_enable_dsc_4hs_merge(struct sde_hw_intf *intf,
+		bool dsc_4hs_merge_en)
+{
+	struct sde_hw_blk_reg_map *c;
+	u32 intf_cfg2;
+
+	if (!intf)
+		return;
+
+	c = &intf->hw;
+	intf_cfg2 = SDE_REG_READ(c, INTF_CONFIG2);
+
+	_check_and_set_comp_bit(intf, dsc_4hs_merge_en, &intf_cfg2);
+
+	SDE_REG_WRITE(c, INTF_CONFIG2, intf_cfg2);
+}
+
 static void _setup_intf_ops(struct sde_hw_intf_ops *ops,
 		unsigned long cap)
 {
@@ -683,6 +730,8 @@ static void _setup_intf_ops(struct sde_hw_intf_ops *ops,
 	ops->avr_setup = sde_hw_intf_avr_setup;
 	ops->avr_trigger = sde_hw_intf_avr_trigger;
 	ops->avr_ctrl = sde_hw_intf_avr_ctrl;
+	ops->set_line_ptr = sde_hw_intf_set_lineptr;
+	ops->enable_dsc_4hs_merge = sde_hw_intf_enable_dsc_4hs_merge;
 
 	if (cap & BIT(SDE_INTF_INPUT_CTRL))
 		ops->bind_pingpong_blk = sde_hw_intf_bind_pingpong_blk;

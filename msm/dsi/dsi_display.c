@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/list.h>
@@ -1532,7 +1532,13 @@ static int dsi_display_debugfs_init(struct dsi_display *display)
 	char name[MAX_NAME_SIZE];
 	int i;
 
-	dir = debugfs_create_dir(display->name, NULL);
+	if (!strcmp(display->display_type, "primary")) {
+		dir = debugfs_create_dir(display->name, NULL);
+	} else {
+		snprintf(name, ARRAY_SIZE(name),
+				"%s_secondary", display->display_type);
+		dir = debugfs_create_dir(name, NULL);
+	}
 	if (IS_ERR_OR_NULL(dir)) {
 		rc = PTR_ERR(dir);
 		DSI_ERR("[%s] debugfs create dir failed, rc = %d\n",
@@ -5972,6 +5978,9 @@ int dsi_display_get_info(struct drm_connector *connector,
 	host = &display->panel->host_config;
 	if (host->split_link.split_link_enabled)
 		info->capabilities |= MSM_DISPLAY_SPLIT_LINK;
+
+	info->dsc_count = display->panel->dsc_count;
+	info->lm_count = display->panel->lm_count;
 error:
 	mutex_unlock(&display->display_lock);
 	return rc;
@@ -6304,9 +6313,16 @@ int dsi_display_get_panel_vfp(void *dsi_display,
 
 	for (i = 0; i < count; i++) {
 		struct dsi_display_mode *m = &display->modes[i];
+		u32 h_display, v_display;
+		bool fsc_mode = m->timing.fsc_mode;
 
-		if (m && v_active == m->timing.v_active &&
-			h_active == m->timing.h_active &&
+		h_display = fsc_mode ?
+			(m->timing.h_active * 3) : m->timing.h_active;
+		v_display = fsc_mode ?
+			(m->timing.v_active / 3) : m->timing.v_active;
+
+		if (m && v_active == v_display &&
+			h_active == h_display &&
 			refresh_rate == m->timing.refresh_rate) {
 			rc = m->timing.v_front_porch;
 			break;
@@ -6353,6 +6369,8 @@ int dsi_display_find_mode(struct dsi_display *display,
 		struct dsi_display_mode **out_mode)
 {
 	u32 count, i;
+	u32 h_active = 0;
+	u32 v_active = 0;
 	int rc;
 
 	if (!display || !out_mode)
@@ -6372,12 +6390,21 @@ int dsi_display_find_mode(struct dsi_display *display,
 			return rc;
 	}
 
+	h_active = cmp->timing.h_active;
+	v_active = cmp->timing.v_active;
+
 	mutex_lock(&display->display_lock);
 	for (i = 0; i < count; i++) {
 		struct dsi_display_mode *m = &display->modes[i];
-
-		if (cmp->timing.v_active == m->timing.v_active &&
-			cmp->timing.h_active == m->timing.h_active &&
+		if (m->timing.fsc_mode && (!cmp->timing.fsc_mode)) {
+			if (m->timing.h_active == (h_active / 3) &&
+				m->timing.v_active == (v_active * 3)) {
+				*out_mode = m;
+				rc = 0;
+				break;
+			}
+		} else if (v_active == m->timing.v_active &&
+			h_active == m->timing.h_active &&
 			cmp->timing.refresh_rate == m->timing.refresh_rate &&
 			cmp->panel_mode == m->panel_mode &&
 			cmp->pixel_clk_khz == m->pixel_clk_khz) {
