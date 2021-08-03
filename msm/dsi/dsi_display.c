@@ -4792,7 +4792,7 @@ static int _dsi_display_dev_init(struct dsi_display *display)
 		return -EINVAL;
 	}
 
-	if (!display->panel_node)
+	if (!display->panel_node && !display->fw)
 		return 0;
 
 	mutex_lock(&display->display_lock);
@@ -5043,7 +5043,7 @@ static int dsi_display_bind(struct device *dev,
 				drm, display);
 		return -EINVAL;
 	}
-	if (!display->panel_node)
+	if (!display->panel_node && !display->fw)
 		return 0;
 
 	if (!display->fw)
@@ -5340,7 +5340,12 @@ static void dsi_display_firmware_display(const struct firmware *fw,
 			fw->size);
 
 		display->fw = fw;
-		display->name = "dsi_firmware_display";
+
+		if (!strcmp(display->display_type, "primary"))
+			display->name = "dsi_firmware_display";
+
+		else if (!strcmp(display->display_type, "secondary"))
+			display->name = "dsi_firmware_display_secondary";
 	}
 
 	if (dsi_display_init(display))
@@ -5405,11 +5410,6 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 		if (!panel_node)
 			DSI_WARN("default panel not found\n");
 
-		if (IS_ENABLED(CONFIG_DSI_PARSER))
-			firm_req = !request_firmware_nowait(
-				THIS_MODULE, 1, "dsi_prop",
-				&pdev->dev, GFP_KERNEL, display,
-				dsi_display_firmware_display);
 	}
 
 	boot_disp->node = pdev->dev.of_node;
@@ -5424,6 +5424,22 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, display);
 
 	/* initialize display in firmware callback */
+	if (!(boot_displays[DSI_PRIMARY].boot_disp_en ||
+				boot_displays[DSI_SECONDARY].boot_disp_en) &&
+			IS_ENABLED(CONFIG_DSI_PARSER)) {
+		if (!strcmp(display->display_type, "primary"))
+			firm_req = !request_firmware_nowait(
+					THIS_MODULE, 1, "dsi_prop",
+					&pdev->dev, GFP_KERNEL, display,
+					dsi_display_firmware_display);
+
+		else if (!strcmp(display->display_type, "secondary"))
+			firm_req = !request_firmware_nowait(
+					THIS_MODULE, 1, "dsi_prop_sec",
+					&pdev->dev, GFP_KERNEL, display,
+					dsi_display_firmware_display);
+	}
+
 	if (!firm_req) {
 		rc = dsi_display_init(display);
 		if (rc)
