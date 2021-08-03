@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/list.h>
@@ -2225,10 +2225,10 @@ end:
 static int dsi_display_parse_boot_display_selection(void)
 {
 	char *pos = NULL;
-	char disp_buf[MAX_CMDLINE_PARAM_LEN] = {'\0'};
 	int i, j;
 
 	for (i = 0; i < MAX_DSI_ACTIVE_DISPLAY; i++) {
+		char disp_buf[MAX_CMDLINE_PARAM_LEN] = {'\0'};
 		strlcpy(disp_buf, boot_displays[i].boot_param,
 			MAX_CMDLINE_PARAM_LEN);
 
