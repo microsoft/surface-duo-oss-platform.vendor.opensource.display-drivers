@@ -2065,6 +2065,20 @@ static void _sde_rm_release_rsvp(
 	}
 }
 
+static bool sde_rm_is_display_in_cont_splash(struct sde_kms *sde_kms,
+	struct drm_encoder *enc)
+{
+	int i;
+	struct sde_splash_display *splash_dpy;
+
+	for (i = 0; i < SDE_MAX_DISPLAYS; i++) {
+		splash_dpy = &sde_kms->splash_data.splash_display[i];
+		if (splash_dpy->encoder ==  enc)
+			return splash_dpy->cont_splash_enabled;
+	}
+	return false;
+}
+
 int sde_rm_release(struct sde_rm *rm,
 		struct drm_encoder *enc,
 		struct drm_atomic_state *atomic_state)
@@ -2146,7 +2160,7 @@ int sde_rm_reserve(
 		goto end;
 	}
 
-	if (!conn_state->state) {
+	if (sde_rm_is_display_in_cont_splash(sde_kms, enc)) {
 		SDE_DEBUG("cont_splash enabled on enc-%d\n", enc->base.id);
 		ret = _sde_rm_make_next_rsvp_for_cont_splash(rm, state,
 			enc, crtc_state, conn_state, &reqs);
