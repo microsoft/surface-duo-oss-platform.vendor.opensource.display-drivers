@@ -452,6 +452,9 @@ static void msm_hyp_connector_reset(struct drm_connector *connector)
 	struct msm_hyp_connector_state *conn_state =
 		kzalloc(sizeof(*conn_state), GFP_KERNEL);
 
+	if (!conn_state)
+		return;
+
 	if (connector->state)
 		msm_hyp_connector_destroy_state(connector,
 				connector->state);
@@ -775,11 +778,16 @@ static void msm_hyp_crtc_reset(struct drm_crtc *crtc)
 	struct msm_hyp_crtc_state *c_state =
 		kzalloc(sizeof(*c_state), GFP_KERNEL);
 
+	if (!c_state)
+		return;
+
 	if (crtc->state)
 		msm_hyp_crtc_destroy_state(crtc,
 				crtc->state);
 
 	__drm_atomic_helper_crtc_reset(crtc, &c_state->base);
+
+	c_state->base.no_vblank = true;
 
 	c_state->input_fence_timeout = CRTC_INPUT_FENCE_TIMEOUT;
 }
@@ -1042,6 +1050,9 @@ static void msm_hyp_plane_reset(struct drm_plane *plane)
 {
 	struct msm_hyp_plane_state *p_state =
 		kzalloc(sizeof(*p_state), GFP_KERNEL);
+
+	if (!p_state)
+		return;
 
 	if (plane->state)
 		msm_hyp_plane_destroy_state(plane,
@@ -1679,6 +1690,8 @@ static void _msm_hyp_complete_commit(struct msm_hyp_commit *c)
 	_msm_hyp_atomic_commit(dev, old_state);
 
 	_msm_hyp_atomic_wait_for_commit_done(dev, old_state);
+
+	drm_atomic_helper_fake_vblank(old_state);
 
 	drm_atomic_helper_cleanup_planes(dev, old_state);
 

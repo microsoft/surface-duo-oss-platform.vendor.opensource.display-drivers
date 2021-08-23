@@ -453,7 +453,7 @@ static bool _wfd_kms_plane_is_csc_matrix_changed(
 		0x7F9B800000,	/* WFD_COLOR_SPACE_BT601 */
 		0x7fa8000000,	/* WFD_COLOR_SPACE_BT601_FULL */
 		0x7fc9800000,	/* WFD_COLOR_SPACE_BT709 */
-		0x0		/* WFD_COLOR_SPACE_BT709_FULL */
+		0x7fd0000000 	/* WFD_COLOR_SPACE_BT709_FULL */
 	};
 
 	/* ctm_coeff[4] is unique for each matrix */
@@ -479,6 +479,9 @@ static bool _wfd_kms_plane_is_csc_matrix_changed(
 		else if (msm_hyp_csc_unique_coeffs[WFD_COLOR_SPACE_BT709] ==
 				cur->csc.ctm_coeff[unique_coeff_idx])
 			*color_space = WFD_COLOR_SPACE_BT709;
+		else if (msm_hyp_csc_unique_coeffs[WFD_COLOR_SPACE_BT709_FULL] ==
+                                cur->csc.ctm_coeff[unique_coeff_idx])
+			*color_space = WFD_COLOR_SPACE_BT709_FULL;
 		else
 			*color_space = WFD_COLOR_SPACE_BT601;
 	}
@@ -814,10 +817,8 @@ static int _wfd_kms_hw_init(struct wfd_kms *kms)
 		}
 	}
 
-	if (!kms->wfd_device_cnt) {
-		pr_err("can't find valid WFD device\n");
-		return -ENODEV;
-	}
+	if (!kms->wfd_device_cnt)
+		pr_info("can't find valid WFD device\n");
 
 	return 0;
 }
@@ -949,6 +950,9 @@ static int wfd_kms_get_connector_infos(struct msm_hyp_kms *kms,
 		*connector_num = wfd_kms->port_cnt;
 		return 0;
 	}
+
+	if (!wfd_kms->wfd_device_cnt)
+		return 0;
 
 	wfdGetDeviceAttribiv_User(wfd_kms->wfd_device[0],
 		WFD_DEVICE_MIN_MAX_WIDTH_HEIGHT, 4, data);

@@ -815,6 +815,9 @@ wfdCreateDevice_User(
 		goto end;
 
 	wire_dev = kzalloc(sizeof(*wire_dev), GFP_KERNEL);
+	if (!wire_dev)
+		goto end;
+
 	wire_dev->device = dev_hdl;
 	wire_dev->ctx = ctx;
 end:
@@ -3338,44 +3341,50 @@ static int event_listener(void *param)
 {
 	struct wire_context *ctx = param;
 	void *handle = ctx->init_info.context;
-	WIRE_HEAP struct wire_packet req;
+	struct wire_packet *req;
 	int rc;
 
-	while (ctx->wire_isr_enable) {
-		memset((char *)&req, 0x00, sizeof(struct wire_packet));
+	req = kzalloc(sizeof(struct wire_packet), GFP_KERNEL);
+	if (!req)
+		return -ENOMEM;
 
-		if (prep_hdr(EVENT_NOTIFICATION, &req)) {
+	while (ctx->wire_isr_enable) {
+		memset((char *)req, 0x00, sizeof(struct wire_packet));
+
+		if (prep_hdr(EVENT_NOTIFICATION, req)) {
 			WIRE_LOG_ERROR("prep_hdr failed");
 			continue;
 		}
 
-		rc = user_os_utils_recv(handle, &req, 0x00);
+		rc = user_os_utils_recv(handle, req, 0x00);
 		if (rc && !ctx->wire_isr_stop) {
 			WIRE_LOG_ERROR("user_os_utils_recv (EVENT_NOTIFICATION) failed");
 			break;
 		}
 
 		/* validate packet */
-		if (req.hdr.magic_num != WIRE_FORMAT_MAGIC) {
-			WIRE_LOG_ERROR("Invalid magic_num=0x%x", req.hdr.magic_num);
+		if (req->hdr.magic_num != WIRE_FORMAT_MAGIC) {
+			WIRE_LOG_ERROR("Invalid magic_num=0x%x", req->hdr.magic_num);
 			rc = -1;
 		}
-		if (req.hdr.version != DISPLAY_SHIM_EVENT_VERSION) {
+		if (req->hdr.version != DISPLAY_SHIM_EVENT_VERSION) {
 			WIRE_LOG_ERROR("version mismatch should_be=0x%x req=0x%x",
-				DISPLAY_SHIM_EVENT_VERSION, req.hdr.version);
+				DISPLAY_SHIM_EVENT_VERSION, req->hdr.version);
 			rc = -1;
 		}
-		if (req.hdr.payload_type != EVENT_NOTIFICATION) {
+		if (req->hdr.payload_type != EVENT_NOTIFICATION) {
 			WIRE_LOG_ERROR("wrong payload type %d",
-				req.hdr.payload_type);
+				req->hdr.payload_type);
 			rc = -1;
 		}
 
 		if (!rc) {
 			/* Need to handle event callbacks outside of channel lock */
-			event_handler(ctx, &req.payload.ev_req);
+			event_handler(ctx, &req->payload.ev_req);
 		}
 	}
+
+	kfree(req);
 
 	return 0;
 }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2018,2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018,2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"[msm-hdcp] %s: " fmt, __func__
@@ -17,6 +17,7 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 
 #include "msm_hdcp.h"
 
@@ -24,6 +25,8 @@
 #define DRIVER_NAME "msm_hdcp"
 
 static struct class *class;
+
+static DEFINE_MUTEX(master_mutex);
 
 struct msm_hdcp {
 	struct platform_device *pdev;
@@ -36,7 +39,11 @@ struct msm_hdcp {
 	void (*cb)(void *ctx, u8 data);
 	int state;
 	int version;
+	u8 min_enc_level;
 	u32 cell_idx;
+	struct msm_hdcp *master_hdcp;
+	struct list_head head;
+	struct list_head slave_list;
 };
 
 void msm_hdcp_register_cb(struct device *dev, void *ctx,
@@ -60,7 +67,7 @@ void msm_hdcp_register_cb(struct device *dev, void *ctx,
 }
 
 void msm_hdcp_notify_status(struct device *dev,
-	       int state, int version)
+		struct msm_hdcp_status *status)
 {
 	char *envp[2];
 	struct msm_hdcp *hdcp = NULL;
@@ -75,11 +82,12 @@ void msm_hdcp_notify_status(struct device *dev,
 		pr_err("invalid driver pointer\n");
 		return;
 	}
-
-	if ((state != hdcp->state) ||
-			(version != hdcp->version)) {
-		hdcp->state = state;
-		hdcp->version = version;
+	if ((status->state != hdcp->state) ||
+			(status->version != hdcp->version) ||
+			(status->min_enc_level != hdcp->min_enc_level)) {
+		hdcp->state = status->state;
+		hdcp->version = status->version;
+		hdcp->min_enc_level = status->min_enc_level;
 
 		envp[0] = "HDCP_UPDATE=1";
 		envp[1] = NULL;
@@ -137,7 +145,68 @@ void msm_hdcp_cache_repeater_topology(struct device *dev,
 		   sizeof(struct HDCP_V2V1_MSG_TOPOLOGY));
 }
 
-static ssize_t msm_hdcp_1x_sysfs_rda_tp(struct device *dev,
+static struct msm_hdcp *msm_hdcp_get_master_dev(struct device_node *of_node)
+{
+	struct device_node *node;
+	struct msm_hdcp *master_hdcp;
+	struct platform_device *pdev;
+
+	node = of_parse_phandle(of_node, "qcom,msm-hdcp-master", 0);
+	if (!node) {
+		// This is master msm initializa the slave list
+		return NULL;
+	}
+	pdev = of_find_device_by_node(node);
+	if (!pdev) {
+		// defer the  module initialization
+		pr_err("couldn't find msm-hdcp pdev defer probe\n");
+		return ERR_PTR(-EPROBE_DEFER);
+	}
+
+	master_hdcp = dev_get_drvdata(&pdev->dev);
+	if (!master_hdcp) {
+		pr_err("invalid driver pointer\n");
+		return ERR_PTR(-EPROBE_DEFER);
+	}
+	return master_hdcp;
+}
+
+static int msm_hdcp_add_master_dev(struct device_node *of_node,
+			struct msm_hdcp *hdcp)
+{
+	hdcp->master_hdcp = msm_hdcp_get_master_dev(of_node);
+
+	INIT_LIST_HEAD(&hdcp->slave_list);
+
+	if (hdcp->master_hdcp) {
+		mutex_lock(&master_mutex);
+		list_add(&hdcp->head, &hdcp->master_hdcp->slave_list);
+		mutex_unlock(&master_mutex);
+	}
+	return 0;
+}
+
+static void msm_hdcp_del_master_dev(struct device_node *of_node,
+		struct msm_hdcp *hdcp)
+{
+	struct msm_hdcp *hdcp_node;
+
+	mutex_lock(&master_mutex);
+
+	if (!hdcp->master_hdcp) {
+		/*Master msm hdcp is getting removed delete the slave list */
+		list_for_each_entry(hdcp_node, &hdcp->slave_list, head) {
+			list_del_init(&hdcp_node->head);
+			hdcp_node->master_hdcp = NULL;
+		}
+	} else {
+		list_del(&hdcp->head);
+	}
+
+	mutex_unlock(&master_mutex);
+}
+
+static ssize_t tp_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	ssize_t ret = 0;
@@ -176,7 +245,7 @@ static ssize_t msm_hdcp_1x_sysfs_rda_tp(struct device *dev,
 	return ret;
 }
 
-static ssize_t msm_hdcp_1x_sysfs_wta_tp(struct device *dev,
+static ssize_t tp_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	int msgid = 0;
@@ -215,6 +284,7 @@ static ssize_t msm_hdcp_2x_sysfs_wta_min_level_change(struct device *dev,
 	int min_enc_lvl;
 	ssize_t ret = count;
 	struct msm_hdcp *hdcp = NULL;
+	struct msm_hdcp *hdcp_node;
 
 	if (!dev) {
 		pr_err("invalid device pointer\n");
@@ -236,6 +306,12 @@ static ssize_t msm_hdcp_2x_sysfs_wta_min_level_change(struct device *dev,
 	if (hdcp->cb && hdcp->client_ctx)
 		hdcp->cb(hdcp->client_ctx, min_enc_lvl);
 
+	mutex_lock(&master_mutex);
+	list_for_each_entry(hdcp_node, &hdcp->slave_list, head) {
+		if (hdcp_node->cb && hdcp_node->client_ctx)
+			hdcp_node->cb(hdcp_node->client_ctx, min_enc_lvl);
+	}
+	mutex_unlock(&master_mutex);
 	return ret;
 }
 
@@ -276,8 +352,27 @@ static ssize_t msm_hdcp_sysfs_hdcp_version(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "%zu\n", hdcp->version);
 }
 
-static DEVICE_ATTR(tp, 0644, msm_hdcp_1x_sysfs_rda_tp,
-	msm_hdcp_1x_sysfs_wta_tp);
+static ssize_t hdcp_mel_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct msm_hdcp *hdcp = NULL;
+
+	if (!dev) {
+		pr_err("invalid device pointer\n");
+		return -ENODEV;
+	}
+
+	hdcp = dev_get_drvdata(dev);
+	if (!hdcp) {
+		pr_err("invalid driver pointer\n");
+		return -ENODEV;
+	}
+	return scnprintf(buf, PAGE_SIZE, "%zu\n", hdcp->min_enc_level);
+}
+
+static DEVICE_ATTR_RO(hdcp_mel);
+
+static DEVICE_ATTR_RW(tp);
 
 static DEVICE_ATTR(min_level_change, 0200, NULL,
 	msm_hdcp_2x_sysfs_wta_min_level_change);
@@ -288,11 +383,13 @@ static DEVICE_ATTR(hdcp_state, 0444, msm_hdcp_sysfs_hdcp_state,
 static DEVICE_ATTR(hdcp_version, 0444, msm_hdcp_sysfs_hdcp_version,
 	NULL);
 
+
 static struct attribute *msm_hdcp_fs_attrs[] = {
 	&dev_attr_tp.attr,
 	&dev_attr_min_level_change.attr,
 	&dev_attr_hdcp_state.attr,
 	&dev_attr_hdcp_version.attr,
+	&dev_attr_hdcp_mel.attr,
 	NULL
 };
 
@@ -336,6 +433,7 @@ static int msm_hdcp_probe(struct platform_device *pdev)
 	hdcp->pdev = pdev;
 	hdcp->state = 0;
 	hdcp->version = 0;
+	hdcp->min_enc_level = 0;
 	platform_set_drvdata(pdev, hdcp);
 
 	of_property_read_u32(of_node, "cell-index", &hdcp->cell_idx);
@@ -370,6 +468,13 @@ static int msm_hdcp_probe(struct platform_device *pdev)
 	ret = sysfs_create_group(&hdcp->device->kobj, &msm_hdcp_fs_attr_group);
 	if (ret)
 		pr_err("unable to register msm_hdcp sysfs nodes\n");
+
+	ret = msm_hdcp_add_master_dev(of_node, hdcp);
+	if (ret < 0) {
+		pr_err("msm hdcp add master failed\n");
+		goto error_cdev_add;
+	}
+
 	return 0;
 error_cdev_add:
 	device_destroy(class, hdcp->dev_num);
@@ -384,6 +489,7 @@ error_get_dev_num:
 static int msm_hdcp_remove(struct platform_device *pdev)
 {
 	struct msm_hdcp *hdcp;
+	struct device_node *of_node = pdev->dev.of_node;
 
 	hdcp = platform_get_drvdata(pdev);
 	if (!hdcp)
@@ -396,6 +502,7 @@ static int msm_hdcp_remove(struct platform_device *pdev)
 
 	unregister_chrdev_region(hdcp->dev_num, 1);
 
+	msm_hdcp_del_master_dev(of_node, hdcp);
 	devm_kfree(&pdev->dev, hdcp);
 	hdcp = NULL;
 	return 0;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -951,7 +951,7 @@ int msm_dp_mst_sim_transfer(void *mst_sim_context, struct drm_dp_aux_msg *msg)
 			return msm_dp_mst_sim_clear_esi(mst_sim_context, msg);
 
 		if (msg->address == DP_MSTM_CTRL)
-			return msm_dp_mst_sim_reset(mst_sim_context, msg);
+			msm_dp_mst_sim_reset(mst_sim_context, msg);
 	} else if (msg->request == DP_AUX_NATIVE_READ) {
 		if (msg->address >= DP_SIDEBAND_MSG_DOWN_REP_BASE &&
 		    msg->address < DP_SIDEBAND_MSG_DOWN_REP_BASE + 256)

@@ -1272,9 +1272,8 @@ static int _sde_crtc_set_crtc_roi(struct drm_crtc *crtc,
 	struct sde_crtc *sde_crtc;
 	struct sde_crtc_state *crtc_state;
 	struct sde_rect *crtc_roi;
-	struct msm_mode_info mode_info;
+	struct msm_mode_info *mode_info;
 	int i = 0;
-	int rc;
 	bool is_crtc_roi_dirty;
 	bool is_any_conn_roi_dirty;
 
@@ -1284,6 +1283,7 @@ static int _sde_crtc_set_crtc_roi(struct drm_crtc *crtc,
 	sde_crtc = to_sde_crtc(crtc);
 	crtc_state = to_sde_crtc_state(state);
 	crtc_roi = &crtc_state->crtc_roi;
+	mode_info = &crtc_state->mode_info;
 
 	is_crtc_roi_dirty = sde_crtc_is_crtc_roi_dirty(state);
 	is_any_conn_roi_dirty = false;
@@ -1296,13 +1296,7 @@ static int _sde_crtc_set_crtc_roi(struct drm_crtc *crtc,
 		if (!conn_state || conn_state->crtc != crtc)
 			continue;
 
-		rc = sde_connector_get_mode_info(conn_state, &mode_info);
-		if (rc) {
-			SDE_ERROR("failed to get mode info\n");
-			return -EINVAL;
-		}
-
-		if (!mode_info.roi_caps.enabled)
+		if (!mode_info->roi_caps.enabled)
 			continue;
 
 		sde_conn = to_sde_connector(conn_state->connector);
@@ -1628,67 +1622,49 @@ static int _sde_crtc_check_rois(struct drm_crtc *crtc,
 {
 	struct sde_crtc *sde_crtc;
 	struct sde_crtc_state *sde_crtc_state;
-	struct msm_mode_info mode_info;
-	int rc, lm_idx, i;
+	struct msm_mode_info *mode_info;
+	int rc, lm_idx;
 
 	if (!crtc || !state)
 		return -EINVAL;
 
-	memset(&mode_info, 0, sizeof(mode_info));
-
 	sde_crtc = to_sde_crtc(crtc);
 	sde_crtc_state = to_sde_crtc_state(state);
+	mode_info = &sde_crtc_state->mode_info;
 
-	/*
-	 * check connector array cached at modeset time since incoming atomic
-	 * state may not include any connectors if they aren't modified
-	 */
-	for (i = 0; i < sde_crtc_state->num_connectors; i++) {
-		struct drm_connector *conn = sde_crtc_state->connectors[i];
+	if (!mode_info->roi_caps.enabled)
+		return 0;
 
-		if (!conn || !conn->state)
-			continue;
+	if (sde_crtc_state->user_roi_list.num_rects >
+			mode_info->roi_caps.num_roi) {
+		SDE_ERROR("roi count is exceeding limit, %d > %d\n",
+				sde_crtc_state->user_roi_list.num_rects,
+				mode_info->roi_caps.num_roi);
+		return -E2BIG;
+	}
 
-		rc = sde_connector_get_mode_info(conn->state, &mode_info);
-		if (rc) {
-			SDE_ERROR("failed to get mode info\n");
-			return -EINVAL;
-		}
+	rc = _sde_crtc_set_crtc_roi(crtc, state);
+	if (rc)
+		return rc;
 
-		if (!mode_info.roi_caps.enabled)
-			continue;
+	rc = _sde_crtc_check_autorefresh(crtc, state);
+	if (rc)
+		return rc;
 
-		if (sde_crtc_state->user_roi_list.num_rects >
-				mode_info.roi_caps.num_roi) {
-			SDE_ERROR("roi count is exceeding limit, %d > %d\n",
-					sde_crtc_state->user_roi_list.num_rects,
-					mode_info.roi_caps.num_roi);
-			return -E2BIG;
-		}
-
-		rc = _sde_crtc_set_crtc_roi(crtc, state);
-		if (rc)
-			return rc;
-
-		rc = _sde_crtc_check_autorefresh(crtc, state);
-		if (rc)
-			return rc;
-
-		for (lm_idx = 0; lm_idx < sde_crtc_state->num_mixers;
-				lm_idx++) {
-			rc = _sde_crtc_set_lm_roi(crtc, state, lm_idx);
-			if (rc)
-				return rc;
-		}
-
-		rc = _sde_crtc_check_rois_centered_and_symmetric(crtc, state);
-		if (rc)
-			return rc;
-
-		rc = _sde_crtc_check_planes_within_crtc_roi(crtc, state);
+	for (lm_idx = 0; lm_idx < sde_crtc_state->num_mixers;
+			lm_idx++) {
+		rc = _sde_crtc_set_lm_roi(crtc, state, lm_idx);
 		if (rc)
 			return rc;
 	}
+
+	rc = _sde_crtc_check_rois_centered_and_symmetric(crtc, state);
+	if (rc)
+		return rc;
+
+	rc = _sde_crtc_check_planes_within_crtc_roi(crtc, state);
+	if (rc)
+		return rc;
 
 	return 0;
 }
@@ -1707,10 +1683,8 @@ static int _sde_crtc_check_panel_stacking(struct drm_crtc *crtc,
 	struct sde_kms *kms;
 	struct sde_crtc *sde_crtc;
 	struct sde_crtc_state *sde_crtc_state;
-	struct drm_connector *conn;
-	struct msm_mode_info mode_info;
+	struct msm_mode_info *mode_info;
 	u32 gcd, m, n;
-	int rc;
 
 	kms = _sde_crtc_get_kms(crtc);
 	if (!kms || !kms->catalog) {
@@ -1723,40 +1697,34 @@ static int _sde_crtc_check_panel_stacking(struct drm_crtc *crtc,
 
 	sde_crtc = to_sde_crtc(crtc);
 	sde_crtc_state = to_sde_crtc_state(state);
+	mode_info = &sde_crtc_state->mode_info;
 
 	/* panel stacking only support single connector */
 	if (sde_crtc_state->num_connectors != 1)
 		return 0;
 
-	conn = sde_crtc_state->connectors[0];
-	rc = sde_connector_get_mode_info(conn->state, &mode_info);
-	if (rc) {
-		SDE_ERROR("failed to get mode info\n");
-		return -EINVAL;
-	}
-
-	if (!mode_info.vpadding)
+	if (!mode_info->vpadding)
 		goto done;
 
-	if (mode_info.vpadding < state->mode.vdisplay) {
+	if (mode_info->vpadding < state->mode.vdisplay) {
 		SDE_ERROR("padding height %d is less than vdisplay %d\n",
-			mode_info.vpadding, state->mode.vdisplay);
+			mode_info->vpadding, state->mode.vdisplay);
 		return -EINVAL;
 	}
 
 	/* skip calculation if already cached */
-	if (mode_info.vpadding == sde_crtc_state->padding_height)
+	if (mode_info->vpadding == sde_crtc_state->padding_height)
 		return 0;
 
-	gcd = _sde_crtc_calc_gcd(mode_info.vpadding, state->mode.vdisplay);
+	gcd = _sde_crtc_calc_gcd(mode_info->vpadding, state->mode.vdisplay);
 	if (!gcd) {
 		SDE_ERROR("zero gcd found for padding height %d %d\n",
-			mode_info.vpadding, state->mode.vdisplay);
+			mode_info->vpadding, state->mode.vdisplay);
 		return -EINVAL;
 	}
 
 	m = state->mode.vdisplay / gcd;
-	n = mode_info.vpadding / gcd - m;
+	n = mode_info->vpadding / gcd - m;
 
 	if (m > MAX_VPADDING_RATIO_M || n > MAX_VPADDING_RATIO_N) {
 		SDE_ERROR("unsupported panel stacking pattern %d:%d", m, n);
@@ -1767,7 +1735,7 @@ static int _sde_crtc_check_panel_stacking(struct drm_crtc *crtc,
 	sde_crtc_state->padding_dummy = n;
 
 done:
-	sde_crtc_state->padding_height = mode_info.vpadding;
+	sde_crtc_state->padding_height = mode_info->vpadding;
 	return 0;
 }
 
@@ -1882,6 +1850,9 @@ static int pstate_cmp(const void *a, const void *b)
 
 	pa_zpos = sde_plane_get_property(pa->sde_pstate, PLANE_PROP_ZPOS);
 	pb_zpos = sde_plane_get_property(pb->sde_pstate, PLANE_PROP_ZPOS);
+
+	if (!pa->sde_pstate || !pb->sde_pstate)
+		return rc;
 
 	pa_layout = pa->sde_pstate->layout;
 	pb_layout = pb->sde_pstate->layout;

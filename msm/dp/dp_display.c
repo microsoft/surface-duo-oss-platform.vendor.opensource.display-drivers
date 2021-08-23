@@ -529,7 +529,7 @@ static int dp_display_initialize_hdcp(struct dp_display_private *dp)
 						"hdcp_physical")->io;
 	hdcp_init_data.revision      = &dp->panel->link_info.revision;
 	hdcp_init_data.msm_hdcp_dev  = dp->msm_hdcp_dev;
-
+	hdcp_init_data.forced_encryption = parser->has_force_encryption;
 	fd = sde_hdcp_1x_init(&hdcp_init_data);
 	if (IS_ERR_OR_NULL(fd)) {
 		pr_err("Error initializing HDCP 1.x\n");
@@ -1525,7 +1525,7 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 
 	dp->hpd = dp_hpd_get(dev, dp->parser, &dp->catalog->hpd,
 			dp->aux_bridge, cb);
-	if (IS_ERR(dp->hpd)) {
+	if (IS_ERR_OR_NULL(dp->hpd)) {
 		rc = PTR_ERR(dp->hpd);
 		pr_err("failed to initialize hpd, rc = %d\n", rc);
 		dp->hpd = NULL;
@@ -1743,12 +1743,7 @@ int dp_display_splash_res_cleanup(struct dp_display *dp_display)
 	if (!dp->parser->is_cont_splash_enabled)
 		return 0;
 
-	rc = pm_runtime_get_sync(dp_display->drm_dev->dev);
-	if (rc < 0) {
-		pr_err("failed to vote gdsc for continuous splash, rc=%d\n",
-				rc);
-		return rc;
-	}
+	pm_runtime_put_sync(dp_display->drm_dev->dev);
 
 	/* unvote for core, link and stream clocks */
 	if (dp->power->clk_enable) {
