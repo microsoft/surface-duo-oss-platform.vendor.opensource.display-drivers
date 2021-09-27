@@ -613,16 +613,9 @@ static int shd_display_atomic_check(struct msm_kms *kms,
 			continue;
 
 		/* always add base crtc's lock into state */
-retry:
 		rc = drm_modeset_lock(&base->crtc->mutex, state->acquire_ctx);
-		if (rc == -EDEADLK) {
-			rc = drm_modeset_backoff(state->acquire_ctx);
-			if (!rc)
-				SDE_ERROR("backoff failed\n");
-			goto retry;
-		} else if (WARN_ON(rc)) {
+		if (rc)
 			return rc;
-		}
 
 		/* read old crtc state from all shared displays */
 		crtc_mask = active_mask = 0;
