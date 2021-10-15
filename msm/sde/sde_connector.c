@@ -19,6 +19,11 @@
 #include "sde_rm.h"
 #include "sde_vm.h"
 #include <drm/drm_probe_helper.h>
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+#include <surfacedisplay/surface_panel.h>
+#endif
+/*MSCHANGE end*/
 
 #define BL_NODE_NAME_SIZE 32
 #define HDR10_PLUS_VSIF_TYPE_CODE      0x81
@@ -107,13 +112,16 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	}
 
 	brightness = bd->props.brightness;
+	/* MSCHANGE start */
+	display = (struct dsi_display *) c_conn->display;
 
 	if ((bd->props.power != FB_BLANK_UNBLANK) ||
 			(bd->props.state & BL_CORE_FBBLANK) ||
-			(bd->props.state & BL_CORE_SUSPENDED))
-		brightness = 0;
+			(bd->props.state & BL_CORE_SUSPENDED) ||
+			(bd->props.brightness == 0))
+		brightness = display->panel->bl_config.bl_min_level;
+	/* MSCHANGE end */
 
-	display = (struct dsi_display *) c_conn->display;
 	if (brightness > display->panel->bl_config.bl_max_level)
 		brightness = display->panel->bl_config.bl_max_level;
 	if (brightness > c_conn->thermal_max_brightness)
@@ -1028,7 +1036,10 @@ void sde_connector_destroy(struct drm_connector *connector)
 		drm_property_blob_put(c_conn->blob_mode_info);
 	if (c_conn->blob_ext_hdr)
 		drm_property_blob_put(c_conn->blob_ext_hdr);
-
+	/* MSCHANGE start */
+	if (c_conn->blob_priv_info)
+		drm_property_blob_put(c_conn->blob_priv_info);
+	/* MSCHANGE end */
 	if (c_conn->cdev)
 		backlight_cdev_unregister(c_conn->cdev);
 	if (c_conn->bl_device)
@@ -1064,6 +1075,43 @@ static void _sde_connector_destroy_fb(struct sde_connector *c_conn,
 	else
 		c_state->property_values[CONNECTOR_PROP_OUT_FB].value = ~0;
 }
+
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+static void _sde_print_priv_info_debug(struct drm_msm_priv_info *priv_info, struct dsi_display* display)
+{
+	static uint32_t elvss_enable = 0, always_on_enable = 0, tandem_mode = 0;
+	struct surface_panel* surface_priv_panel = NULL;
+
+	if (!display || !display->panel) {
+		return;
+	}
+
+	surface_priv_panel = &display->panel->surface_priv_panel;
+
+	if (!surface_priv_panel) {
+		return;
+	}
+
+	if(elvss_enable != priv_info->elvss_enable)	{
+		SDE_INFO("_sde_connector_set_priv_info changed elvss_enable = %d\n", priv_info->elvss_enable);
+	}
+
+	if(surface_priv_panel->aod_enabled != priv_info->always_on_enable) {
+		surface_priv_panel->aod_enabled = priv_info->always_on_enable;
+		SDE_INFO("_sde_connector_set_priv_info changed always_on_enable = %d\n", surface_priv_panel->aod_enabled);
+	}
+
+	if(tandem_mode != priv_info->tandem_mode) {
+		SDE_INFO("_sde_connector_set_priv_info changed tandem_mode = %d\n", priv_info->tandem_mode);
+	}
+
+	elvss_enable = priv_info->elvss_enable;
+	always_on_enable  = priv_info->always_on_enable;
+	tandem_mode = priv_info->tandem_mode;
+}
+#endif
+/*MSCHANGE end*/
 
 static void sde_connector_atomic_destroy_state(struct drm_connector *connector,
 		struct drm_connector_state *state)
@@ -1421,6 +1469,12 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 	int idx, rc;
 	uint64_t fence_user_fd;
 	uint64_t __user prev_user_fd;
+	struct drm_device *dev;
+	/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	struct dsi_display* display = NULL;
+#endif
+	/*MSCHANGE end*/
 
 	if (!connector || !state || !property) {
 		SDE_ERROR("invalid argument(s), conn %pK, state %pK, prp %pK\n",
@@ -1428,8 +1482,15 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 		return -EINVAL;
 	}
 
+	dev = connector->dev;
 	c_conn = to_sde_connector(connector);
 	c_state = to_sde_connector_state(state);
+
+	/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	display = c_conn->display;
+#endif
+	/*MSCHANGE end*/
 
 	/* generic property handling */
 	rc = msm_property_atomic_set(&c_conn->property_info,
@@ -1527,6 +1588,27 @@ static int sde_connector_atomic_set_property(struct drm_connector *connector,
 		msm_property_set_dirty(&c_conn->property_info,
 				&c_state->property_state, idx);
 		break;
+	//MSCHANGE start
+	case CONNECTOR_PROP_PRIV_INFO: {
+		struct drm_property_blob *priv_properties_blob = drm_property_lookup_blob(dev, val);
+		if (priv_properties_blob) {
+			struct drm_msm_priv_info *priv_info = ((struct drm_msm_priv_info * ) priv_properties_blob->data);
+
+			if (priv_info == NULL) {
+				SDE_ERROR("There is no data in the pointer priv_info passed to kernel");
+			}
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+			else {
+				_sde_print_priv_info_debug(priv_info, display);
+			}
+#endif
+			if (c_conn->blob_priv_info)
+				drm_property_blob_put(c_conn->blob_priv_info);
+			c_conn->blob_priv_info = priv_properties_blob;
+		}
+	}
+		break;
+	//MSCHANGE stop
 	default:
 		break;
 	}
@@ -2710,6 +2792,13 @@ static int _sde_connector_install_properties(struct drm_device *dev,
 			DRM_MODE_PROP_IMMUTABLE, CONNECTOR_PROP_MODE_INFO);
 
 	if (connector_type == DRM_MODE_CONNECTOR_DSI) {
+		/* MSCHANGE start */
+		msm_property_install_blob(&c_conn->property_info,
+				"priv_properties",
+				DRM_MODE_PROP_BLOB,
+				CONNECTOR_PROP_PRIV_INFO);
+		/* MSCHANGE end */
+
 		dsi_display = (struct dsi_display *)(display);
 		if (dsi_display && dsi_display->panel &&
 			dsi_display->panel->hdr_props.hdr_enabled == true) {
@@ -2723,6 +2812,30 @@ static int _sde_connector_install_properties(struct drm_device *dev,
 				&dsi_display->panel->hdr_props,
 				sizeof(dsi_display->panel->hdr_props),
 				CONNECTOR_PROP_HDR_INFO);
+		}
+
+		if (dsi_display && dsi_display->panel &&
+				dsi_display->panel->ctl_op_sync == true) {
+			connector->has_tile =
+				dsi_display->panel->ctl_op_sync;
+			connector->num_h_tile =
+				dsi_display->panel->tile_props.num_h_tile;
+			connector->num_v_tile =
+				dsi_display->panel->tile_props.num_v_tile;
+			connector->tile_h_loc =
+				dsi_display->panel->tile_props.tile_h_loc;
+			connector->tile_v_loc =
+				dsi_display->panel->tile_props.tile_v_loc;
+			/* Create tile group */
+			connector->tile_group =
+				drm_mode_get_tile_group(dev,
+					dsi_display->panel->dsi_tile_group);
+			if (connector->tile_group == NULL) {
+				connector->tile_group =
+					drm_mode_create_tile_group(dev,
+						dsi_display->panel->dsi_tile_group);
+			}
+			drm_connector_set_tile_property(connector);
 		}
 
 		mutex_lock(&c_conn->base.dev->mode_config.mutex);
@@ -2999,6 +3112,10 @@ error_destroy_property:
 		drm_property_blob_put(c_conn->blob_mode_info);
 	if (c_conn->blob_ext_hdr)
 		drm_property_blob_put(c_conn->blob_ext_hdr);
+	/* MSCHANGE start */
+	if (c_conn->blob_priv_info)
+		drm_property_blob_put(c_conn->blob_priv_info);
+	/* MSCHANGE end */
 
 	msm_property_destroy(&c_conn->property_info);
 error_cleanup_fence:
@@ -3029,8 +3146,9 @@ static int _sde_conn_enable_hw_recovery(struct drm_connector *connector)
 }
 
 int sde_connector_register_custom_event(struct sde_kms *kms,
-		struct drm_connector *conn_drm, u32 event, bool val)
+		struct drm_connector *conn_drm, u32 event, u64 client_context, bool val)
 {
+	struct sde_connector *sde_conn = to_sde_connector(conn_drm);
 	int ret = -EINVAL;
 
 	switch (event) {
@@ -3042,6 +3160,9 @@ int sde_connector_register_custom_event(struct sde_kms *kms,
 		break;
 	case DRM_EVENT_SDE_HW_RECOVERY:
 		ret = _sde_conn_enable_hw_recovery(conn_drm);
+		break;
+	case DRM_EVENT_TE_ALIGN_STATUS:
+		ret = sde_encoder_set_te_watermark(sde_conn->encoder, val, client_context);
 		break;
 	default:
 		break;
@@ -3064,6 +3185,7 @@ int sde_connector_event_notify(struct drm_connector *connector, uint32_t type,
 	case DRM_EVENT_SYS_BACKLIGHT:
 	case DRM_EVENT_PANEL_DEAD:
 	case DRM_EVENT_SDE_HW_RECOVERY:
+	case DRM_EVENT_TE_ALIGN_STATUS:
 		ret = 0;
 		break;
 	default:

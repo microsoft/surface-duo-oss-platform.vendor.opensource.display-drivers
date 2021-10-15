@@ -4,6 +4,10 @@ ccflags-y += -I$(srctree)/techpack/display/msm/sde
 ccflags-y += -I$(srctree)/techpack/display/rotator
 ccflags-y += -I$(srctree)/techpack/display/hdcp
 ccflags-y += -I$(srctree)/drivers/clk/qcom/
+#MSCHANGE start
+ccflags-y += -I$(srctree)/techpack/display/surfacedisplay/include/
+ccflags-y += -I$(srctree)/techpack/display/mtemipiinject/include
+#MSCHANGE end
 
 msm_drm-$(CONFIG_DRM_MSM_DP) += dp/dp_altmode.o \
 	dp/dp_parser.o \
@@ -118,6 +122,7 @@ msm_drm-$(CONFIG_DRM_MSM_DSI) += dsi/dsi_phy.o \
 	dsi/dsi_catalog.o \
 	dsi/dsi_drm.o \
 	dsi/dsi_display.o \
+	dsi/dsi_display_manager.o \
 	dsi/dsi_panel.o \
 	dsi/dsi_clk_manager.o \
 	dsi/dsi_display_test.o

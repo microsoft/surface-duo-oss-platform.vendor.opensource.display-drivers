@@ -1,0 +1,1 @@
+#define CONFIG_DSI_MIPI_INJECT 1

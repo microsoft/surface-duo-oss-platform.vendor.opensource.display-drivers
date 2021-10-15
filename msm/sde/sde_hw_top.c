@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #include "sde_hwio.h"
@@ -57,6 +57,8 @@
 #define AUTOREFRESH_TEST_POINT	0x2
 #define TEST_MASK(id, tp)	((id << 4) | (tp << 1) | BIT(0))
 
+#define ABS_DIFF(a, b) ((a > b) ? (a - b) : (b - a))
+
 #define CALCULATE_WD_LOAD_VALUE(fps) \
 	((uint32_t)((MS_TICKS_IN_SEC * XO_CLK_RATE)/(MDP_TICK_COUNT * fps)))
 
@@ -76,6 +78,12 @@
 #define MDP_SID_XIN7			  0x2C
 
 #define ROT_SID_ID_VAL			  0x1c
+
+#define INTF_1 0x35000
+#define INTF_2 0x36000
+#define INTF_TEAR_CHECK_EN 0x284
+#define INTF_INIT_VAL 0x294
+#define INTF_COUNT_VAL 0x298
 
 static void sde_hw_setup_split_pipe(struct sde_hw_mdp *mdp,
 		struct split_pipe_cfg *cfg)
@@ -614,6 +622,39 @@ static u32 sde_hw_get_autorefresh_status(struct sde_hw_mdp *mdp, u32 intf_idx)
 	return autorefresh_status;
 }
 
+static int sde_hw_get_te_line_interval(struct sde_hw_mdp *mdp)
+{
+	struct sde_hw_blk_reg_map *c;
+	u32 intf_1_cnt_val, intf_2_cnt_val, intf_init_val, diff;
+	u32 intf_1_tr_chk_en, intf_2_tr_chk_en;
+
+	if (!mdp)
+		return -EINVAL;
+
+	c = &mdp->hw;
+
+	intf_1_tr_chk_en = SDE_REG_READ(c, INTF_1 + INTF_TEAR_CHECK_EN) & BIT(0);
+	intf_2_tr_chk_en = SDE_REG_READ(c, INTF_2 + INTF_TEAR_CHECK_EN) & BIT(0);
+
+	if (!intf_1_tr_chk_en || !intf_2_tr_chk_en)
+		return -EINVAL;
+
+	intf_1_cnt_val = SDE_REG_READ(c, INTF_1 + INTF_COUNT_VAL);
+	intf_2_cnt_val = SDE_REG_READ(c, INTF_2 + INTF_COUNT_VAL);
+	intf_init_val = SDE_REG_READ(c, INTF_1 + INTF_INIT_VAL);
+
+	intf_1_cnt_val &= 0xffff;
+	intf_2_cnt_val &= 0xffff;
+	intf_1_cnt_val -= intf_init_val;
+	intf_2_cnt_val -= intf_init_val;
+	diff = ABS_DIFF(intf_1_cnt_val, intf_2_cnt_val);
+
+	if (diff > (intf_init_val / 2))
+		diff = ABS_DIFF(intf_init_val, diff);
+
+	return diff;
+}
+
 static void _setup_mdp_ops(struct sde_hw_mdp_ops *ops,
 		unsigned long cap)
 {
@@ -631,6 +672,8 @@ static void _setup_mdp_ops(struct sde_hw_mdp_ops *ops,
 	ops->reset_ubwc = sde_hw_reset_ubwc;
 	ops->intf_audio_select = sde_hw_intf_audio_select;
 	ops->set_mdp_hw_events = sde_hw_mdp_events;
+	ops->read_te_line_interval = sde_hw_get_te_line_interval;
+
 	if (cap & BIT(SDE_MDP_VSYNC_SEL))
 		ops->setup_vsync_source = sde_hw_setup_vsync_source;
 	else

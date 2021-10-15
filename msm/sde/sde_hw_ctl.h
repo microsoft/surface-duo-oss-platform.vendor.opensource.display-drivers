@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_CTL_H
@@ -110,6 +110,7 @@ struct sde_hw_intf_cfg {
  * @dsc:                      Id of active dsc blocks
  * @vdc_count:                No. of active vdc blocks
  * @vdc:                      Id of active vdc blocks
+ * @update_master:            If true update Intf master programing
  */
 struct sde_hw_intf_cfg_v1 {
 	uint32_t intf_count;
@@ -134,6 +135,8 @@ struct sde_hw_intf_cfg_v1 {
 
 	uint32_t vdc_count;
 	enum sde_vdc vdc[MAX_VDC_PER_CTL_V1];
+
+	bool update_master;
 };
 
 /**
@@ -206,6 +209,14 @@ struct sde_hw_ctl_ops {
 	int (*clear_pending_flush)(struct sde_hw_ctl *ctx);
 
 	/**
+	 * Clear the value of the cached dspp pending_flush_mask
+	 * No effect on hardware
+	 * @ctx       : ctl path ctx pointer
+	 * @Return: error code
+	 */
+	int (*clear_pending_dspp_flush)(struct sde_hw_ctl *ctx);
+
+	/**
 	 * Query the value of the cached pending_flush_mask
 	 * No effect on hardware
 	 * @ctx       : ctl path ctx pointer
@@ -271,10 +282,11 @@ struct sde_hw_ctl_ops {
 	 * Setup ctl_path interface config for SDE_CTL_ACTIVE_CFG
 	 * @ctx   : ctl path ctx pointer
 	 * @cfg    : interface config structure pointer
+	 * @update : if true then update the existing value in register
 	 * @Return: error code
 	 */
 	int (*setup_intf_cfg_v1)(struct sde_hw_ctl *ctx,
-		struct sde_hw_intf_cfg_v1 *cfg);
+		struct sde_hw_intf_cfg_v1 *cfg, bool update);
 
 	/**
 	 * Update the interface selection with input WB config
@@ -463,9 +475,25 @@ struct sde_hw_ctl_ops {
 	 * set the active fetch pipes attached to this CTL
 	 * @ctx         : ctl path ctx pointer
 	 * @fetch_active: bitmap of enum sde_sspp pipes attached
+	 * @update      : if true then update the existing value in register
 	 */
 	void (*set_active_pipes)(struct sde_hw_ctl *ctx,
-			unsigned long *fetch_active);
+			unsigned long *fetch_active, bool update);
+
+	/**
+	 * Update CTL grouping for respective CTL path
+	 * @ctx    : ctl path ctx pointer
+	 * @enable : if set to true then CTL grouping would be done
+	 * @Return: error code
+	 */
+	int (*update_ctl_group)(struct sde_hw_ctl *ctx, bool enable);
+
+	/**
+	 * Reset ctl_path interface for specific path
+	 * @ctx   : ctl path ctx pointer
+	 * @Return: error code
+	 */
+	int (*reset_ctl_path)(struct sde_hw_ctl *ctx);
 };
 
 /**

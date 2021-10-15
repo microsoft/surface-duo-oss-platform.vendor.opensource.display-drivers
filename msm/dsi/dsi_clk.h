@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_CLK_H_
@@ -11,6 +11,7 @@
 #include <linux/types.h>
 #include <linux/clk.h>
 #include <drm/drmP.h>
+#include "dsi_pll.h"
 
 #define MAX_STRING_LEN 32
 #define MAX_DSI_CTRL 2
@@ -98,9 +99,11 @@ struct dsi_link_hs_clk_info {
 /**
  * struct dsi_link_lp_clk_info - Set of low power link clocks for DSI HW.
  * @esc_clk:         Handle to DSI escape clock.
+ * @m_esc_clk:       Handle to the master DSI escape clk for sync mode
  */
 struct dsi_link_lp_clk_info {
 	struct clk *esc_clk;
+	struct clk *m_esc_clk;
 };
 
 /**
@@ -175,6 +178,15 @@ typedef int (*pre_clockon_cb)(void *priv,
 
 
 /**
+ * typedef *get_pll_info_cb() - Callback to get PLL info
+ * @priv: private data pointer.
+ * @info: PLL info to be read from PLL resource.
+ *
+ * @return: PLL info.
+ */
+typedef int (*get_pll_info_cb)(void *priv, enum dsi_pll_info info);
+
+/**
  * struct dsi_clk_info - clock information for DSI hardware.
  * @name:                    client name.
  * @c_clks[MAX_DSI_CTRL]     array of core clock configurations
@@ -186,6 +198,7 @@ typedef int (*pre_clockon_cb)(void *priv,
  * @post_clkoff_cb           callback after clock is turned off
  * @post_clkon_cb            callback after clock is turned on
  * @pre_clkon_cb             callback before clock is turned on
+ * @pll_info_cb              callback to read info from PLL
  * @priv_data                pointer to private data
  * @master_ndx               master DSI controller index
  * @dsi_ctrl_count           number of DSI controllers
@@ -200,6 +213,7 @@ struct dsi_clk_info {
 	post_clockoff_cb post_clkoff_cb;
 	post_clockon_cb post_clkon_cb;
 	pre_clockon_cb pre_clkon_cb;
+	get_pll_info_cb pll_info_cb;
 	void *priv_data;
 	u32 master_ndx;
 	u32 dsi_ctrl_count;
@@ -269,6 +283,16 @@ int dsi_display_link_clk_force_update_ctrl(void *handle);
 int dsi_display_clk_ctrl(void *handle, u32 clk_type, u32 clk_state);
 
 /**
+ * dsi_display_clk_ctrl_nolock() - set frequencies for link clks
+ * @handle:     Handle of desired DSI clock client.
+ * @clk_type:   Clock which is being controlled.
+ * @clk_state:  Desired state of clock
+ *
+ * return: error code in case of failure or 0 for success.
+ */
+int dsi_display_clk_ctrl_nolock(void *handle, u32 clk_type, u32 clk_state);
+
+/**
  * dsi_clk_set_link_frequencies() - set frequencies for link clks
  * @client:     DSI clock client pointer.
  * @freq:       Structure containing link clock frequencies.
@@ -328,5 +352,21 @@ void dsi_clk_disable_unprepare(struct dsi_clk_link_set *clk);
  * @client:       DSI clock client pointer.
  */
 int dsi_display_dump_clk_handle_state(void *client);
+
+/*MSCHANGE start*/
+/**
+ * dsi_clk_prepare_enable_ext() - prepare and enable specific dsi clock
+ * @clk:       clock
+ *
+ * @return:	Zero on success and err no on failure
+ */
+int dsi_clk_prepare_enable_ext(struct clk *clock);
+
+/**
+ * dsi_clk_disable_unprepare_ext() - disable and unprepare specific dsi clock
+ * @clk:       clock.
+ */
+void dsi_clk_disable_unprepare_ext(struct clk *clock);
+/*MSCHANGE end*/
 
 #endif /* _DSI_CLK_H_ */

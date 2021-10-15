@@ -906,6 +906,7 @@ int dsi_phy_hw_calculate_timing_params(struct dsi_phy_hw *phy,
 		if (phy_type == DSI_PHY_TYPE_CPHY)
 			x = mult_frac(x, 7, 16);
 	}
+	DSI_PHY_DBG(phy, "Calculating PHY timings for bit clock: %llu\n", x);
 	y = rounddown(x, 1);
 
 	clk_params.bitclk_mbps = rounddown(DIV_ROUND_UP_ULL(y, 1000000), 1);

@@ -119,6 +119,9 @@
 /* max virtual encoders per secure crtc */
 #define MAX_ALLOWED_ENCODER_CNT_PER_SECURE_CRTC	1
 
+/* max active cmd encoders for wider async/sync mode */
+#define MAX_ALLOWED_ENCODER_IN_WIDER_SYNC 2
+
 /* defines the operations required for secure state transition */
 #define SDE_KMS_OPS_SECURE_STATE_CHANGE		BIT(0)
 #define SDE_KMS_OPS_WAIT_FOR_TX_DONE		BIT(1)
