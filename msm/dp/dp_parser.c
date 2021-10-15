@@ -205,23 +205,6 @@ static int dp_parser_pinctrl(struct dp_parser *parser)
 		goto error;
 	}
 
-	if (parser->no_aux_switch && parser->lphw_hpd) {
-		pinctrl->state_hpd_tlmm = pinctrl->state_hpd_ctrl = NULL;
-
-		pinctrl->state_hpd_tlmm = pinctrl_lookup_state(pinctrl->pin,
-					"mdss_dp_hpd_tlmm");
-		if (!IS_ERR_OR_NULL(pinctrl->state_hpd_tlmm)) {
-			pinctrl->state_hpd_ctrl = pinctrl_lookup_state(
-				pinctrl->pin, "mdss_dp_hpd_ctrl");
-		}
-
-		if (!pinctrl->state_hpd_tlmm || !pinctrl->state_hpd_ctrl) {
-			pinctrl->state_hpd_tlmm = NULL;
-			pinctrl->state_hpd_ctrl = NULL;
-			DP_DEBUG("tlmm or ctrl pinctrl state does not exist\n");
-		}
-	}
-
 	pinctrl->state_active = pinctrl_lookup_state(pinctrl->pin,
 					"mdss_dp_active");
 	if (IS_ERR_OR_NULL(pinctrl->state_active)) {
@@ -253,13 +236,6 @@ static int dp_parser_gpio(struct dp_parser *parser)
 		"qcom,usbplug-cc-gpio",
 	};
 
-	if (of_find_property(of_node, "qcom,dp-hpd-gpio", NULL)) {
-		parser->no_aux_switch = true;
-		parser->lphw_hpd = of_find_property(of_node,
-				"qcom,dp-low-power-hw-hpd", NULL);
-		return 0;
-	}
-
 	if (of_find_property(of_node, "qcom,dp-gpio-aux-switch", NULL))
 		parser->gpio_aux_switch = true;
 	mp->gpio_config = devm_kzalloc(dev,
@@ -285,7 +261,13 @@ static int dp_parser_gpio(struct dp_parser *parser)
 		strlcpy(mp->gpio_config[i].gpio_name, dp_gpios[i],
 			sizeof(mp->gpio_config[i].gpio_name));
 
-		mp->gpio_config[i].value = 0;
+		/*MSCHANGE start*/
+		if (!!strnstr(dp_gpios[i], "aux-en", strlen(dp_gpios[i]))) {
+			mp->gpio_config[i].value = 1;
+		} else {
+			mp->gpio_config[i].value = 0;
+		}
+		/*MSCHANGE end*/
 	}
 
 	return 0;

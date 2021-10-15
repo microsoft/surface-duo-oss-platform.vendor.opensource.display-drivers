@@ -457,6 +457,8 @@ enum {
  *                              blocks
  * @SDE_CTL_UIDLE               CTL supports uidle
  * @SDE_CTL_UNIFIED_DSPP_FLUSH  CTL supports only one flush bit for DSPP
+ * @SDE_CTL_GROUP               CTL supports OP grouping
+ * @SDE_CTL_SECONDARY_PREF      CTL preferred for secondary display
  * @SDE_CTL_MAX
  */
 enum {
@@ -466,6 +468,8 @@ enum {
 	SDE_CTL_ACTIVE_CFG,
 	SDE_CTL_UIDLE,
 	SDE_CTL_UNIFIED_DSPP_FLUSH,
+	SDE_CTL_GROUP,
+	SDE_CTL_SECONDARY_PREF,
 	SDE_CTL_MAX
 };
 

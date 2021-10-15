@@ -111,6 +111,11 @@ static int dsi_panel_gpio_request(struct dsi_panel *panel)
 {
 	int rc = 0;
 	struct dsi_panel_reset_config *r_config = &panel->reset_config;
+	/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	struct surface_panel *surface_priv_panel;
+#endif
+	/*MSCHANGE end*/
 
 	if (gpio_is_valid(r_config->reset_gpio)) {
 		rc = gpio_request(r_config->reset_gpio, "reset_gpio");
@@ -154,6 +159,17 @@ static int dsi_panel_gpio_request(struct dsi_panel *panel)
 		}
 	}
 
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	surface_priv_panel = &panel->surface_priv_panel;
+	rc = surface_panel_gpio_request(surface_priv_panel);
+	if (rc) {
+		DSI_WARN("request for freq_sel and freq_forced failed, rc=%d\n",
+				 rc);
+			rc = 0;
+	}
+#endif
+/*MSCHANGE end*/
 	goto error;
 error_release_mode_sel:
 	if (gpio_is_valid(panel->bl_config.en_gpio))
@@ -172,6 +188,11 @@ static int dsi_panel_gpio_release(struct dsi_panel *panel)
 {
 	int rc = 0;
 	struct dsi_panel_reset_config *r_config = &panel->reset_config;
+	/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	struct surface_panel *surface_priv_panel;
+#endif
+	/*MSCHANGE end*/
 
 	if (gpio_is_valid(r_config->reset_gpio))
 		gpio_free(r_config->reset_gpio);
@@ -187,6 +208,18 @@ static int dsi_panel_gpio_release(struct dsi_panel *panel)
 
 	if (gpio_is_valid(panel->panel_test_gpio))
 		gpio_free(panel->panel_test_gpio);
+
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	surface_priv_panel = &panel->surface_priv_panel;
+	rc = surface_panel_gpio_release(surface_priv_panel);
+	if (rc) {
+		DSI_WARN("invalid surface panel, rc=%d\n",
+				 rc);
+			rc = 0;
+	}
+#endif
+/*MSCHANGE end*/
 
 	return rc;
 }
@@ -1148,6 +1181,152 @@ static int dsi_panel_parse_misc_host_config(struct dsi_host_common_cfg *host,
 	return 0;
 }
 
+static int dsi_panel_parse_tile_caps(struct dsi_panel *panel)
+{
+	int len = 0, rc = 0;
+	u32 value[4];
+	struct property *data;
+	struct dsi_parser_utils *utils = &panel->utils;
+	char *tile_name = NULL;
+
+	if (!strcmp(panel->type, "primary"))
+		tile_name = "qcom,dsi-tile-info";
+	else
+		tile_name = "qcom,dsi-sec-tile-info";
+
+	data = utils->find_property(utils->data, tile_name, &len);
+	len /= sizeof(u32);
+	if (!data) {
+		DSI_DEBUG("dsi tile info not found\n");
+		rc = -EINVAL;
+	} else if (len != 4) {
+		DSI_DEBUG("incorrect tile info len %d\n", len);
+		rc = -EINVAL;
+	} else {
+		rc = utils->read_u32_array(utils->data,
+				tile_name, value, len);
+		if (rc)
+			DSI_DEBUG("error reading panel tile info values\n");
+		else {
+			panel->tile_props.num_h_tile = value[0];
+			panel->tile_props.num_v_tile = value[1];
+			panel->tile_props.tile_h_loc = value[2];
+			panel->tile_props.tile_v_loc = value[3];
+		}
+	}
+
+	return rc;
+}
+
+static void dsi_panel_check_sync_mode(struct device_node *of_node,
+		struct dsi_panel *panel)
+{
+	struct device_node *node, *port;
+	struct device_node *dsi_input_0;
+	struct device_node *dsi_input_1;
+	struct device_node *dsi_input_0_ep_0;
+	struct device_node *dsi_input_1_ep_0;
+	struct device_node *mdp_out_0;
+	struct device_node *mdp_out_1;
+	u32 ports = 0;
+	u32 reg0, reg1;
+	u32 input_cell_idx_0, input_cell_idx_1;
+
+/*                        |
+ *  +-----+      +-----+  |        +-----+
+ *  |     |      |     |  |        |     |
+ *  |     |      |     |  |        |     |
+ *  |     |      |     |  |        |     |
+ *  | CTL |      | CTL |  |        | CTL |
+ *  |     |      |     |  |        |     |
+ *  |     |      |     |  |        |     |
+ *  +--+--+      +--+--+  |        +--+--+
+ *     |            |     |           |
+ *     |            |     |     +-----+-----+
+ *     |            |     |     |           |
+ *     |            |     |     |           |
+ *     |            |     |     |           |
+ *  +--+------------+---+ |  +--+-----------+----+
+ *  |                   | |  |                   |
+ *  |       PANEL       | |  |      PANEL        |
+ *  |                   | |  |                   |
+ *  +-------------------+ |  +-------------------+
+ *                        |
+ *        sync panel      |       split panel (async)
+ */
+	node = of_get_child_by_name(of_node, "ports");
+
+	for_each_child_of_node(node, port) {
+		if (!of_node_name_eq(port, "port"))
+			continue;
+		ports++;
+	}
+
+	of_node_put(node);
+
+	if (ports < 2) {
+		pr_info("async mode\n");
+		return;
+	}
+
+	pr_info("checking for sync mode ...\n");
+	//get the dsi_0 and dsi_1 from the panel node
+	dsi_input_0 = of_graph_get_remote_node(of_node, 0, 0);
+	dsi_input_1 = of_graph_get_remote_node(of_node, 1, 0);
+
+	if (!of_property_read_u32(dsi_input_0, "cell-index", &input_cell_idx_0))
+		pr_info("input_cell_idx_0 = %d\n", input_cell_idx_0);
+
+	if (!of_property_read_u32(dsi_input_1, "cell-index", &input_cell_idx_1))
+		pr_info("input_cell_idx_1 = %d\n", input_cell_idx_1);
+
+	//get the input endpoints of the dsi nodes
+	dsi_input_0_ep_0 = of_graph_get_endpoint_by_regs(dsi_input_0, 0, -1);
+	dsi_input_1_ep_0 = of_graph_get_endpoint_by_regs(dsi_input_1, 0, -1);
+
+	//get the mdp output ports for the dsis
+	mdp_out_0 = of_graph_get_remote_port(dsi_input_0_ep_0);
+	mdp_out_1 = of_graph_get_remote_port(dsi_input_1_ep_0);
+
+	if (!of_property_read_u32(mdp_out_0, "reg", &reg0) && reg0 > 0)
+		pr_info("mdp_0 reg = %d\n", reg0);
+
+	if (!of_property_read_u32(mdp_out_1, "reg", &reg1) && reg1 > 0)
+		pr_info("mdp_1 reg = %d\n", reg1);
+
+	if (dsi_input_0)
+		of_node_put(dsi_input_0);
+	if (dsi_input_1)
+		of_node_put(dsi_input_1);
+	if (dsi_input_0_ep_0)
+		of_node_put(dsi_input_0_ep_0);
+	if (dsi_input_1_ep_0)
+		of_node_put(dsi_input_1_ep_0);
+	if (mdp_out_0)
+		of_node_put(mdp_out_0);
+	if (mdp_out_1)
+		of_node_put(mdp_out_1);
+
+	if (reg0 == reg1) {
+		pr_info("split display mode !\n");
+		panel->ctl_op_sync = false;
+	} else {
+		pr_info("ssync mode!\n");
+		panel->ctl_op_sync = true;
+		snprintf(panel->dsi_tile_group, 8, "msmdsi%d%d",
+			input_cell_idx_0, input_cell_idx_1);
+		if (input_cell_idx_0 != 0) {
+			pr_info("panel dsis are swapped\n");
+			panel->dsi_0_1_swap = true;
+		}
+		dsi_panel_parse_tile_caps(panel);
+	}
+
+	pr_info("panel->ctl_op_sync = %d\n", panel->ctl_op_sync);
+	pr_info("panel->dsi_0_1_swap = %d\n", panel->dsi_0_1_swap);
+	pr_info("panel->dsi_tile_group = %s\n", panel->dsi_tile_group);
+}
+
 static void dsi_panel_parse_split_link_config(struct dsi_host_common_cfg *host,
 					struct dsi_parser_utils *utils,
 					const char *name)
@@ -1701,7 +1880,7 @@ static int dsi_panel_parse_phy_props(struct dsi_panel *panel)
 error:
 	return rc;
 }
-const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
+const char *cmd_set_prop_map[DISPLAY_DSI_CMD_SET_MAX] = {/*MSCHANGE*/
 	"qcom,mdss-dsi-pre-on-command",
 	"qcom,mdss-dsi-on-command",
 	"qcom,mdss-dsi-post-panel-on-command",
@@ -1725,9 +1904,27 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command",
 	"qcom,mdss-dsi-qsync-on-commands",
 	"qcom,mdss-dsi-qsync-off-commands",
+	/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	"surface-dsi-aod-on-commands",
+	"surface-dsi-aod-off-commands",
+	"surface-dsi-switch-rr-60-commands",
+	"surface-dsi-switch-rr-90-commands",
+	"surface-dsi-elvss-0-commands",
+	"surface-dsi-elvss-1-commands",
+	"surface-dsi-elvss-2-commands",
+	"surface-dsi-elvss-3-commands",
+	"surface-dsi-elvss-4-commands",
+	"surface-dsi-elvss-5-commands",
+	"surface-dsi-elvss-6-commands",
+	"surface-dsi-elvss-7-commands",
+	"surface-dsi-elvss-8-commands",
+	"surface-dsi-elvss-9-commands",
+#endif
+	/*MSCHANGE end*/
 };
 
-const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
+const char *cmd_set_state_map[DISPLAY_DSI_CMD_SET_MAX] = {/*MSCHANGE*/
 	"qcom,mdss-dsi-pre-on-command-state",
 	"qcom,mdss-dsi-on-command-state",
 	"qcom,mdss-dsi-post-on-command-state",
@@ -1751,6 +1948,24 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"qcom,mdss-dsi-post-mode-switch-on-command-state",
 	"qcom,mdss-dsi-qsync-on-commands-state",
 	"qcom,mdss-dsi-qsync-off-commands-state",
+	/*MSCHANGE start*/
+	#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+		"surface-dsi-aod-on-commands-state",
+		"surface-dsi-aod-off-commands-state",
+		"surface-dsi-switch-rr-60-commands-state",
+		"surface-dsi-switch-rr-90-commands-state",
+		"surface-dsi-elvss-0-commands-state",
+		"surface-dsi-elvss-1-commands-state",
+		"surface-dsi-elvss-2-commands-state",
+		"surface-dsi-elvss-3-commands-state",
+		"surface-dsi-elvss-4-commands-state",
+		"surface-dsi-elvss-5-commands-state",
+		"surface-dsi-elvss-6-commands-state",
+		"surface-dsi-elvss-7-commands-state",
+		"surface-dsi-elvss-8-commands-state",
+		"surface-dsi-elvss-9-commands-state",
+	#endif
+		/*MSCHANGE end*/
 };
 
 int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -1930,7 +2145,7 @@ static int dsi_panel_parse_cmd_sets(
 		return -EINVAL;
 	}
 
-	for (i = DSI_CMD_SET_PRE_ON; i < DSI_CMD_SET_MAX; i++) {
+	for (i = DSI_CMD_SET_PRE_ON; i < DISPLAY_DSI_CMD_SET_MAX; i++) {/*MSCHANGE*/
 		set = &priv_info->cmd_sets[i];
 		set->type = i;
 		set->count = 0;
@@ -2188,6 +2403,11 @@ static int dsi_panel_parse_gpios(struct dsi_panel *panel)
 	const char *data;
 	struct dsi_parser_utils *utils = &panel->utils;
 	char *reset_gpio_name, *mode_set_gpio_name;
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	struct surface_panel *surface_priv_panel;
+#endif
+/*MSCHANGE end*/
 
 	if (!strcmp(panel->type, "primary")) {
 		reset_gpio_name = "qcom,platform-reset-gpio";
@@ -2262,6 +2482,18 @@ static int dsi_panel_parse_gpios(struct dsi_panel *panel)
 	if (!gpio_is_valid(panel->panel_test_gpio))
 		DSI_DEBUG("%s:%d panel test gpio not specified\n", __func__,
 			 __LINE__);
+
+	/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	surface_priv_panel = &panel->surface_priv_panel;
+	rc = surface_panel_parse_gpios(surface_priv_panel, utils);
+	if (rc) {
+		DSI_ERR("failed to parse surface panel gpios, rc=%d\n", rc);
+		rc = 0;/*No big deal for now*/
+		goto error;
+	}
+#endif
+	/*MSCHANGE end*/
 
 error:
 	return rc;
@@ -3199,6 +3431,12 @@ static void dsi_panel_esd_config_deinit(struct drm_panel_esd_config *esd_config)
 	kfree(esd_config->status_buf);
 	kfree(esd_config->return_buf);
 	kfree(esd_config->status_value);
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	kfree(esd_config->surface_status_value);
+	kfree(esd_config->surface_transient_mask_value);
+#endif
+/*MSCHANGE end*/
 	kfree(esd_config->status_valid_params);
 	kfree(esd_config->status_cmds_rlen);
 	kfree(esd_config->status_cmd.cmds);
@@ -3300,6 +3538,26 @@ int dsi_panel_parse_esd_reg_read_configs(struct dsi_panel *panel)
 		goto error4;
 	}
 
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	esd_config->surface_status_value =
+		kzalloc(sizeof(u32) * status_len * esd_config->groups,
+			GFP_KERNEL);
+	if (!esd_config->surface_status_value) {
+		rc = -ENOMEM;
+		goto error2;
+	}
+
+	esd_config->surface_transient_mask_value =
+		kzalloc(sizeof(u32) * status_len * esd_config->groups,
+			GFP_KERNEL);
+	if (!esd_config->surface_transient_mask_value) {
+		rc = -ENOMEM;
+		goto error2;
+	}
+#endif
+/*MSCHANGE end*/
+
 	rc = utils->read_u32_array(utils->data,
 		"qcom,mdss-dsi-panel-status-value",
 		esd_config->status_value, esd_config->groups * status_len);
@@ -3309,12 +3567,41 @@ int dsi_panel_parse_esd_reg_read_configs(struct dsi_panel *panel)
 				esd_config->groups * status_len);
 	}
 
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	rc = utils->read_u32_array(utils->data,
+		"surface-panel-status-value",
+		esd_config->surface_status_value, esd_config->groups * status_len);
+	if (rc) {
+		DSI_DEBUG("error reading surface panel status values\n");
+		memset(esd_config->surface_status_value, 0,
+				esd_config->groups * status_len);
+	}
+
+
+	rc = utils->read_u32_array(utils->data,
+		"surface-panel-transient-mask",
+		esd_config->surface_transient_mask_value, esd_config->groups * status_len);
+	if (rc) {
+		DSI_DEBUG("error reading surface panel mask value\n");
+		memset(esd_config->surface_transient_mask_value, 0,
+				esd_config->groups * status_len);
+	}
+#endif
+/*MSCHANGE end*/
+
 	return 0;
 
 error4:
 	kfree(esd_config->return_buf);
 error3:
 	kfree(esd_config->status_value);
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	kfree(esd_config->surface_status_value);
+	kfree(esd_config->surface_transient_mask_value);
+#endif
+/*MSCHANGE end*/
 error2:
 	kfree(esd_config->status_valid_params);
 	kfree(esd_config->status_cmds_rlen);
@@ -3569,7 +3856,25 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 	if (rc)
 		goto error_vreg_put;
 
+	dsi_panel_check_sync_mode(of_node, panel);
 	mutex_init(&panel->panel_lock);
+
+/*MSCHANGE start*/
+/*We need this info in order to know who this is*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	surface_panel_init();
+	panel->surface_priv_panel.parent_dsi_panel = (void*)panel;
+	panel->surface_priv_panel.parent_dsi_panel_valid = true;
+	panel->surface_priv_panel.aod_enabled = false;
+#endif
+#if IS_ENABLED(CONFIG_DSI_MIPI_INJECT)
+	if (!strcmp(panel->type, "primary"))
+		mte_set_panel_ptr(panel, true);
+	else
+		mte_set_panel_ptr(panel, false);
+	panel->mte_priv_panel.rr_get_enabled = false;
+#endif
+/*MSCHANGE end*/
 
 	return panel;
 error_vreg_put:
@@ -3637,6 +3942,7 @@ int dsi_panel_drv_init(struct dsi_panel *panel,
 		goto error_gpio_release;
 	}
 
+
 	goto exit;
 
 error_gpio_release:
@@ -3658,6 +3964,7 @@ int dsi_panel_drv_deinit(struct dsi_panel *panel)
 	}
 
 	mutex_lock(&panel->panel_lock);
+
 
 	rc = panel->panel_ops.bl_unregister(panel);
 	if (rc)
@@ -3856,7 +4163,7 @@ void dsi_panel_put_mode(struct dsi_display_mode *mode)
 	if (!mode->priv_info)
 		return;
 
-	for (i = 0; i < DSI_CMD_SET_MAX; i++) {
+	for (i = 0; i < DISPLAY_DSI_CMD_SET_MAX; i++) {/*MSCHANGE*/
 		dsi_panel_destroy_cmd_packets(&mode->priv_info->cmd_sets[i]);
 		dsi_panel_dealloc_cmd_packets(&mode->priv_info->cmd_sets[i]);
 	}
@@ -3993,6 +4300,11 @@ int dsi_panel_get_mode(struct dsi_panel *panel,
 	int traffic_mode;
 	int panel_mode;
 	void *utils_data = NULL;
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	struct surface_panel *surface_priv_panel;
+#endif
+/*MSCHANGE end*/
 
 	if (!panel || !mode) {
 		DSI_ERR("invalid params\n");
@@ -4001,7 +4313,11 @@ int dsi_panel_get_mode(struct dsi_panel *panel,
 
 	mutex_lock(&panel->panel_lock);
 	utils = &panel->utils;
-
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	surface_priv_panel = &panel->surface_priv_panel;
+#endif
+/*MSCHANGE end*/
 	mode->priv_info = kzalloc(sizeof(*mode->priv_info), GFP_KERNEL);
 	if (!mode->priv_info) {
 		rc = -ENOMEM;
@@ -4034,6 +4350,15 @@ int dsi_panel_get_mode(struct dsi_panel *panel,
 			continue;
 
 		utils->data = child_np;
+		/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+		rc = surface_panel_parse_features(surface_priv_panel, utils);
+		if (rc) {
+			DSI_ERR("failed to parse surface panel, rc=%d\n", rc);
+			goto parse_fail;
+		}
+#endif
+		/*MSCHANGE end*/
 
 		rc = dsi_panel_parse_timing(&mode->timing, utils);
 		if (rc) {
@@ -4156,6 +4481,7 @@ int dsi_panel_get_host_cfg_for_mode(struct dsi_panel *panel,
 int dsi_panel_pre_prepare(struct dsi_panel *panel)
 {
 	int rc = 0;
+	struct dsi_display_mode *cur_mode = NULL; /*MSCHANGE*/
 
 	if (!panel) {
 		DSI_ERR("invalid params\n");
@@ -4173,6 +4499,15 @@ int dsi_panel_pre_prepare(struct dsi_panel *panel)
 		DSI_ERR("[%s] panel power on failed, rc=%d\n", panel->name, rc);
 		goto error;
 	}
+
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	{
+		cur_mode = panel->cur_mode;
+		surface_panel_control_freq_sel_gpio(panel, cur_mode->timing.refresh_rate, true);
+	}
+#endif
+/*MSCHANGE end*/
 
 error:
 	mutex_unlock(&panel->panel_lock);
@@ -4599,6 +4934,18 @@ int dsi_panel_switch(struct dsi_panel *panel)
 	if (rc)
 		DSI_ERR("[%s] failed to send DSI_CMD_SET_TIMING_SWITCH cmds, rc=%d\n",
 		       panel->name, rc);
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	{
+		struct dsi_display_mode *mode = panel->cur_mode;
+		rc = surface_panel_refresh_rate_switch_gpio((void*) panel, mode->timing.refresh_rate);
+		if (rc) {
+			/*Not a big deal since at this point we will just return and fail,
+			 * DRM switch already happened
+			 */
+			DSI_ERR("could not flip freq-sel GPIO\n");
+		}
+	}
+#endif
 
 	mutex_unlock(&panel->panel_lock);
 	return rc;
@@ -4761,6 +5108,7 @@ error:
 int dsi_panel_post_unprepare(struct dsi_panel *panel)
 {
 	int rc = 0;
+	struct dsi_display_mode *cur_mode = NULL; /*MSCHANGE*/
 
 	if (!panel) {
 		DSI_ERR("invalid params\n");
@@ -4768,6 +5116,15 @@ int dsi_panel_post_unprepare(struct dsi_panel *panel)
 	}
 
 	mutex_lock(&panel->panel_lock);
+
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	{
+		cur_mode = panel->cur_mode;
+		surface_panel_control_freq_sel_gpio(panel, cur_mode->timing.refresh_rate, false);
+	}
+#endif
+/*MSCHANGE end*/
 
 	rc = dsi_panel_power_off(panel);
 	if (rc) {

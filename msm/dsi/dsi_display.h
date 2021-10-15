@@ -115,6 +115,7 @@ struct dsi_display_clk_info {
 	struct dsi_clk_link_set cphy_clks;
 	struct dsi_clk_link_set shadow_clks;
 	struct dsi_clk_link_set shadow_cphy_clks;
+	struct clk *ext_trig_clk;/*MSCHANGE*/
 };
 
 /**
@@ -161,6 +162,7 @@ struct dsi_display_ext_bridge {
  *		      index into the ctrl[MAX_DSI_CTRLS_PER_DISPLAY] array.
  * @cmd_master_idx:   The master controller for sending DSI commands to panel.
  * @video_master_idx: The master controller for enabling video engine.
+ * @is_master:        Indicates whether this display is master in sync mode.
  * @cached_clk_rate:  The cached DSI clock rate set dynamically by sysfs.
  * @clkrate_change_pending: Flag indicating the pending DSI clock re-enabling.
  * @clock_info:       Clock sourcing for DSI display.
@@ -231,6 +233,8 @@ struct dsi_display {
 	u32 clk_master_idx;
 	u32 cmd_master_idx;
 	u32 video_master_idx;
+
+	bool is_master;
 
 	/* dynamic DSI clock info*/
 	u32  cached_clk_rate;
@@ -790,5 +794,57 @@ int dsi_display_dump_clks_state(struct dsi_display *display);
  * @display:         Handle to display
  */
 void dsi_display_dfps_update_parent(struct dsi_display *display);
+
+/**
+ * dsi_display_phy_enable() - enables the phy for the display
+ * @display: Handle to display
+ * @m_src: Configuration for PLL
+ *
+ * Return: Zero on Success
+ */
+int dsi_display_phy_enable(struct dsi_display *display,
+		enum dsi_phy_pll_source m_src);
+
+/**
+ * dsi_display_phy_disable() - disables the phy for the display
+ * @display: Handle to display
+ *
+ * Return: Zero on Success
+ */
+int dsi_display_phy_disable(struct dsi_display *display);
+
+/**
+ * dsi_display_phy_sw_reset() - enforces sw reset on the phy
+ * @display: Handle to display
+ *
+ * Return: Zero on Success
+ */
+int dsi_display_phy_sw_reset(struct dsi_display *display);
+
+/**
+ * dsi_display_phy_idle_off() - puts the phy to idle
+ * @display: Handle to display
+ *
+ * Return: Zero on Success
+ */
+int dsi_display_phy_idle_off(struct dsi_display *display);
+
+/**
+ * dsi_display_phy_idle_on() - brings the phy out of idle
+ * @display: Handle to display
+ * @mmss_clamp: bool to indicate whether clamp should be enabled
+ * @m_src: Configuration for PLL
+ * Return: Zero on Success
+ */
+int dsi_display_phy_idle_on(struct dsi_display *display, bool mmss_clamp,
+		enum dsi_phy_pll_source m_src);
+
+/**
+ * dsi_display_config_clk_gating() - configures clk gating
+ * @display: Handle to display
+ * @enable: bool to indicate whether clk gating should be enabled/disabled
+ * Return: Zero on Success
+ */
+int dsi_display_config_clk_gating(struct dsi_display *display, bool enable);
 
 #endif /* _DSI_DISPLAY_H_ */

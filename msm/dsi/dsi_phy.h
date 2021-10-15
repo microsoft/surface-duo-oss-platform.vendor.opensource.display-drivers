@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_PHY_H_
@@ -22,11 +22,9 @@ struct dsi_ver_spec_info {
 
 /**
  * struct dsi_phy_power_info - digital and analog power supplies for DSI PHY
- * @digital:       Digital power supply for DSI PHY.
  * @phy_pwr:       Analog power supplies for DSI PHY to work.
  */
 struct dsi_phy_power_info {
-	struct dsi_regulator_info digital;
 	struct dsi_regulator_info phy_pwr;
 };
 
@@ -60,6 +58,7 @@ enum phy_ulps_return_type {
  * @index:             Instance id.
  * @name:              Name of the PHY instance.
  * @refcount:          Reference count.
+ * @sync_en_refcount:  Reference count for each phy in sync mode.
  * @phy_lock:          Mutex for hardware and object access.
  * @ver_info:          Version specific phy parameters.
  * @hw:                DSI PHY hardware object.
@@ -82,6 +81,7 @@ struct msm_dsi_phy {
 	int index;
 	const char *name;
 	u32 refcount;
+	u32 sync_en_refcount;
 	struct mutex phy_lock;
 
 	const struct dsi_ver_spec_info *ver_info;
@@ -167,15 +167,6 @@ int dsi_phy_drv_deinit(struct msm_dsi_phy *dsi_phy);
  */
 int dsi_phy_validate_mode(struct msm_dsi_phy *dsi_phy,
 			  struct dsi_mode_info *mode);
-
-/**
- * dsi_phy_set_power_state() - enable/disable dsi phy power supplies
- * @dsi_phy:               DSI PHY handle.
- * @enable:                Boolean flag to enable/disable.
- *
- * Return: error code.
- */
-int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable);
 
 /**
  * dsi_phy_enable() - enable DSI PHY hardware
@@ -374,5 +365,12 @@ void dsi_phy_set_continuous_clk(struct msm_dsi_phy *phy, bool enable);
  * Return: error code.
  */
 int dsi_phy_get_io_resources(struct msm_io_res *io_res);
+
+/**
+ * dsi_phy_get_pll_info() - get DSI PLL info
+ * @phy:	DSI PHY handle
+ * @info:       PLL info that needs to be read from PLL resource
+ */
+int dsi_phy_get_pll_info(struct msm_dsi_phy *phy, enum dsi_pll_info info);
 
 #endif /* _DSI_PHY_H_ */

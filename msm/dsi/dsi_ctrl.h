@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_CTRL_H_
@@ -885,5 +885,11 @@ int dsi_ctrl_get_io_resources(struct msm_io_res *io_res);
  * @enable:			variable to control masking/unmasking.
  */
 void dsi_ctrl_mask_overflow(struct dsi_ctrl *dsi_ctrl, bool enable);
+
+/**
+ * dsi_ctrl_m_esc_clock_deinit() -	API to deinit master esc clk
+ * @ctrl:			DSI controller handle.
+ */
+int dsi_ctrl_m_esc_clock_deinit(struct dsi_ctrl *ctrl);
 
 #endif /* _DSI_CTRL_H_ */

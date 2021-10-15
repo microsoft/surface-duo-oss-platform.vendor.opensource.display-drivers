@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -1605,6 +1605,50 @@ static int bit_clk_set_div(void *context, unsigned int reg, unsigned int div)
 		bit_clk_set_div_sub(rsc->slave, 1);
 
 	return 0;
+}
+
+int dsi_pll_5nm_program_slave(struct dsi_pll_resource *pll)
+{
+	struct dsi_pll_resource *master_pll_rsc = pll_rsc_db[DSI_PLL_0];
+
+	/* call should be coming only from slave DSI PHY */
+	if (pll->index != DSI_PLL_1) {
+		pr_err("invalid pll index\n");
+		return 0;
+	}
+
+	master_pll_rsc->slave = pll;
+
+	DSI_PLL_REG_W(pll->pll_base, PLL_PERF_OPTIMIZE, 0x22);
+
+	DSI_PLL_REG_W(pll->phy_base, PHY_CMN_CLK_CFG0,
+			pll_rsc_db[0]->cached_cfg0);
+
+	dsi_pll_enable_pll_bias(pll);
+
+	phy_reg_update_bits_sub(pll, PHY_CMN_CLK_CFG1,
+			0x03, pll_rsc_db[0]->cached_cfg1);
+
+	dsi_pll_phy_dig_reset(pll);
+	dsi_pll_enable_global_clk(pll);
+
+	return 0;
+}
+
+int dsi_pll_5nm_get_info(struct dsi_pll_resource *pll_res,
+		enum dsi_pll_info info)
+{
+	int rc = 0;
+
+	switch (info) {
+	case DSI_PLL_HANDOFF_INFO:
+		rc = pll_res->handoff_resources;
+		break;
+	default:
+		break;
+	}
+
+	return rc;
 }
 
 static struct regmap_config dsi_pll_5nm_config = {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/of.h>
@@ -37,6 +37,7 @@ struct dsi_clk_mngr {
 	post_clockoff_cb post_clkoff_cb;
 	post_clockon_cb post_clkon_cb;
 	pre_clockon_cb pre_clkon_cb;
+	get_pll_info_cb pll_info_cb;
 
 	bool is_cont_splash_enabled;
 	void *priv_data;
@@ -222,6 +223,41 @@ void dsi_clk_disable_unprepare(struct dsi_clk_link_set *clk)
 	clk_disable_unprepare(clk->byte_clk);
 }
 
+/*MSCHANGE start*/
+/**
+ * dsi_clk_prepare_enable_ext() - prepare and enable specific dsi src clock
+ * @clk:       clock
+ *
+ * @return:	Zero on success and err no on failure.
+ */
+int dsi_clk_prepare_enable_ext(struct clk *clock)
+{
+	int rc;
+
+	if (!clock)
+		return -EINVAL;
+
+	rc = clk_prepare_enable(clock);
+	if (rc) {
+		DSI_ERR("failed to enable clk %d\n", rc);
+		return rc;
+	}
+
+	return 0;
+}
+
+/**
+ * dsi_clk_disable_unprepare_ext() - disable and unprepare specific dsi src clock
+ * @clk:       clock
+ */
+void dsi_clk_disable_unprepare_ext(struct clk *clock)
+{
+	if (clock) {
+		clk_disable_unprepare(clock);
+	}
+}
+/*MSCHANGE end*/
+
 int dsi_core_clk_start(struct dsi_core_clks *c_clks)
 {
 	int rc = 0;
@@ -310,9 +346,10 @@ int dsi_core_clk_stop(struct dsi_core_clks *c_clks)
 static int dsi_link_hs_clk_set_rate(struct dsi_link_hs_clk_info *link_hs_clks,
 		int index)
 {
-	int rc = 0;
+	int rc = 0, ret_val;
 	struct dsi_clk_mngr *mngr;
 	struct dsi_link_clks *l_clks;
+	bool pll_handoff_status = false;
 
 	if (index >= MAX_DSI_CTRL) {
 		DSI_ERR("Invalid DSI ctrl index\n");
@@ -326,9 +363,20 @@ static int dsi_link_hs_clk_set_rate(struct dsi_link_hs_clk_info *link_hs_clks,
 	 * In an ideal world, cont_splash_enabled should not be required inside
 	 * the clock manager. But, in the current driver cont_splash_enabled
 	 * flag is set inside mdp driver and there is no interface event
-	 * associated with this flag setting.
+	 * associated with this flag setting. Apart from checking the clock manager
+	 * splash status, a more reliable methos is to check for the pll handoff
+	 * resources flag to decide if the PLL is already on or not. In case of
+	 * sync panels with only one of them having continuous splash enabled, this
+	 * check against handoff_resources becomes even more necessary.
 	 */
-	if (mngr->is_cont_splash_enabled)
+	if (mngr->pll_info_cb) {
+		ret_val = mngr->pll_info_cb(mngr->priv_data,
+				DSI_PLL_HANDOFF_INFO);
+		if (ret_val > 0)
+			pll_handoff_status = true;
+	}
+
+	if (mngr->is_cont_splash_enabled || pll_handoff_status)
 		return 0;
 
 	rc = clk_set_rate(link_hs_clks->byte_clk,
@@ -536,6 +584,13 @@ static int dsi_link_lp_clk_start(struct dsi_link_lp_clk_info *link_lp_clks,
 	 * be called for every enable call. It should be done only once when
 	 * coming out of suspend.
 	 */
+
+	if (link_lp_clks->m_esc_clk) {
+		rc = clk_set_rate(link_lp_clks->m_esc_clk, l_clks->freq.esc_clk_rate);
+		if (rc)
+			DSI_ERR("clk_set_rate failed for m_esc_clk rc = %d\n", rc);
+	}
+
 	if (mngr->is_cont_splash_enabled)
 		goto prepare;
 
@@ -546,6 +601,14 @@ static int dsi_link_lp_clk_start(struct dsi_link_lp_clk_info *link_lp_clks,
 	}
 
 prepare:
+	if (link_lp_clks->m_esc_clk) {
+		rc = clk_prepare_enable(link_lp_clks->m_esc_clk);
+		if (rc) {
+			DSI_ERR("Failed to enable dsi m_esc_clk\n");
+			clk_unprepare(l_clks->lp_clks.m_esc_clk);
+		}
+	}
+
 	rc = clk_prepare_enable(link_lp_clks->esc_clk);
 	if (rc) {
 		DSI_ERR("Failed to enable dsi esc clk\n");
@@ -564,6 +627,9 @@ static int dsi_link_lp_clk_stop(
 	l_clks = container_of(link_lp_clks, struct dsi_link_clks, lp_clks);
 
 	clk_disable_unprepare(l_clks->lp_clks.esc_clk);
+
+	if (link_lp_clks->m_esc_clk)
+		clk_disable_unprepare(l_clks->lp_clks.m_esc_clk);
 
 	DSI_DEBUG("LP Link clocks are disabled\n");
 	return 0;
@@ -1113,7 +1179,7 @@ error:
 }
 
 int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
-	enum dsi_clk_state state)
+		enum dsi_clk_state state)
 {
 	int rc = 0;
 	struct dsi_clk_client_info *c = client;
@@ -1128,6 +1194,7 @@ int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
 	}
 
 	mngr = c->mngr;
+
 	mutex_lock(&mngr->clk_mutex);
 
 	DSI_DEBUG("[%s]%s: CLK=%d, new_state=%d, core=%d, linkl=%d\n",
@@ -1209,6 +1276,7 @@ int dsi_clk_req_state(void *client, enum dsi_clk_type clk,
 	}
 
 	mutex_unlock(&mngr->clk_mutex);
+
 	return rc;
 }
 
@@ -1287,6 +1355,24 @@ int dsi_display_clk_ctrl(void *handle,
 	if (rc)
 		DSI_ERR("failed set clk state, rc = %d\n", rc);
 	mutex_unlock(&dsi_mngr_clk_mutex);
+
+	return rc;
+}
+
+int dsi_display_clk_ctrl_nolock(void *handle,
+	u32 clk_type, u32 clk_state)
+{
+	int rc = 0;
+
+	if ((!handle) || (clk_type > DSI_ALL_CLKS) ||
+			(clk_state > DSI_CLK_EARLY_GATE)) {
+		DSI_ERR("Invalid arg\n");
+		return -EINVAL;
+	}
+
+	rc = dsi_clk_req_state(handle, clk_type, clk_state);
+	if (rc)
+		DSI_ERR("failed set clk state, rc = %d\n", rc);
 
 	return rc;
 }
@@ -1439,6 +1525,7 @@ void *dsi_display_clk_mngr_register(struct dsi_clk_info *info)
 	mngr->post_clkon_cb = info->post_clkon_cb;
 	mngr->pre_clkoff_cb = info->pre_clkoff_cb;
 	mngr->post_clkoff_cb = info->post_clkoff_cb;
+	mngr->pll_info_cb = info->pll_info_cb;
 	mngr->priv_data = info->priv_data;
 	memcpy(mngr->name, info->name, MAX_STRING_LEN);
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HWIO_H
@@ -45,7 +45,6 @@
 #define CLK_CTRL7                       0x3D0
 #define CLK_STATUS7                     0x3D4
 #define SPLIT_DISPLAY_LOWER_PIPE_CTRL   0x3F0
-#define SPLIT_DISPLAY_TE_LINE_INTERVAL  0x3F4
 #define INTF_SW_RESET_MASK              0x3FC
 #define HDMI_DP_CORE_SELECT             0x408
 #define MDP_OUT_CTL_0                   0x410

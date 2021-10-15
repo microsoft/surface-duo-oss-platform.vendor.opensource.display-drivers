@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __DSI_PLL_H
@@ -56,6 +56,11 @@ enum {
 	DSI_PLL_5NM,
 	DSI_PLL_10NM,
 	DSI_UNKNOWN_PLL,
+};
+
+enum dsi_pll_info {
+	DSI_PLL_HANDOFF_INFO,
+	DSI_PLL_UNKNOWN_INFO,
 };
 
 struct dfps_pll_codes {
@@ -234,4 +239,13 @@ int dsi_pll_clock_register_10nm(struct platform_device *pdev,
 
 int dsi_pll_init(struct platform_device *pdev,
 				struct dsi_pll_resource **pll_res);
+
+int dsi_pll_program_slave(struct dsi_pll_resource *pll_res);
+
+int dsi_pll_5nm_program_slave(struct dsi_pll_resource *pll_res);
+
+int dsi_pll_get_info(struct dsi_pll_resource *pll_res, enum dsi_pll_info info);
+
+int dsi_pll_5nm_get_info(struct dsi_pll_resource *pll_res, enum dsi_pll_info info);
+
 #endif

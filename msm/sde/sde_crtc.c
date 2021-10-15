@@ -1426,6 +1426,7 @@ static void _sde_crtc_blend_setup_mixer(struct drm_crtc *crtc,
 	bool bg_alpha_enable = false;
 	u32 blend_type;
 	DECLARE_BITMAP(fetch_active, SSPP_MAX);
+	bool update = false;
 
 	if (!sde_crtc || !crtc->state || !mixer) {
 		SDE_ERROR("invalid sde_crtc or mixer\n");
@@ -1547,8 +1548,11 @@ static void _sde_crtc_blend_setup_mixer(struct drm_crtc *crtc,
 	_sde_crtc_setup_blend_cfg_by_stage(mixer, sde_crtc->num_mixers,
 			pstates, cnt);
 
+	if (cstate->wider_sync_mode && sde_crtc->op_mode == OP_MODE_CHILD)
+		update = true;
+
 	if (ctl->ops.set_active_pipes)
-		ctl->ops.set_active_pipes(ctl, fetch_active);
+		ctl->ops.set_active_pipes(ctl, fetch_active, update);
 
 	sort(pstates, cnt, sizeof(pstates[0]), pstate_cmp, NULL);
 	_sde_crtc_set_src_split_order(crtc, pstates, cnt);
@@ -3246,7 +3250,24 @@ static void _sde_crtc_clear_all_blend_stages(struct sde_crtc *sde_crtc)
 		if (mixer.hw_ctl && mixer.hw_ctl->ops.clear_all_blendstages)
 			mixer.hw_ctl->ops.clear_all_blendstages(mixer.hw_ctl);
 		if (mixer.hw_ctl && mixer.hw_ctl->ops.set_active_pipes)
-			mixer.hw_ctl->ops.set_active_pipes(mixer.hw_ctl, NULL);
+			mixer.hw_ctl->ops.set_active_pipes(mixer.hw_ctl, NULL, false);
+	}
+}
+
+void sde_crtc_update_op_group(struct drm_crtc *crtc, bool wider_sync_mode,
+	bool enable)
+{
+	struct drm_encoder *encoder;
+	struct drm_device *dev;
+
+	if (!crtc)
+		return;
+
+	dev = crtc->dev;
+
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		if ((encoder->crtc == crtc)  && !sde_encoder_in_clone_mode(encoder))
+			sde_encoder_update_ctl_op_group(encoder, wider_sync_mode, enable);
 	}
 }
 
@@ -3316,7 +3337,8 @@ static void sde_crtc_atomic_begin(struct drm_crtc *crtc,
 	_sde_crtc_blend_setup(crtc, old_state, true);
 	_sde_crtc_dest_scaler_setup(crtc);
 
-	if (crtc->state->mode_changed)
+	/* Configure uidle during mode change or transition commit */
+	if (crtc->state->mode_changed || sde_crtc_is_transition_commit(crtc))
 		sde_core_perf_crtc_update_uidle(crtc, true);
 
 	/*
@@ -5398,6 +5420,10 @@ static void sde_crtc_install_properties(struct drm_crtc *crtc,
 		"idle_time", 0, 0, U64_MAX, 0,
 		CRTC_PROP_IDLE_TIMEOUT);
 
+	if (catalog->ctl->features & BIT(SDE_CTL_GROUP))
+		msm_property_install_range(&sde_crtc->property_info,
+			"wider_sync_mode", 0, 0, 1, 0, CRTC_PROP_WIDER_SYNC_MODE);
+
 	if (catalog->has_trusted_vm_support) {
 		int init_idx = sde_in_trusted_vm(sde_kms) ? 1 : 0;
 
@@ -5609,6 +5635,9 @@ static int sde_crtc_atomic_set_property(struct drm_crtc *crtc,
 			}
 		}
 		break;
+	case CRTC_PROP_WIDER_SYNC_MODE:
+		cstate->wider_sync_mode = val;
+		break;
 	default:
 		/* nothing to do */
 		break;
@@ -5745,6 +5774,9 @@ int sde_crtc_helper_reset_custom_properties(struct drm_crtc *crtc,
 	/* disable clk and bw control until clk & bw properties are set */
 	cstate->bw_control = false;
 	cstate->bw_split_vote = false;
+
+	cstate->wider_sync_mode = false;
+	cstate->is_transition_commit = false;
 	return 0;
 }
 
@@ -5938,6 +5970,8 @@ static int _sde_debugfs_status_show(struct seq_file *s, void *data)
 		sde_crtc->vblank_cb_count = 0;
 		sde_crtc->vblank_cb_time = ktime_set(0, 0);
 	}
+
+	seq_printf(s, "wider sync mode:%d\n", cstate->wider_sync_mode);
 
 	mutex_unlock(&sde_crtc->crtc_lock);
 
@@ -6938,4 +6972,151 @@ void sde_crtc_update_cont_splash_settings(struct drm_crtc *crtc)
 	sde_crtc->cur_perf.core_clk_rate = (rate > 0) ?
 					rate : kms->perf.max_core_clk_rate;
 	sde_crtc->cur_perf.core_clk_rate = kms->perf.max_core_clk_rate;
+}
+
+bool sde_crtc_is_primary_display(struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc = NULL;
+	struct drm_encoder *encoder;
+	struct drm_device *dev;
+
+	sde_crtc = to_sde_crtc(crtc);
+	dev = crtc->dev;
+
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		if ((encoder->crtc == crtc) && !sde_encoder_in_clone_mode(encoder))
+			return sde_encoder_is_primary_display(encoder);
+	}
+
+	return false;
+}
+
+struct sde_hw_ctl *sde_crtc_get_hw_ctl_ptr(struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc = NULL;
+	struct drm_encoder *encoder;
+	struct drm_device *dev;
+	struct sde_hw_ctl *hw_ctl_ptr = NULL;
+
+	sde_crtc = to_sde_crtc(crtc);
+	dev = crtc->dev;
+
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		if ((encoder->crtc == crtc) && !sde_encoder_in_clone_mode(encoder))
+			hw_ctl_ptr = sde_encoder_get_hw_ctl_ptr(encoder);
+	}
+
+	return hw_ctl_ptr;
+}
+
+void sde_crtc_update_parent_hw_ctl_ptr(struct drm_crtc *crtc,
+	struct sde_hw_ctl *hw_ctl)
+{
+	struct sde_crtc *sde_crtc;
+	struct drm_device *dev;
+	struct drm_encoder *encoder;
+
+	sde_crtc = to_sde_crtc(crtc);
+
+	/* Update the sde_enc->parent_hw_ctl ptr */
+	dev = crtc->dev;
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		if (encoder->crtc == crtc)
+			sde_encoder_update_parent_hw_ctl_ptr(encoder, hw_ctl);
+	}
+}
+
+static void sde_crtc_reset_hw_ctl_path(struct drm_crtc *crtc,
+	bool wider_sync_mode)
+{
+	struct sde_crtc *sde_crtc;
+	struct sde_crtc_mixer *mixer;
+	struct sde_hw_ctl *ctl;
+	int i;
+
+	sde_crtc = to_sde_crtc(crtc);
+
+	/*
+	 * CTL HW path needs to be reset only for child during wider sync mode
+	 * and needs to be reset for parent during wider async mode
+	 */
+	if (((sde_crtc->op_mode == OP_MODE_CHILD) && wider_sync_mode) ||
+		((sde_crtc->op_mode == OP_MODE_PARENT) && !wider_sync_mode)) {
+		/* Request reset of specific CTL path associated with mixer */
+		for (i = 0; i < sde_crtc->num_mixers; i++) {
+			mixer = &sde_crtc->mixers[i];
+
+			ctl = mixer->hw_ctl;
+			ctl->ops.reset_ctl_path(ctl);
+		}
+	}
+}
+
+static void sde_crtc_update_hw_ctl_ptr(struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc;
+	struct sde_crtc_state *cstate;
+	struct drm_device *dev;
+	struct drm_encoder *encoder;
+	struct sde_crtc_mixer *mixer;
+	struct sde_hw_ctl *hw_ctl;
+	int i;
+
+	sde_crtc = to_sde_crtc(crtc);
+	cstate = to_sde_crtc_state(crtc->state);
+
+	/* CTL HW pointer needs to be modified only for child */
+	if (sde_crtc->op_mode != OP_MODE_CHILD)
+		return;
+
+	/* Update the sde_enc->hw_ctl ptr */
+	dev = crtc->dev;
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		if (encoder->crtc == crtc) {
+			sde_encoder_update_hw_ctl_ptr(encoder, cstate->wider_sync_mode);
+			hw_ctl = sde_encoder_get_hw_ctl_ptr(encoder);
+		}
+	}
+
+	if (!hw_ctl)
+		return;
+
+	/* Corresponding updation in hw_mixer */
+	for (i = 0; i < sde_crtc->num_mixers; i++) {
+		mixer = &sde_crtc->mixers[i];
+		mixer->hw_ctl = hw_ctl;
+	}
+}
+
+static void sde_crtc_update_intf_cfg(struct drm_crtc *crtc, bool wider_sync_mode)
+{
+	struct sde_crtc *sde_crtc;
+	struct drm_device *dev;
+	struct drm_encoder *encoder;
+	bool update = false;
+
+	sde_crtc = to_sde_crtc(crtc);
+
+	/* INTF cfg needs to be updated only for parent during wider sync mode */
+	update = ((sde_crtc->op_mode == OP_MODE_PARENT) && wider_sync_mode) ?
+		true : false;
+
+	/* Request update of specific INTF cfg associated with encoder */
+	dev = crtc->dev;
+	list_for_each_entry(encoder, &dev->mode_config.encoder_list, head) {
+		if ((encoder->crtc == crtc) && !sde_encoder_in_clone_mode(encoder))
+			sde_encoder_update_intf_cfg(encoder, update);
+	}
+}
+
+void sde_crtc_configure_transition_commit(struct drm_crtc *crtc,
+	bool wider_sync_mode)
+{
+	sde_crtc_update_op_mode(crtc);
+
+	sde_crtc_reset_hw_ctl_path(crtc, wider_sync_mode);
+
+	sde_crtc_update_hw_ctl_ptr(crtc);
+
+	sde_crtc_update_intf_cfg(crtc, wider_sync_mode);
 }
