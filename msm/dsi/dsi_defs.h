@@ -8,7 +8,7 @@
 
 #include <linux/types.h>
 #include <drm/drm_mipi_dsi.h>
-#include "msm_drv.h"
+#include "../msm_drv.h"
 
 #define DSI_H_TOTAL(t) (((t)->h_active) + ((t)->h_back_porch) + \
 			((t)->h_sync_width) + ((t)->h_front_porch))
@@ -288,6 +288,15 @@ enum dsi_cmd_set_type {
 	DSI_CMD_SET_QSYNC_OFF,
 	DSI_CMD_SET_MAX
 };
+
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+#include <surfacedisplay/surface_dsi_defs.h>
+#define DISPLAY_DSI_CMD_SET_MAX SURFACE_DSI_CMD_SET_MAX
+#else
+#define DISPLAY_DSI_CMD_SET_MAX DSI_CMD_SET_MAX
+#endif
+/*MSCHANGE end*/
 
 /**
  * enum dsi_cmd_set_state - command set state
@@ -600,7 +609,7 @@ struct dsi_host_config {
  * @allowed_mode_switch: BIT mask to mark allowed mode switches
  */
 struct dsi_display_mode_priv_info {
-	struct dsi_panel_cmd_set cmd_sets[DSI_CMD_SET_MAX];
+	struct dsi_panel_cmd_set cmd_sets[DISPLAY_DSI_CMD_SET_MAX];/*MSCHANGE*/
 
 	u32 *phy_timing_val;
 	u32 phy_timing_len;

@@ -128,23 +128,6 @@ static int dp_power_pinctrl_set(struct dp_power_private *power, bool active)
 	if (IS_ERR_OR_NULL(parser->pinctrl.pin))
 		return 0;
 
-	if (parser->no_aux_switch && parser->lphw_hpd) {
-		pin_state = active ? parser->pinctrl.state_hpd_ctrl
-				: parser->pinctrl.state_hpd_tlmm;
-		if (!IS_ERR_OR_NULL(pin_state)) {
-			rc = pinctrl_select_state(parser->pinctrl.pin,
-				pin_state);
-			if (rc) {
-				DP_ERR("cannot direct hpd line to %s\n",
-					active ? "ctrl" : "tlmm");
-				return rc;
-			}
-		}
-	}
-
-	if (parser->no_aux_switch)
-		return 0;
-
 	pin_state = active ? parser->pinctrl.state_active
 				: parser->pinctrl.state_suspend;
 	if (!IS_ERR_OR_NULL(pin_state)) {
@@ -458,9 +441,6 @@ static int dp_power_config_gpios(struct dp_power_private *power, bool flip,
 	int rc = 0, i;
 	struct dss_module_power *mp;
 	struct dss_gpio *config;
-
-	if (power->parser->no_aux_switch)
-		return 0;
 
 	mp = &power->parser->mp[DP_CORE_PM];
 	config = mp->gpio_config;

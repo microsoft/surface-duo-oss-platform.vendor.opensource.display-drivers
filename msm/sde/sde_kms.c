@@ -91,6 +91,8 @@ static const char * const iommu_ports[] = {
 #define SDE_KMS_MODESET_LOCK_TIMEOUT_US 500
 #define SDE_KMS_MODESET_LOCK_MAX_TRIALS 20
 
+#define WIDER_SYNC_MODE_CRTC_CNT 2
+
 /**
  * sdecustom - enable certain driver customizations for sde clients
  *	Enabling this modifies the standard DRM behavior slightly and assumes
@@ -110,7 +112,7 @@ static int sde_kms_hw_init(struct msm_kms *kms);
 static int _sde_kms_mmu_destroy(struct sde_kms *sde_kms);
 static int _sde_kms_mmu_init(struct sde_kms *sde_kms);
 static int _sde_kms_register_events(struct msm_kms *kms,
-		struct drm_mode_object *obj, u32 event, bool en);
+		struct drm_mode_object *obj, u32 event, u64 client_context, bool en);
 bool sde_is_custom_client(void)
 {
 	return sdecustom;
@@ -1119,6 +1121,81 @@ int sde_kms_vm_trusted_prepare_commit(struct sde_kms *sde_kms,
 	return 0;
 }
 
+static void sde_kms_update_child_hw_ptr(struct drm_atomic_state *state)
+{
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old_cstate, *new_cstate;
+	struct sde_crtc_state *old_state, *new_state;
+	struct sde_hw_ctl *parent_hw_ctl = NULL;
+	int i;
+
+	/* Retrieve Parent HW CTL Pointer */
+	for_each_oldnew_crtc_in_state(state, crtc, old_cstate, new_cstate, i) {
+		old_state = to_sde_crtc_state(old_cstate);
+		new_state = to_sde_crtc_state(new_cstate);
+
+		/* Update HW Ctl Ptr only for wider sync mode transition */
+		if (new_state->wider_sync_mode &&
+			(old_state->wider_sync_mode != new_state->wider_sync_mode)) {
+			if (sde_crtc_is_primary_display(crtc)) {
+				parent_hw_ctl = sde_crtc_get_hw_ctl_ptr(crtc);
+				break;
+			}
+		}
+	}
+
+	if (!parent_hw_ctl)
+		return;
+
+	/* Populate Parent HW CTL Pointer for child display */
+	for_each_oldnew_crtc_in_state(state, crtc, old_cstate, new_cstate, i) {
+		if (!sde_crtc_is_primary_display(crtc)) {
+			sde_crtc_update_parent_hw_ctl_ptr(crtc, parent_hw_ctl);
+			break;
+		}
+	}
+}
+
+static void sde_kms_check_transition_commit(struct drm_atomic_state *state)
+{
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old_cstate, *new_cstate;
+	struct sde_crtc_state *old_state, *new_state;
+	int i;
+	bool is_transition_commit = false;
+
+	sde_kms_update_child_hw_ptr(state);
+
+	for_each_oldnew_crtc_in_state(state, crtc, old_cstate, new_cstate, i) {
+		old_state = to_sde_crtc_state(old_cstate);
+		new_state = to_sde_crtc_state(new_cstate);
+
+		new_state->is_transition_commit = false;
+		/* Further sequence is only for transitional commit */
+		if (old_state->wider_sync_mode != new_state->wider_sync_mode) {
+			new_state->is_transition_commit = true;
+			sde_crtc_update_op_group(crtc, new_state->wider_sync_mode, true);
+			is_transition_commit = true;
+		}
+	}
+
+	if (!is_transition_commit)
+		return;
+
+	SDE_EVT32(is_transition_commit, new_state->wider_sync_mode);
+	/*
+	 * During transitional commit, child display is to be configured
+	 * first followed by parent. Current HW supports only secondary display
+	 * as child and primary as parent. As DRM framework allocates
+	 * higher crtc index for secondary panels, iterate through the
+	 * combined CRTC commit in reverse.
+	 */
+	for_each_oldnew_crtc_in_state_reverse(state, crtc, old_cstate, new_cstate, i) {
+		new_state = to_sde_crtc_state(new_cstate);
+		sde_crtc_configure_transition_commit(crtc, new_state->wider_sync_mode);
+	}
+}
+
 static void sde_kms_prepare_commit(struct msm_kms *kms,
 		struct drm_atomic_state *state)
 {
@@ -1168,6 +1245,7 @@ static void sde_kms_prepare_commit(struct msm_kms *kms,
 		}
 	}
 
+	sde_kms_check_transition_commit(state);
 	/*
 	 * NOTE: for secure use cases we want to apply the new HW
 	 * configuration only after completing preparation for secure
@@ -1193,7 +1271,7 @@ static void sde_kms_commit(struct msm_kms *kms,
 {
 	struct sde_kms *sde_kms;
 	struct drm_crtc *crtc;
-	struct drm_crtc_state *old_crtc_state;
+	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
 	int i;
 
 	if (!kms || !old_state)
@@ -1206,7 +1284,8 @@ static void sde_kms_commit(struct msm_kms *kms,
 	}
 
 	SDE_ATRACE_BEGIN("sde_kms_commit");
-	for_each_old_crtc_in_state(old_state, crtc, old_crtc_state, i) {
+	for_each_oldnew_crtc_in_state_reverse(old_state, crtc, old_crtc_state,
+		new_crtc_state, i) {
 		if (crtc->state->active) {
 			SDE_EVT32(DRMID(crtc), old_state);
 			sde_crtc_commit_kickoff(crtc, old_crtc_state);
@@ -1454,6 +1533,8 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 	struct msm_drm_private *priv;
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *old_crtc_state;
+	struct drm_crtc_state *old_cstate, *new_cstate;
+	struct sde_crtc_state *old_sde_cstate, *new_sde_cstate;
 	struct drm_connector *connector;
 	struct drm_connector_state *old_conn_state;
 	struct msm_display_conn_params params;
@@ -1510,6 +1591,14 @@ static void sde_kms_complete_commit(struct msm_kms *kms,
 				  rc);
 	}
 	_sde_kms_drm_check_dpms(old_state, DRM_PANEL_EVENT_BLANK);
+
+	for_each_oldnew_crtc_in_state(old_state, crtc, old_cstate, new_cstate, i) {
+		old_sde_cstate = to_sde_crtc_state(old_cstate);
+		new_sde_cstate = to_sde_crtc_state(new_cstate);
+
+		if (old_sde_cstate->wider_sync_mode != new_sde_cstate->wider_sync_mode)
+			sde_crtc_update_op_group(crtc, new_sde_cstate->wider_sync_mode, false);
+	}
 
 	pm_runtime_put_sync(sde_kms->dev->dev);
 
@@ -2782,6 +2871,49 @@ static void sde_kms_vm_res_release(struct msm_kms *kms,
 	sde_vm_unlock(sde_kms);
 }
 
+static int sde_kms_check_mode_switch(struct drm_atomic_state *state)
+{
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old_cstate, *new_cstate;
+	uint32_t i, commit_crtc_cnt = 0;
+	struct sde_crtc_state *old_state = NULL, *new_state = NULL;
+	int rc = 0;
+	bool prev_crtc_req_mode = false, cur_crtc_req_mode = false;
+	bool wider_sync_mode_req = false;
+
+	if (!state)
+		return -EINVAL;
+
+	for_each_oldnew_crtc_in_state(state, crtc, old_cstate, new_cstate, i) {
+		old_state = to_sde_crtc_state(old_cstate);
+		new_state = to_sde_crtc_state(new_cstate);
+
+		if (!new_cstate->active && !new_cstate->active_changed)
+			continue;
+		cur_crtc_req_mode = new_state->wider_sync_mode;
+		if (commit_crtc_cnt && (prev_crtc_req_mode != cur_crtc_req_mode)) {
+			SDE_ERROR("mode transition req not symmetric across crtc");
+			return -EINVAL;
+		}
+
+		prev_crtc_req_mode = cur_crtc_req_mode;
+
+		/* check request for wider sync mode transition */
+		wider_sync_mode_req |= old_state->wider_sync_mode ||
+			new_state->wider_sync_mode;
+		commit_crtc_cnt++;
+	}
+
+	/* wider sync mode and mode transition requests should be combined commit */
+	if (wider_sync_mode_req && (commit_crtc_cnt != WIDER_SYNC_MODE_CRTC_CNT)) {
+		SDE_ERROR("sync mode transition req with %d crtc commit\n",
+					commit_crtc_cnt);
+		return -EINVAL;
+	}
+
+	return rc;
+}
+
 static int sde_kms_atomic_check(struct msm_kms *kms,
 		struct drm_atomic_state *state)
 {
@@ -2811,6 +2943,11 @@ static int sde_kms_atomic_check(struct msm_kms *kms,
 	ret = drm_atomic_helper_check(dev, state);
 	if (ret)
 		goto vm_clean_up;
+
+	ret = sde_kms_check_mode_switch(state);
+	if (ret)
+		goto vm_clean_up;
+
 	/*
 	 * Check if any secure transition(moving CRTC between secure and
 	 * non-secure state and vice-versa) is allowed or not. when moving
@@ -4670,7 +4807,7 @@ error:
 }
 
 static int _sde_kms_register_events(struct msm_kms *kms,
-		struct drm_mode_object *obj, u32 event, bool en)
+		struct drm_mode_object *obj, u32 event, u64 client_context, bool en)
 {
 	int ret = 0;
 	struct drm_crtc *crtc = NULL;
@@ -4706,7 +4843,7 @@ static int _sde_kms_register_events(struct msm_kms *kms,
 	case DRM_MODE_OBJECT_CONNECTOR:
 		conn = obj_to_connector(obj);
 		ret = sde_connector_register_custom_event(sde_kms, conn, event,
-				en);
+				client_context, en);
 		break;
 	}
 

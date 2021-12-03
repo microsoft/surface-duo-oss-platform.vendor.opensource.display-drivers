@@ -1274,7 +1274,7 @@ static int msm_register_event(struct drm_device *dev,
 	if (!arg_obj)
 		return -ENOENT;
 
-	ret = kms->funcs->register_events(kms, arg_obj, req->event, en);
+	ret = kms->funcs->register_events(kms, arg_obj, req->event, req->client_context, en);
 
 	drm_mode_object_put(arg_obj);
 

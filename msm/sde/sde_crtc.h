@@ -36,6 +36,28 @@
 #define SDE_CRTC_FRAME_EVENT_SIZE	(4 * 2)
 
 /**
+ * for_each_oldnew_crtc_in_state_reverse - iterate over all CRTCs in an atomic
+ * update in reverse order
+ * @__state: &struct drm_atomic_state pointer
+ * @crtc: &struct drm_crtc iteration cursor
+ * @old_crtc_state: &struct drm_crtc_state iteration cursor for the old state
+ * @new_crtc_state: &struct drm_crtc_state iteration cursor for the new state
+ * @__i: int iteration cursor, for macro-internal use
+ *
+ * This iterates over all CRTCs in an atomic update, tracking both old and
+ * new state. This is useful in places where the state delta needs to be
+ * considered, for example in atomic check functions.
+ */
+#define for_each_oldnew_crtc_in_state_reverse(__state, crtc, old_crtc_state, new_crtc_state, __i) \
+	for ((__i) = ((__state)->dev->mode_config.num_crtc - 1);	\
+		 (__i) >= 0;											\
+		 (__i)--)												\
+			for_each_if ((__state)->crtcs[__i].ptr &&			\
+				((crtc) = (__state)->crtcs[__i].ptr,			\
+				 (old_crtc_state) = (__state)->crtcs[__i].old_state,\
+				 (new_crtc_state) = (__state)->crtcs[__i].new_state, 1))
+
+/**
  * enum sde_crtc_client_type: crtc client type
  * @RT_CLIENT:	RealTime client like video/cmd mode display
  *              voting through apps rsc
@@ -99,6 +121,18 @@ enum sde_crtc_vm_req {
 	VM_REQ_NONE,
 	VM_REQ_RELEASE,
 	VM_REQ_ACQUIRE,
+};
+
+/**
+ * enum sde_crtc_op_mode: mode of operation of CRTC
+ * @OP_MODE_NONE: no-op
+ * @OP_MODE_PARENT: CRTC operating as parent
+ * @OP_MODE_CHILD: CRTC operating as child
+ */
+enum sde_crtc_op_mode {
+	OP_MODE_NONE,
+	OP_MODE_PARENT,
+	OP_MODE_CHILD,
 };
 
 /**
@@ -297,6 +331,7 @@ struct sde_crtc_misr_info {
  * @cache_state     : Current static image cache state
  * @dspp_blob_info  : blob containing dspp hw capability information
  * @cached_encoder_mask : cached encoder_mask for vblank work
+ * @op_mode         : store the op mode of respective crtc
  */
 struct sde_crtc {
 	struct drm_crtc base;
@@ -392,6 +427,7 @@ struct sde_crtc {
 
 	struct drm_property_blob *dspp_blob_info;
 	u32 cached_encoder_mask;
+	enum sde_crtc_op_mode op_mode;
 };
 
 enum sde_crtc_dirty_flags {
@@ -429,6 +465,9 @@ enum sde_crtc_dirty_flags {
  * @ds_cfg: Destination scaler config
  * @scl3_lut_cfg: QSEED3 lut config
  * @new_perf: new performance state being requested
+ * @wider_sync_mode: true if wider sync mode is enabled
+ * @is_transition_commit: true if there is sync to async or vice versa
+ *                        mode transition.
  */
 struct sde_crtc_state {
 	struct drm_crtc_state base;
@@ -458,6 +497,8 @@ struct sde_crtc_state {
 	struct sde_hw_scaler3_lut_cfg scl3_lut_cfg;
 
 	struct sde_core_perf_params new_perf;
+	bool wider_sync_mode;
+	bool is_transition_commit;
 };
 
 enum sde_crtc_irq_state {
@@ -677,6 +718,55 @@ u32 sde_crtc_get_fps_mode(struct drm_crtc *crtc);
 u32 sde_crtc_get_dfps_maxfps(struct drm_crtc *crtc);
 
 /**
+ * sde_crtc_is_primary_display - check if crtc is attached to
+ *	primary display.
+ * @crtc: Pointer to drm crtc object
+ */
+bool sde_crtc_is_primary_display(struct drm_crtc *crtc);
+
+/**
+ * sde_crtc_get_hw_ctl_ptr - get the hw ctl pointer for
+ *	respective crtc
+ * @crtc: Pointer to drm crtc object
+ */
+struct sde_hw_ctl *sde_crtc_get_hw_ctl_ptr(struct drm_crtc *crtc);
+
+/**
+ * sde_crtc_update_parent_hw_ctl_ptr - cache the hw ctl pointer of the
+ *	parent in respective crtc and enc structure
+ * @crtc: Pointer to drm crtc object
+ * @hw_ctl: hw ctl pointer value
+ */
+void sde_crtc_update_parent_hw_ctl_ptr(struct drm_crtc *crtc,
+	struct sde_hw_ctl *hw_ctl);
+
+/**
+ * sde_crtc_update_op_group - update op grouping for this crtc
+ * @crtc: Pointer to drm crtc object
+ * @wider_sync_mode: true if wider sync mode is enabled
+ * @en: true to enable op grouping, false to disable
+ */
+void sde_crtc_update_op_group(struct drm_crtc *crtc, bool wider_sync_mode,
+	bool enable);
+
+/**
+ * sde_crtc_configure_transition_commit - programming sequence specific to
+ * transition commit
+ * @crtc: Pointer to drm crtc object
+ * @wider_sync_mode: true if wider sync mode is enabled
+ */
+void sde_crtc_configure_transition_commit(struct drm_crtc *crtc,
+	bool wider_sync_mode);
+
+/**
+ * sde_crtc_is_primary_display - check if crtc is attached to
+ *	primary display.
+ * @crtc: Pointer to drm crtc object
+ * @en: true to enable op grouping, false to disable
+ */
+bool sde_crtc_is_primary_display(struct drm_crtc *crtc);
+
+/**
  * sde_crtc_get_client_type - check the crtc type- rt, rsc_rt, etc.
  * @crtc: Pointer to crtc
  */
@@ -802,6 +892,52 @@ static inline bool sde_crtc_atomic_check_has_modeset(
 	crtc_state = drm_atomic_get_new_crtc_state(state,
 					crtc);
 	return (crtc_state && drm_atomic_crtc_needs_modeset(crtc_state));
+}
+
+/**
+ * sde_crtc_update_op_mode - update the OP mode for respective crtc
+ * @crtc : Pointer to drm crtc structure
+ */
+static inline void sde_crtc_update_op_mode(struct drm_crtc *crtc)
+{
+	struct sde_crtc *sde_crtc = to_sde_crtc(crtc);
+
+	sde_crtc->op_mode = sde_crtc_is_primary_display(crtc) ?
+			OP_MODE_PARENT : OP_MODE_CHILD;
+}
+
+/**
+ * sde_crtc_is_transition_commit - check if transition commit in progress
+ * @crtc : Pointer to drm crtc structure
+ * Return true if transition commit in progress
+ */
+static inline bool sde_crtc_is_transition_commit(struct drm_crtc *crtc)
+{
+	struct sde_crtc_state *cstate;
+
+	if (!crtc)
+		return false;
+
+	cstate = to_sde_crtc_state(crtc->state);
+
+	return cstate->is_transition_commit;
+}
+
+/**
+ * sde_crtc_is_wider_sync_mode - check if wider sync mode is enabled
+ * @crtc : Pointer to drm crtc structure
+ * Return true if wider sync mode is enabled
+ */
+static inline bool sde_crtc_is_wider_sync_mode(struct drm_crtc *crtc)
+{
+	struct sde_crtc_state *cstate;
+
+	if (!crtc)
+		return false;
+
+	cstate = to_sde_crtc_state(crtc->state);
+
+	return cstate->wider_sync_mode;
 }
 
 /**
