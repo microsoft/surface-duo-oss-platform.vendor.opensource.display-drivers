@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/of_device.h>
@@ -185,36 +185,13 @@ static int dsi_phy_supplies_init(struct platform_device *pdev,
 	struct dsi_regulator_info *regs;
 	struct regulator *vreg = NULL;
 
-	regs = &phy->pwr_info.digital;
-	regs->vregs = devm_kzalloc(&pdev->dev, sizeof(struct dsi_vreg),
-				   GFP_KERNEL);
-	if (!regs->vregs)
-		goto error;
-
-	regs->count = 1;
-	snprintf(regs->vregs->vreg_name,
-		 ARRAY_SIZE(regs->vregs[i].vreg_name),
-		 "%s", "gdsc");
-
 	rc = dsi_pwr_get_dt_vreg_data(&pdev->dev,
 					  &phy->pwr_info.phy_pwr,
 					  "qcom,phy-supply-entries");
 	if (rc) {
 		DSI_PHY_ERR(phy, "failed to get host power supplies, rc = %d\n",
 				rc);
-		goto error_digital;
-	}
-
-	regs = &phy->pwr_info.digital;
-	for (i = 0; i < regs->count; i++) {
-		vreg = devm_regulator_get(&pdev->dev, regs->vregs[i].vreg_name);
-		rc = PTR_RET(vreg);
-		if (rc) {
-			DSI_PHY_ERR(phy, "failed to get %s regulator\n",
-			       regs->vregs[i].vreg_name);
-			goto error_host_pwr;
-		}
-		regs->vregs[i].vreg = vreg;
+		goto error;
 	}
 
 	regs = &phy->pwr_info.phy_pwr;
@@ -226,25 +203,17 @@ static int dsi_phy_supplies_init(struct platform_device *pdev,
 			       regs->vregs[i].vreg_name);
 			for (--i; i >= 0; i--)
 				devm_regulator_put(regs->vregs[i].vreg);
-			goto error_digital_put;
+			goto error_host_pwr;
 		}
 		regs->vregs[i].vreg = vreg;
 	}
 
 	return rc;
 
-error_digital_put:
-	regs = &phy->pwr_info.digital;
-	for (i = 0; i < regs->count; i++)
-		devm_regulator_put(regs->vregs[i].vreg);
 error_host_pwr:
 	devm_kfree(&pdev->dev, phy->pwr_info.phy_pwr.vregs);
 	phy->pwr_info.phy_pwr.vregs = NULL;
 	phy->pwr_info.phy_pwr.count = 0;
-error_digital:
-	devm_kfree(&pdev->dev, phy->pwr_info.digital.vregs);
-	phy->pwr_info.digital.vregs = NULL;
-	phy->pwr_info.digital.count = 0;
 error:
 	return rc;
 }
@@ -254,14 +223,6 @@ static int dsi_phy_supplies_deinit(struct msm_dsi_phy *phy)
 	int i = 0;
 	int rc = 0;
 	struct dsi_regulator_info *regs;
-
-	regs = &phy->pwr_info.digital;
-	for (i = 0; i < regs->count; i++) {
-		if (!regs->vregs[i].vreg)
-			DSI_PHY_ERR(phy, "vreg is NULL, should not reach here\n");
-		else
-			devm_regulator_put(regs->vregs[i].vreg);
-	}
 
 	regs = &phy->pwr_info.phy_pwr;
 	for (i = 0; i < regs->count; i++) {
@@ -275,11 +236,6 @@ static int dsi_phy_supplies_deinit(struct msm_dsi_phy *phy)
 		devm_kfree(&phy->pdev->dev, phy->pwr_info.phy_pwr.vregs);
 		phy->pwr_info.phy_pwr.vregs = NULL;
 		phy->pwr_info.phy_pwr.count = 0;
-	}
-	if (phy->pwr_info.digital.vregs) {
-		devm_kfree(&phy->pdev->dev, phy->pwr_info.digital.vregs);
-		phy->pwr_info.digital.vregs = NULL;
-		phy->pwr_info.digital.count = 0;
 	}
 
 	return rc;
@@ -602,6 +558,9 @@ struct msm_dsi_phy *dsi_phy_get(struct device_node *of_node)
 	} else {
 		phy->refcount++;
 	}
+
+	phy->sync_en_refcount = 0;
+
 	mutex_unlock(&phy->phy_lock);
 	return phy;
 }
@@ -701,7 +660,7 @@ int dsi_phy_validate_mode(struct msm_dsi_phy *dsi_phy,
  *
  * Return: error code.
  */
-int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable)
+static int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable)
 {
 	int rc = 0;
 
@@ -710,53 +669,21 @@ int dsi_phy_set_power_state(struct msm_dsi_phy *dsi_phy, bool enable)
 		return -EINVAL;
 	}
 
-	mutex_lock(&dsi_phy->phy_lock);
-
 	if (enable == dsi_phy->power_state) {
 		DSI_PHY_ERR(dsi_phy, "No state change\n");
 		goto error;
 	}
 
-	if (enable) {
-		rc = dsi_pwr_enable_regulator(&dsi_phy->pwr_info.digital, true);
-		if (rc) {
-			DSI_PHY_ERR(dsi_phy, "failed to enable digital regulator\n");
-			goto error;
-		}
-
-		if (dsi_phy->dsi_phy_state == DSI_PHY_ENGINE_OFF &&
-				dsi_phy->regulator_required) {
-			rc = dsi_pwr_enable_regulator(
-				&dsi_phy->pwr_info.phy_pwr, true);
-			if (rc) {
-				DSI_PHY_ERR(dsi_phy, "failed to enable phy power\n");
-				(void)dsi_pwr_enable_regulator(
-					&dsi_phy->pwr_info.digital, false);
-				goto error;
-			}
-		}
-	} else {
-		if (dsi_phy->dsi_phy_state == DSI_PHY_ENGINE_OFF &&
-				dsi_phy->regulator_required) {
-			rc = dsi_pwr_enable_regulator(
-				&dsi_phy->pwr_info.phy_pwr, false);
-			if (rc) {
-				DSI_PHY_ERR(dsi_phy, "failed to enable digital regulator\n");
-				goto error;
-			}
-		}
-
-		rc = dsi_pwr_enable_regulator(&dsi_phy->pwr_info.digital,
-					      false);
-		if (rc) {
-			DSI_PHY_ERR(dsi_phy, "failed to enable phy power\n");
-			goto error;
-		}
+	if (dsi_phy->dsi_phy_state == DSI_PHY_ENGINE_OFF &&
+			dsi_phy->regulator_required) {
+		rc = dsi_pwr_enable_regulator(&dsi_phy->pwr_info.phy_pwr,
+				enable);
+		if (rc)
+			DSI_PHY_ERR(dsi_phy, "failed to set phy power\n");
 	}
 
 	dsi_phy->power_state = enable;
 error:
-	mutex_unlock(&dsi_phy->phy_lock);
 	return rc;
 }
 
@@ -918,6 +845,9 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
 	if (!skip_validation)
 		DSI_PHY_DBG(phy, "TODO: perform validation\n");
 
+	if (phy->dsi_phy_state == DSI_PHY_ENGINE_OFF)
+		dsi_phy_set_power_state(phy, true);
+
 	memcpy(&phy->mode, &config->video_timing, sizeof(phy->mode));
 	memcpy(&phy->cfg.lane_map, &config->lane_map, sizeof(config->lane_map));
 	phy->data_lanes = config->common_config.data_lanes;
@@ -926,8 +856,9 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
 	phy->cfg.bit_clk_rate_hz = config->bit_clk_rate_hz;
 
 	/**
-	 * If PHY timing parameters are not present in panel dtsi file,
-	 * then calculate them in the driver
+	 * If PHY timing parameters have not yet been updated either through the panel
+	 * dtsi or through a previous call to calculate_timing_params, they need to be
+	 * updated before enabling PHY.
 	 */
 	if (!phy->cfg.is_phy_timing_present)
 		rc = phy->hw.ops.calculate_timing_params(&phy->hw,
@@ -962,12 +893,18 @@ int dsi_phy_update_phy_timings(struct msm_dsi_phy *phy,
 		return -EINVAL;
 	}
 
+	DSI_PHY_DBG(phy, "Updating PHY timings: %d\n", phy->cfg.is_phy_timing_present);
+	if (phy->cfg.is_phy_timing_present)
+		return rc;
+
 	memcpy(&phy->mode, &config->video_timing, sizeof(phy->mode));
 	rc = phy->hw.ops.calculate_timing_params(&phy->hw, &phy->mode,
 						 &config->common_config,
 						 &phy->cfg.timing, true);
 	if (rc)
 		DSI_PHY_ERR(phy, "failed to calculate phy timings %d\n", rc);
+	else
+		phy->cfg.is_phy_timing_present = true;
 
 	return rc;
 }
@@ -1008,6 +945,7 @@ int dsi_phy_disable(struct msm_dsi_phy *phy, bool skip_op)
 	if (!skip_op)
 		dsi_phy_disable_hw(phy);
 	phy->dsi_phy_state = DSI_PHY_ENGINE_OFF;
+	dsi_phy_set_power_state(phy, false);
 	mutex_unlock(&phy->phy_lock);
 
 	return rc;
@@ -1337,6 +1275,21 @@ void dsi_phy_set_continuous_clk(struct msm_dsi_phy *phy, bool enable)
 
 	mutex_unlock(&phy->phy_lock);
 
+}
+
+/**
+ * dsi_phy_get_pll_info() - get DSI PLL info
+ * @phy:	DSI PHY handle
+ * @info:       PLL info that needs to be read from PLL resource
+ */
+int dsi_phy_get_pll_info(struct msm_dsi_phy *phy, enum dsi_pll_info info)
+{
+	if (!phy) {
+		DSI_PHY_ERR(phy, "invalid params\n");
+		return -EINVAL;
+	}
+
+	return dsi_pll_get_info(phy->pll, info);
 }
 
 void dsi_phy_drv_register(void)

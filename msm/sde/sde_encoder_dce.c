@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021 The Linux Foundation. All rights reserved.
  */
 
 #include <linux/kthread.h>
@@ -517,8 +517,8 @@ static int _dce_dsc_setup(struct sde_encoder_virt *sde_enc,
 
 	SDE_DEBUG_DCE(sde_enc, "topology:%d\n", topology);
 
-	if (sde_kms_rect_is_equal(&sde_enc->cur_conn_roi,
-			&sde_enc->prv_conn_roi))
+	if ((sde_kms_rect_is_equal(&sde_enc->cur_conn_roi,
+			&sde_enc->prv_conn_roi)) && !params->is_transition_commit)
 		return 0;
 
 	SDE_EVT32(DRMID(&sde_enc->base), topology,
@@ -581,8 +581,8 @@ static int _dce_vdc_setup(struct sde_encoder_virt *sde_enc,
 			sde_enc->cur_master->cached_mode.hdisplay,
 			sde_enc->cur_master->cached_mode.vdisplay);
 
-	if (sde_kms_rect_is_equal(&sde_enc->cur_conn_roi,
-			&sde_enc->prv_conn_roi))
+	if ((sde_kms_rect_is_equal(&sde_enc->cur_conn_roi,
+			&sde_enc->prv_conn_roi)) && !params->is_transition_commit)
 		return ret;
 
 	enc_master = sde_enc->cur_master;

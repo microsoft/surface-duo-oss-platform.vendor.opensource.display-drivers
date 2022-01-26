@@ -592,6 +592,7 @@ int dsi_conn_set_info_blob(struct drm_connector *connector,
 	struct dsi_panel *panel;
 	enum dsi_pixel_format fmt;
 	u32 bpp;
+	char panel_str[256];
 
 	if (!info || !dsi_display)
 		return -EINVAL;
@@ -628,7 +629,16 @@ int dsi_conn_set_info_blob(struct drm_connector *connector,
 	}
 
 	panel = dsi_display->panel;
-	sde_kms_info_add_keystr(info, "panel name", panel->name);
+
+	if (panel->ctl_op_sync)
+		snprintf(panel_str, sizeof(panel_str), "%s %s",
+				panel->name,
+				dsi_display->display_type);
+	else
+		snprintf(panel_str, sizeof(panel_str), "%s",
+				panel->name);
+
+	sde_kms_info_add_keystr(info, "panel name", panel_str);
 
 	switch (panel->panel_mode) {
 	case DSI_OP_VIDEO_MODE:

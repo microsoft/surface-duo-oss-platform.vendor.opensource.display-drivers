@@ -42,38 +42,34 @@ static void dp_hpd_isr(struct dp_hpd *dp_hpd)
 struct dp_hpd *dp_hpd_get(struct device *dev, struct dp_parser *parser,
 		struct dp_catalog_hpd *catalog, struct dp_hpd_cb *cb)
 {
-	struct dp_hpd *dp_hpd;
+	struct dp_hpd *dp_hpd = NULL;
 
-	if (parser->no_aux_switch && parser->lphw_hpd) {
-		dp_hpd = dp_lphw_hpd_get(dev, parser, catalog, cb);
-		if (IS_ERR_OR_NULL(dp_hpd)) {
-			DP_ERR("failed to get lphw hpd\n");
-			return dp_hpd;
-		}
+	dp_hpd = dp_lphw_hpd_get(dev, parser, catalog, cb);
+	if (!IS_ERR_OR_NULL(dp_hpd)) {
 		dp_hpd->type = DP_HPD_LPHW;
-	} else if (parser->no_aux_switch) {
-		dp_hpd = dp_gpio_hpd_get(dev, cb);
-		if (IS_ERR_OR_NULL(dp_hpd)) {
-			DP_ERR("failed to get gpio hpd\n");
-			return dp_hpd;
-		}
-		dp_hpd->type = DP_HPD_GPIO;
-	} else {
-		dp_hpd = dp_altmode_get(dev, cb);
-		if (!IS_ERR_OR_NULL(dp_hpd)) {
-			dp_hpd->type = DP_HPD_ALTMODE;
-			goto config;
-		}
-		DP_WARN("dp_altmode failed (%ld), falling back to dp_usbpd\n",
-				PTR_ERR(dp_hpd));
-
-		dp_hpd = dp_usbpd_get(dev, cb);
-		if (IS_ERR_OR_NULL(dp_hpd)) {
-			DP_ERR("failed to get usbpd\n");
-			return dp_hpd;
-		}
-		dp_hpd->type = DP_HPD_USBPD;
+		goto config;
 	}
+
+	dp_hpd = dp_gpio_hpd_get(dev, cb);
+	if (!IS_ERR_OR_NULL(dp_hpd)) {
+		dp_hpd->type = DP_HPD_GPIO;
+		goto config;
+	}
+
+	dp_hpd = dp_altmode_get(dev, cb);
+	if (!IS_ERR_OR_NULL(dp_hpd)) {
+		dp_hpd->type = DP_HPD_ALTMODE;
+		goto config;
+	}
+
+	dp_hpd = dp_usbpd_get(dev, cb);
+	if (!IS_ERR_OR_NULL(dp_hpd)) {
+		dp_hpd->type = DP_HPD_USBPD;
+		goto config;
+	}
+
+	DP_ERR("Failed to detect HPD type\n");
+	goto end;
 
 config:
 	if (!dp_hpd->host_init)
@@ -83,6 +79,7 @@ config:
 	if (!dp_hpd->isr)
 		dp_hpd->isr		= dp_hpd_isr;
 
+end:
 	return dp_hpd;
 }
 

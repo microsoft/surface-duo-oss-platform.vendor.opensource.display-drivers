@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -96,7 +96,7 @@ struct msm_kms_funcs {
 	void (*postclose)(struct msm_kms *kms, struct drm_file *file);
 	void (*lastclose)(struct msm_kms *kms);
 	int (*register_events)(struct msm_kms *kms,
-			struct drm_mode_object *obj, u32 event, bool en);
+			struct drm_mode_object *obj, u32 event, u64 client_context, bool en);
 	void (*set_encoder_mode)(struct msm_kms *kms,
 				 struct drm_encoder *encoder,
 				 bool cmd_mode);
