@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_HW_TOP_H
@@ -106,6 +106,11 @@ struct sde_hw_mdp_ops {
 	 */
 	void (*setup_split_pipe)(struct sde_hw_mdp *mdp,
 			struct split_pipe_cfg *p);
+
+	/** read_te_line_interval() : get te line difference
+	 * @mdp  : mdp top context driver
+	 */
+	int (*read_te_line_interval)(struct sde_hw_mdp *mdp);
 
 	/** setup_pp_split() : Configure pp split related registers
 	 * @mdp  : mdp top context driver
@@ -233,6 +238,7 @@ struct sde_hw_mdp_ops {
 	 */
 	u32 (*get_autorefresh_status)(struct sde_hw_mdp *mdp,
 			u32 intf_idx);
+
 };
 
 struct sde_hw_mdp {

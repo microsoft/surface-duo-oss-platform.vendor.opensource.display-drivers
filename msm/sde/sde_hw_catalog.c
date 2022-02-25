@@ -1919,6 +1919,9 @@ static int sde_ctl_parse_dt(struct device_node *np,
 				ctl_prop[HW_DISP].prop_name, i, &disp_pref);
 		if (disp_pref && !strcmp(disp_pref, "primary"))
 			set_bit(SDE_CTL_PRIMARY_PREF, &ctl->features);
+		if (disp_pref && !strcmp(disp_pref, "secondary")  &&
+			(IS_SDE_CTL_REV_100(sde_cfg->ctl_rev)))
+			set_bit(SDE_CTL_SECONDARY_PREF, &ctl->features);
 		if ((i < MAX_SPLIT_DISPLAY_CTL) &&
 			!(IS_SDE_CTL_REV_100(sde_cfg->ctl_rev)))
 			set_bit(SDE_CTL_SPLIT_DISPLAY, &ctl->features);
@@ -1928,9 +1931,10 @@ static int sde_ctl_parse_dt(struct device_node *np,
 			set_bit(SDE_CTL_ACTIVE_CFG, &ctl->features);
 		if (SDE_UIDLE_MAJOR(sde_cfg->uidle_cfg.uidle_rev))
 			set_bit(SDE_CTL_UIDLE, &ctl->features);
-		if (SDE_HW_MAJOR(sde_cfg->hwversion) >=
-				SDE_HW_MAJOR(SDE_HW_VER_700))
-			set_bit(SDE_CTL_UNIFIED_DSPP_FLUSH, &ctl->features);
+		if (SDE_HW_MAJOR(sde_cfg->hwversion) >=	SDE_HW_MAJOR(SDE_HW_VER_700)) {
+				set_bit(SDE_CTL_UNIFIED_DSPP_FLUSH, &ctl->features);
+				set_bit(SDE_CTL_GROUP, &ctl->features);
+			}
 	}
 
 	sde_put_dt_props(props);

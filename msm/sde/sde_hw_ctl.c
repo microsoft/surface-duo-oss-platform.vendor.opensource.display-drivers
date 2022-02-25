@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/delay.h>
@@ -356,6 +356,16 @@ static inline int sde_hw_ctl_clear_pending_flush(struct sde_hw_ctl *ctx)
 	return 0;
 }
 
+static inline int sde_hw_ctl_clear_pending_dspp_flush(struct sde_hw_ctl *ctx)
+{
+	if (!ctx)
+		return -EINVAL;
+
+	memset(&ctx->flush.pending_dspp_flush_masks, 0,
+		sizeof(ctx->flush.pending_dspp_flush_masks));
+	return 0;
+}
+
 static inline int sde_hw_ctl_update_pending_flush(struct sde_hw_ctl *ctx,
 	struct sde_ctl_flush_cfg *cfg)
 {
@@ -624,10 +634,13 @@ static inline int sde_hw_ctl_update_bitmask_dspp_subblk(struct sde_hw_ctl *ctx,
 }
 
 static void sde_hw_ctl_set_fetch_pipe_active(struct sde_hw_ctl *ctx,
-		unsigned long *fetch_active)
+		unsigned long *fetch_active, bool update)
 {
 	int i;
 	u32 val = 0;
+
+	if (update)
+		val = SDE_REG_READ(&ctx->hw, CTL_FETCH_PIPE_ACTIVE);
 
 	if (fetch_active) {
 		for (i = 0; i < SSPP_MAX; i++) {
@@ -1023,14 +1036,14 @@ end:
 }
 
 static int sde_hw_ctl_intf_cfg_v1(struct sde_hw_ctl *ctx,
-		struct sde_hw_intf_cfg_v1 *cfg)
+		struct sde_hw_intf_cfg_v1 *cfg, bool update)
 {
 	struct sde_hw_blk_reg_map *c;
 	u32 intf_active = 0;
 	u32 wb_active = 0;
 	u32 merge_3d_active = 0;
 	u32 cwb_active = 0;
-	u32 mode_sel = 0xf0000000;
+	u32 ctl_top = 0;
 	u32 cdm_active = 0;
 	u32 intf_master = 0;
 	u32 i;
@@ -1039,12 +1052,23 @@ static int sde_hw_ctl_intf_cfg_v1(struct sde_hw_ctl *ctx,
 		return -EINVAL;
 
 	c = &ctx->hw;
+
+	if (update) {
+		ctl_top = SDE_REG_READ(c, CTL_TOP);
+		wb_active = SDE_REG_READ(c, CTL_WB_ACTIVE);
+		cwb_active = SDE_REG_READ(c, CTL_CWB_ACTIVE);
+		intf_active = SDE_REG_READ(c, CTL_INTF_ACTIVE);
+		cdm_active = SDE_REG_READ(c, CTL_CDM_ACTIVE);
+		merge_3d_active = SDE_REG_READ(c, CTL_MERGE_3D_ACTIVE);
+		intf_master = SDE_REG_READ(c, CTL_INTF_MASTER);
+	}
+
 	for (i = 0; i < cfg->intf_count; i++) {
 		if (cfg->intf[i])
 			intf_active |= BIT(cfg->intf[i] - INTF_0);
 	}
 
-	if (cfg->intf_count > 1)
+	if ((cfg->intf_count > 1) || cfg->update_master)
 		intf_master = BIT(cfg->intf_master - INTF_0);
 
 	for (i = 0; i < cfg->wb_count; i++) {
@@ -1067,10 +1091,11 @@ static int sde_hw_ctl_intf_cfg_v1(struct sde_hw_ctl *ctx,
 			cdm_active |= BIT(cfg->cdm[i] - CDM_0);
 	}
 
+	ctl_top = SDE_REG_READ(c, CTL_TOP);
 	if (cfg->intf_mode_sel == SDE_CTL_MODE_SEL_CMD)
-		mode_sel |= BIT(17);
+		ctl_top |= BIT(17);
 
-	SDE_REG_WRITE(c, CTL_TOP, mode_sel);
+	SDE_REG_WRITE(c, CTL_TOP, ctl_top);
 	SDE_REG_WRITE(c, CTL_WB_ACTIVE, wb_active);
 	SDE_REG_WRITE(c, CTL_CWB_ACTIVE, cwb_active);
 	SDE_REG_WRITE(c, CTL_INTF_ACTIVE, intf_active);
@@ -1337,6 +1362,52 @@ static int sde_hw_reg_dma_flush(struct sde_hw_ctl *ctx, bool blocking)
 
 }
 
+static int sde_hw_ctl_update_ctl_group(struct sde_hw_ctl *ctx,
+		bool enable)
+{
+	u32 ctl_top = 0;
+	struct sde_hw_blk_reg_map *c;
+
+	if (!ctx)
+		return -EINVAL;
+
+	c = &ctx->hw;
+
+	ctl_top = SDE_REG_READ(c, CTL_TOP);
+	if (enable)
+		ctl_top &= ~(0xf0000000);
+	else
+		ctl_top |= 0xf0000000;
+
+	SDE_REG_WRITE(c, CTL_TOP, ctl_top);
+
+	return 0;
+}
+
+static int sde_hw_ctl_reset_ctl_path(struct sde_hw_ctl *ctx)
+{
+	struct sde_hw_blk_reg_map *c;
+
+	if (!ctx) {
+		SDE_ERROR("invalid hw_ctl\n");
+		return -EINVAL;
+	}
+
+	c = &ctx->hw;
+
+	sde_hw_ctl_clear_all_blendstages(ctx);
+	SDE_REG_WRITE(c, CTL_WB_ACTIVE, 0);
+	SDE_REG_WRITE(c, CTL_CWB_ACTIVE, 0);
+	SDE_REG_WRITE(c, CTL_INTF_ACTIVE, 0);
+	SDE_REG_WRITE(c, CTL_CDM_ACTIVE, 0);
+	SDE_REG_WRITE(c, CTL_MERGE_3D_ACTIVE, 0);
+	SDE_REG_WRITE(c, CTL_INTF_MASTER, 0);
+	SDE_REG_WRITE(c, CTL_DSC_ACTIVE, 0);
+	SDE_REG_WRITE(c, CTL_UIDLE_ACTIVE, 0);
+
+	return 0;
+}
+
 static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
 		unsigned long cap)
 {
@@ -1365,6 +1436,7 @@ static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
 		ops->get_ctl_intf = sde_hw_ctl_get_intf;
 	}
 	ops->clear_pending_flush = sde_hw_ctl_clear_pending_flush;
+	ops->clear_pending_dspp_flush = sde_hw_ctl_clear_pending_dspp_flush;
 	ops->get_pending_flush = sde_hw_ctl_get_pending_flush;
 	ops->get_flush_register = sde_hw_ctl_get_flush_register;
 	ops->trigger_start = sde_hw_ctl_trigger_start;
@@ -1383,6 +1455,10 @@ static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
 	ops->update_bitmask_mixer = sde_hw_ctl_update_bitmask_mixer;
 	ops->reg_dma_flush = sde_hw_reg_dma_flush;
 	ops->get_start_state = sde_hw_ctl_get_start_state;
+	ops->reset_ctl_path = sde_hw_ctl_reset_ctl_path;
+
+	if (cap & BIT(SDE_CTL_GROUP))
+		ops->update_ctl_group = sde_hw_ctl_update_ctl_group;
 
 	if (cap & BIT(SDE_CTL_UNIFIED_DSPP_FLUSH)) {
 		ops->update_bitmask_dspp_subblk =

@@ -132,6 +132,9 @@ static void lm_gc_install_property(struct drm_crtc *crtc);
 #define setup_lm_prop_install_funcs(func) \
 	(func[SDE_MIXER_GC] = lm_gc_install_property)
 
+static u32 wider_sync_op_mask[CTL_MAX] = {0};
+#define WIDER_SYNC_OP_COMPLETE (BIT(OP_MODE_PARENT) | BIT(OP_MODE_CHILD))
+
 enum sde_cp_crtc_features {
 	/* Append new DSPP features before SDE_CP_CRTC_DSPP_MAX */
 	/* DSPP Features start */
@@ -1683,6 +1686,8 @@ void sde_cp_dspp_flush_helper(struct sde_crtc *sde_crtc, u32 feature)
 	struct sde_hw_dspp *dspp;
 	struct sde_hw_ctl *ctl;
 	int active_ctls[CTL_MAX - CTL_0];
+	bool wider_sync_mode = false;
+	bool is_transition_commit = false;
 
 	if (!sde_crtc || feature >= SDE_CP_CRTC_MAX_FEATURES) {
 		SDE_ERROR("invalid args: sde_crtc %s for feature %d",
@@ -1694,6 +1699,8 @@ void sde_cp_dspp_flush_helper(struct sde_crtc *sde_crtc, u32 feature)
 	sub_blk = dspp_feature_to_sub_blk_tbl[feature];
 	memset(&active_ctls, 0, sizeof(active_ctls));
 
+	wider_sync_mode = sde_crtc_is_wider_sync_mode(&sde_crtc->base);
+	is_transition_commit = sde_crtc_is_transition_commit(&sde_crtc->base);
 	for (i = 0; i < num_mixers; i++) {
 		ctl = sde_crtc->mixers[i].hw_ctl;
 		dspp = sde_crtc->mixers[i].hw_dspp;
@@ -1703,8 +1710,13 @@ void sde_cp_dspp_flush_helper(struct sde_crtc *sde_crtc, u32 feature)
 					continue;
 				dspp->sb_dma_in_use = false;
 
-				_flush_sb_dma_hw(active_ctls, ctl,
+				wider_sync_op_mask[ctl->idx] |= BIT(sde_crtc->op_mode);
+				if (!wider_sync_mode || is_transition_commit || sde_crtc->op_mode == OP_MODE_NONE ||
+				    wider_sync_op_mask[ctl->idx] == WIDER_SYNC_OP_COMPLETE) {
+					_flush_sb_dma_hw(active_ctls, ctl,
 						ARRAY_SIZE(active_ctls));
+					wider_sync_op_mask[ctl->idx] = 0;
+				}
 				ctl->ops.update_bitmask_dspp_subblk(ctl,
 						dspp->idx, sub_blk, true);
 			} else {

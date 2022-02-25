@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef __SDE_ENCODER_PHYS_H__
@@ -166,7 +166,7 @@ struct sde_encoder_phys_ops {
 	int (*prepare_for_kickoff)(struct sde_encoder_phys *phys_enc,
 			struct sde_encoder_kickoff_params *params);
 	void (*handle_post_kickoff)(struct sde_encoder_phys *phys_enc);
-	void (*trigger_flush)(struct sde_encoder_phys *phys_enc);
+	void (*trigger_flush)(struct sde_encoder_phys *phys_enc, bool flush_child);
 	void (*trigger_start)(struct sde_encoder_phys *phys_enc);
 	bool (*needs_single_flush)(struct sde_encoder_phys *phys_enc);
 
@@ -295,6 +295,8 @@ struct sde_encoder_irq {
  * @frame_trigger_mode:		frame trigger mode indication for command
  *				mode display
  * @recovered:			flag set to true when recovered from pp timeout
+ * @hw_ctl_parent:		store the hw ctl ptr of parent display
+ * @hw_ctl_child:		store the hw ctl ptr of child display
  */
 struct sde_encoder_phys {
 	struct drm_encoder *parent;
@@ -339,6 +341,8 @@ struct sde_encoder_phys {
 	int vfp_cached;
 	enum frame_trigger_mode_type frame_trigger_mode;
 	bool recovered;
+	struct sde_hw_ctl *hw_ctl_parent;
+	struct sde_hw_ctl *hw_ctl_child;
 };
 
 static inline int sde_encoder_phys_inc_pending(struct sde_encoder_phys *phys)
@@ -552,8 +556,10 @@ void sde_encoder_helper_get_transfer_time(struct drm_encoder *drm_enc,
  *	This helper function may be optionally specified by physical
  *	encoders if they require ctl_flush triggering.
  * @phys_enc: Pointer to physical encoder structure
+ * @flush_child: If true then program flush using child ctl ptr
  */
-void sde_encoder_helper_trigger_flush(struct sde_encoder_phys *phys_enc);
+void sde_encoder_helper_trigger_flush(struct sde_encoder_phys *phys_enc,
+		bool flush_child);
 
 /**
  * sde_encoder_helper_trigger_start - control start helper function

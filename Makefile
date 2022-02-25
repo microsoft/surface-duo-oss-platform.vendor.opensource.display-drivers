@@ -17,6 +17,10 @@ LINUXINCLUDE    += -include $(srctree)/techpack/display/config/lahainadispconf.h
 		include $(srctree)/techpack/display/config/gki_lahainadisp.conf
 LINUXINCLUDE    += -include $(srctree)/techpack/display/config/gki_lahainadispconf.h
      endif
+     ifeq ($(CONFIG_LOCALVERSION), "-qgki-debug")
+		include $(srctree)/techpack/display/config/lahainadisp_dbg.conf
+LINUXINCLUDE    += -include $(srctree)/techpack/display/config/lahainadispconf_dbg.h
+     endif
 endif
 
 ifeq ($(CONFIG_ARCH_HOLI), y)
@@ -50,4 +54,19 @@ ifeq ($(CONFIG_ARCH_BENGAL), y)
 LINUXINCLUDE    += -include $(srctree)/techpack/display/config/bengaldispconf.h
 endif
 
+#MSCHANGE start
+ifeq ($(CONFIG_SURFACE_DISPLAY), y)
+LINUXINCLUDE	+= \
+			-I$(srctree)/techpack/display/surfacedisplay/include
+endif
+ifeq ($(CONFIG_DSI_MIPI_INJECT), y)
+LINUXINCLUDE    += \
+                        -I$(srctree)/techpack/display/mtemipiinject/include
+endif
+#MSCHANGE end
+
 obj-$(CONFIG_DRM_MSM) += msm/
+#MSCHANGE start
+obj-$(CONFIG_SURFACE_DISPLAY) += surfacedisplay/
+obj-$(CONFIG_DSI_MIPI_INJECT) += mtemipiinject/
+#MSCHANGE end

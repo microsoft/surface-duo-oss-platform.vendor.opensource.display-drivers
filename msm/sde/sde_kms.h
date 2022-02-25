@@ -119,6 +119,9 @@
 /* max virtual encoders per secure crtc */
 #define MAX_ALLOWED_ENCODER_CNT_PER_SECURE_CRTC	1
 
+/* max active cmd encoders for wider async/sync mode */
+#define MAX_ALLOWED_ENCODER_IN_WIDER_SYNC 2
+
 /* defines the operations required for secure state transition */
 #define SDE_KMS_OPS_SECURE_STATE_CHANGE		BIT(0)
 #define SDE_KMS_OPS_WAIT_FOR_TX_DONE		BIT(1)
@@ -754,4 +757,12 @@ int sde_kms_vm_trusted_prepare_commit(struct sde_kms *sde_kms,
  */
 int sde_kms_vm_primary_prepare_commit(struct sde_kms *sde_kms,
 					   struct drm_atomic_state *state);
+
+/**
+ * sde_kms_get_prim_crtc - function to get primary crtc
+ * @encoder: pointer to drm encoder structure
+ * @Return: returns primary crtc
+ */
+struct drm_crtc *sde_kms_get_prim_crtc(struct drm_encoder *encoder);
+
 #endif /* __sde_kms_H__ */
