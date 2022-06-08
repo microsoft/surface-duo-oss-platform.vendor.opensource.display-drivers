@@ -13,6 +13,14 @@
 #include <linux/backlight.h>
 #include <drm/drm_panel.h>
 #include <drm/msm_drm.h>
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+#include <surfacedisplay/surface_panel.h>
+#endif
+#if IS_ENABLED(CONFIG_DSI_MIPI_INJECT)
+#include "mtepanel/mte_panel.h"
+#endif
+/*MSCHANGE end*/
 
 #include "dsi_defs.h"
 #include "dsi_ctrl_hw.h"
@@ -175,7 +183,22 @@ struct drm_panel_esd_config {
 	u8 *return_buf;
 	u8 *status_buf;
 	u32 groups;
+
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+	u32 *surface_status_value;
+	u32 *surface_transient_mask_value;
+#endif
+/*MSCHANGE end*/
 };
+
+struct dsi_panel_tile_info {
+	u8 num_h_tile;
+	u8 num_v_tile;
+	u8 tile_h_loc;
+	u8 tile_v_loc;
+};
+
 
 struct dsi_panel_spr_info {
 	bool enable;
@@ -257,14 +280,27 @@ struct dsi_panel {
 	u32 dsc_count;
 	u32 lm_count;
 
+	bool ctl_op_sync;
+	bool dsi_0_1_swap;
+
 	int panel_test_gpio;
 	int power_mode;
+	char dsi_tile_group[8];
 	enum dsi_panel_physical_type panel_type;
 
 	struct dsi_tlmm_gpio *tlmm_gpio;
 	u32 tlmm_gpio_count;
 
 	struct dsi_panel_ops panel_ops;
+	struct dsi_panel_tile_info tile_props;
+	/*MSCHANGE start*/
+	#if IS_ENABLED(CONFIG_SURFACE_DISPLAY)
+		struct surface_panel surface_priv_panel;
+	#endif
+	#if IS_ENABLED(CONFIG_DSI_MIPI_INJECT)
+		struct mte_panel mte_priv_panel;
+	#endif
+	/*MSCHANGE end*/
 };
 
 static inline bool dsi_panel_ulps_feature_enabled(struct dsi_panel *panel)

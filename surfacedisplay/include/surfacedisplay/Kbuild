@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note
+
+header-y += surface_dsi_defs.h
+header-y += surface_panel.h

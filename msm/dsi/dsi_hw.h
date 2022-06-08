@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2019, 2021 The Linux Foundation. All rights reserved.
  */
 
 #ifndef _DSI_HW_H_
@@ -43,10 +43,6 @@
 
 #define DSI_R64(dsi_hw, off) readq_relaxed((dsi_hw)->base + (off))
 #define DSI_W64(dsi_hw, off, val) writeq_relaxed((val), (dsi_hw)->base + (off))
-
-#define PLL_CALC_DATA(addr0, addr1, data0, data1)      \
-	(((data1) << 24) | ((((addr1)/4) & 0xFF) << 16) | \
-	 ((data0) << 8) | (((addr0)/4) & 0xFF))
 
 #define DSI_DYN_REF_REG_W(base, offset, addr0, addr1, data0, data1)   \
 	writel_relaxed(PLL_CALC_DATA(addr0, addr1, data0, data1), \
