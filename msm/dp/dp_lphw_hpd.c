@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/interrupt.h>
@@ -360,7 +360,7 @@ struct dp_hpd *dp_lphw_hpd_get(struct device *dev, struct dp_parser *parser,
 	lphw_hpd->gpio_cfg.gpio = of_get_named_gpio(dev->of_node,
 		hpd_gpio_name, 0);
 	if (!gpio_is_valid(lphw_hpd->gpio_cfg.gpio)) {
-		DP_ERR("%s gpio not specified\n", hpd_gpio_name);
+		DP_DEBUG("%s gpio not specified\n", hpd_gpio_name);
 		rc = -EINVAL;
 		goto gpio_error;
 	}

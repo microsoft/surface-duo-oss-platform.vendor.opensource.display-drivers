@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
  *
@@ -50,6 +50,9 @@
 #define IDLE_POWERCOLLAPSE_DURATION	(66 - 16/2)
 #define IDLE_POWERCOLLAPSE_IN_EARLY_WAKEUP (200 - 16/2)
 
+/* default value for TE interval watermark used in wider sync/async panels */
+#define TE_WATERMARK_DEFAULT_VAL	0xffff
+
 /**
  * Encoder functions and data types
  * @intfs:	Interfaces this encoder is using, INTF_MODE_NONE if unused
@@ -77,11 +80,54 @@ struct sde_encoder_hw_resources {
  *                      the bounds of the physical display at the bit index
  * @recovery_events_enabled: indicates status of client for recoovery events
  * @frame_trigger_mode: indicates frame trigger mode
+ * @is_transition_commit: true when mode transition is between wider sync to
+ *                        async and vice versa
  */
 struct sde_encoder_kickoff_params {
 	unsigned long affected_displays;
 	bool recovery_events_enabled;
 	enum frame_trigger_mode_type frame_trigger_mode;
+	bool is_transition_commit;
+};
+
+/**
+ * sde_encoder_te_align_status - TE align status for wider sync/async panels
+ * @TE_STATUS_NONE: default state when TE watermark is not configured
+ * @TE_STATUS_UNALIGNED: INTF TEs are unaligned (beyond watermark threshold)
+ * @TE_STATUS_ALIGNED: INTF TEs are aligned (within watermark threshold)
+ */
+enum sde_encoder_te_align_status {
+	TE_STATUS_NONE,
+	TE_STATUS_UNALIGNED,
+	TE_STATUS_ALIGNED,
+};
+
+/**
+ * sde_encoder_te_mode - differnt TE modes used with wider sync/async panels
+ * @TE_NONE: Default TE selection based on DT
+ * @TE_WD_ASYNC_REQ: request to switch to watchdog TE in async mode
+ * @TE_WD_ASYNC: switched to watchdog TE in async mode
+ * @TE_WD_SYNC_REQ: request to switch to watchdog TE in sync mode
+ * @TE_WD_SYNC: switched to watchdog TE in sync mode
+ */
+enum sde_encoder_te_mode {
+	TE_DEFAULT,
+	TE_WD_ASYNC_REQ,
+	TE_WD_ASYNC,
+	TE_WD_SYNC_REQ,
+	TE_WD_SYNC,
+};
+
+/**
+ * sde_encoder_te_watermark - TE watermark threshold and align status for wider sync/async panels
+ * @align_status: current TE alignment status
+ * @threshold: threshold based on which align_status is set
+ * @te_mode: mode of watchdog TE to use with debugfs
+ */
+struct sde_encoder_te_watermark {
+	enum sde_encoder_te_align_status align_status;
+	u32 threshold;
+	enum sde_encoder_te_mode te_mode;
 };
 
 /*
@@ -189,10 +235,13 @@ struct sde_encoder_ops {
  * @valid_cpu_mask:		actual voted cpu core mask
  * @mode_info:                  stores the current mode and should be used
  *				only in commit phase
+ * @te_watermark		TE watermark info for wider sync panels
  * @delay_kickoff		boolean to delay the kickoff, used in case
  *				of esd attack to ensure esd workqueue detects
  *				the previous frame transfer completion before
  *				next update is triggered.
+ * @child_flush_cache: Cache the pending flush for child ctl path before
+ *				transitional commit.
  */
 struct sde_encoder_virt {
 	struct drm_encoder base;
@@ -260,10 +309,45 @@ struct sde_encoder_virt {
 	struct dev_pm_qos_request pm_qos_cpu_req[NR_CPUS];
 	struct cpumask valid_cpu_mask;
 	struct msm_mode_info mode_info;
+	struct sde_encoder_te_watermark te_watermark;
 	bool delay_kickoff;
+	struct sde_ctl_flush_cfg child_flush_cache;
 };
 
 #define to_sde_encoder_virt(x) container_of(x, struct sde_encoder_virt, base)
+
+/**
+ * sde_encoder_set_te_watermark - Update the te_threshold in encoder s/w
+ * @encoder: encoder pointer
+ * @enable: enable event vs disable event
+ * @threshold: te_watermark
+ */
+static inline int sde_encoder_set_te_watermark(struct drm_encoder *encoder,
+			bool enable, u64 threshold) {
+	struct sde_encoder_virt *sde_enc;
+	struct sde_encoder_te_watermark *te_watermark;
+
+	if (!encoder) {
+		SDE_ERROR("invalid drm enc\n");
+		return -EINVAL;
+	}
+	sde_enc = to_sde_encoder_virt(encoder);
+	te_watermark = &sde_enc->te_watermark;
+
+	te_watermark->threshold = enable ? (u32) threshold : TE_WATERMARK_DEFAULT_VAL;
+	if (!enable)
+		te_watermark->align_status = TE_STATUS_NONE;
+
+	SDE_EVT32(DRMID(encoder), te_watermark->threshold, enable);
+
+	return 0;
+}
+
+/**
+ * sde_encoder_is_enabled - return the encoder status
+ * @encoder: encoder pointer
+ */
+bool sde_encoder_is_enabled(struct drm_encoder *encoder);
 
 /**
  * sde_encoder_get_hw_resources - Populate table of required hardware resources
@@ -558,6 +642,48 @@ void sde_encoder_uidle_enable(struct drm_encoder *drm_enc, bool enable);
  */
 void sde_encoder_irq_control(struct drm_encoder *drm_enc, bool enable);
 
+/**
+ * sde_encoder_get_hw_ctl_ptr - get hw ctl ptr for respective enc
+ * @drm_enc:	Pointer to drm encoder structure
+ */
+struct sde_hw_ctl *sde_encoder_get_hw_ctl_ptr(struct drm_encoder *drm_enc);
+
+/**
+ * sde_encoder_update_parent_hw_ctl_ptr - cache the hw ctl pointer of the
+ *	parent in respective phys encoder structure
+ * @drm_enc:	Pointer to drm encoder structure
+ * @hw_ctl:	hw ctl pointer value
+ */
+void sde_encoder_update_parent_hw_ctl_ptr(struct drm_encoder *drm_enc,
+	struct sde_hw_ctl *hw_ctl);
+
+/**
+ * sde_encoder_update_ctl_op_group - update the ctl op group of respective
+ * encoder
+ * @drm_enc:	Pointer to drm encoder structure
+ * @wider_sync_mode: true if wider sync mode is enabled
+ * @enable: enable ctl op grouping
+ */
+void sde_encoder_update_ctl_op_group(struct drm_encoder *drm_enc,
+	bool wider_sync_mode, bool enable);
+
+/**
+ * sde_encoder_update_hw_ctl_ptr - update hw ctl ptr for respective encoder
+ *	with parent or child hw ctl ptr based on wider sync mode en/dis.
+ * @drm_enc:	Pointer to drm encoder structure
+ * @wider_sync_mode: wider sync mode enabled/disabled
+ */
+void sde_encoder_update_hw_ctl_ptr(struct drm_encoder *drm_enc,
+	bool wider_sync_mode);
+
+/**
+ * sde_encoder_update_intf_cfg - update intf config for respective encoder
+ * @drm_enc:	Pointer to drm encoder structure
+ * @update:	if true then update the existing value in register
+ */
+void sde_encoder_update_intf_cfg(struct drm_encoder *drm_enc,
+	bool update);
+
 /*
  * sde_encoder_get_dfps_maxfps - get dynamic FPS max frame rate of
 				the given encoder
@@ -619,4 +745,11 @@ static inline bool sde_encoder_is_widebus_enabled(struct drm_encoder *drm_enc)
 	sde_enc = to_sde_encoder_virt(drm_enc);
 	return sde_enc->mode_info.wide_bus_en;
 }
+
+/**
+ * sde_encoder_reset_idle_worker_thread - to reset idle worker thread
+ * @drm_enc:    Pointer to drm encoder structure
+ */
+void sde_encoder_reset_idle_worker_thread(struct drm_encoder *drm_enc);
+
 #endif /* __SDE_ENCODER_H__ */

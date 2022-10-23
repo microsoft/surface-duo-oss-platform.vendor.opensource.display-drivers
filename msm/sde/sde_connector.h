@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #ifndef _SDE_CONNECTOR_H_
@@ -512,6 +512,7 @@ struct sde_connector {
 	struct drm_property_blob *blob_dither;
 	struct drm_property_blob *blob_mode_info;
 	struct drm_property_blob *blob_panel_id;
+	struct drm_property_blob *blob_priv_info;/*MSCHANGE*/
 
 	struct sde_connector_evt event_table[SDE_CONN_EVENT_COUNT];
 	spinlock_t event_lock;
@@ -886,11 +887,12 @@ void sde_connector_unregister_event(struct drm_connector *connector,
  * @kms: Pointer to sde_kms
  * @conn_drm: Pointer to drm connector object
  * @event: Event for which request is being sent
+ * @client_context: information passed by client
  * @en: Flag to enable/disable the event
  * Returns: Zero on success
  */
 int sde_connector_register_custom_event(struct sde_kms *kms,
-		struct drm_connector *conn_drm, u32 event, bool en);
+		struct drm_connector *conn_drm, u32 event, u64 client_context, bool en);
 
 /**
  * sde_connector_pre_kickoff - trigger kickoff time feature programming

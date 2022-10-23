@@ -251,11 +251,13 @@ void sde_rm_get_resource_info(struct sde_rm *rm,
 	enum sde_hw_blk_type type;
 	struct sde_rm_rsvp rsvp;
 
+	mutex_lock(&rm->rm_lock);
+
 	memcpy(avail_res, &rm->avail_res,
 			sizeof(rm->avail_res));
 
 	if (!drm_enc)
-		return;
+		goto end;
 
 	rsvp.enc_id = drm_enc->base.id;
 
@@ -263,6 +265,9 @@ void sde_rm_get_resource_info(struct sde_rm *rm,
 		list_for_each_entry(blk, &rm->hw_blks[type], list)
 			if (blk->rsvp && blk->rsvp->enc_id == rsvp.enc_id)
 				_sde_rm_inc_resource_info(rm, avail_res, blk);
+
+end:
+	mutex_unlock(&rm->rm_lock);
 }
 
 static void _sde_rm_print_rsvps(
@@ -1227,7 +1232,7 @@ static int _sde_rm_reserve_ctls(
 	while (_sde_rm_get_hw_locked(rm, &iter)) {
 		const struct sde_hw_ctl *ctl = to_sde_hw_ctl(iter.blk->hw);
 		unsigned long features = ctl->caps->features;
-		bool has_split_display, has_ppsplit, primary_pref;
+		bool has_split_display, has_ppsplit, primary_pref, secondary_pref;
 
 		if (RESERVED_BY_OTHER(iter.blk, rsvp))
 			continue;
@@ -1235,12 +1240,13 @@ static int _sde_rm_reserve_ctls(
 		has_split_display = BIT(SDE_CTL_SPLIT_DISPLAY) & features;
 		has_ppsplit = BIT(SDE_CTL_PINGPONG_SPLIT) & features;
 		primary_pref = BIT(SDE_CTL_PRIMARY_PREF) & features;
+		secondary_pref = BIT(SDE_CTL_SECONDARY_PREF) & features;
 
 		SDE_DEBUG("ctl %d caps 0x%lX\n", iter.blk->id, features);
 
 		/*
 		 * bypass rest feature checks on finding CTL preferred
-		 * for primary displays.
+		 * for primary/secondary displays.
 		 */
 		if (!primary_pref && !_ctl_ids) {
 			if (top->needs_split_display != has_split_display)
@@ -1248,6 +1254,10 @@ static int _sde_rm_reserve_ctls(
 
 			if (top->top_name == SDE_RM_TOPOLOGY_PPSPLIT &&
 					!has_ppsplit)
+				continue;
+
+			if ((reqs->hw_res.display_type != SDE_CONNECTOR_SECONDARY)
+					&& secondary_pref)
 				continue;
 		} else if (!(reqs->hw_res.display_type ==
 				SDE_CONNECTOR_PRIMARY && primary_pref) && !_ctl_ids) {

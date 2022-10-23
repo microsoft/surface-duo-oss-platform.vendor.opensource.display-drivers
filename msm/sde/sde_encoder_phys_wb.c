@@ -584,7 +584,7 @@ static void sde_encoder_phys_wb_setup_cdp(struct sde_encoder_phys *phys_enc,
 					hw_pp->idx);
 
 		phys_enc->hw_ctl->ops.setup_intf_cfg_v1(phys_enc->hw_ctl,
-				intf_cfg_v1);
+				intf_cfg_v1, false);
 	} else if (phys_enc->hw_ctl && phys_enc->hw_ctl->ops.setup_intf_cfg) {
 		struct sde_hw_intf_cfg *intf_cfg = &phys_enc->intf_cfg;
 
@@ -1499,7 +1499,8 @@ static int sde_encoder_phys_wb_prepare_for_kickoff(
  * sde_encoder_phys_wb_trigger_flush - trigger flush processing
  * @phys_enc:	Pointer to physical encoder
  */
-static void sde_encoder_phys_wb_trigger_flush(struct sde_encoder_phys *phys_enc)
+static void sde_encoder_phys_wb_trigger_flush(struct sde_encoder_phys *phys_enc,
+	bool child_flush)
 {
 	struct sde_encoder_phys_wb *wb_enc = to_sde_encoder_phys_wb(phys_enc);
 
@@ -1525,7 +1526,7 @@ static void sde_encoder_phys_wb_trigger_flush(struct sde_encoder_phys *phys_enc)
 		return;
 	}
 
-	sde_encoder_helper_trigger_flush(phys_enc);
+	sde_encoder_helper_trigger_flush(phys_enc, false);
 }
 
 /**

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2016-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
 #include <linux/of_device.h>
@@ -663,6 +663,18 @@ static int dsi_ctrl_init_regmap(struct platform_device *pdev,
 	return rc;
 }
 
+int dsi_ctrl_m_esc_clock_deinit(struct dsi_ctrl *ctrl)
+{
+	struct dsi_link_lp_clk_info *lp_link = &ctrl->clk_info.lp_link_clks;
+
+	if (lp_link->m_esc_clk) {
+		devm_clk_put(&ctrl->pdev->dev, lp_link->m_esc_clk);
+		lp_link->m_esc_clk = NULL;
+	}
+
+	return 0;
+}
+
 static int dsi_ctrl_clocks_deinit(struct dsi_ctrl *ctrl)
 {
 	struct dsi_core_clk_info *core = &ctrl->clk_info.core_clks;
@@ -689,6 +701,8 @@ static int dsi_ctrl_clocks_deinit(struct dsi_ctrl *ctrl)
 		devm_clk_put(&ctrl->pdev->dev, hs_link->pixel_clk);
 	if (lp_link->esc_clk)
 		devm_clk_put(&ctrl->pdev->dev, lp_link->esc_clk);
+	if (lp_link->m_esc_clk)
+		devm_clk_put(&ctrl->pdev->dev, lp_link->m_esc_clk);
 	if (hs_link->byte_intf_clk)
 		devm_clk_put(&ctrl->pdev->dev, hs_link->byte_intf_clk);
 
@@ -764,6 +778,12 @@ static int dsi_ctrl_clocks_init(struct platform_device *pdev,
 		rc = PTR_ERR(lp_link->esc_clk);
 		DSI_CTRL_ERR(ctrl, "failed to get esc_clk, rc=%d\n", rc);
 		goto fail;
+	}
+
+	lp_link->m_esc_clk = devm_clk_get(&pdev->dev, "m_esc_clk");
+	if (IS_ERR(lp_link->m_esc_clk)) {
+		lp_link->m_esc_clk = NULL;
+		DSI_CTRL_DEBUG(ctrl, "cant find m_esc_clk\n");
 	}
 
 	hs_link->byte_intf_clk = devm_clk_get(&pdev->dev, "byte_intf_clk");
@@ -3406,7 +3426,13 @@ int dsi_ctrl_cmd_transfer(struct dsi_ctrl *dsi_ctrl,
 		goto error;
 	}
 
-	if (*flags & DSI_CTRL_CMD_READ) {
+/*MSCHANGE start*/
+#if IS_ENABLED(CONFIG_DSI_MIPI_INJECT)
+	if (*flags & DSI_CTRL_CMD_READ || msg->type == MIPI_DSI_DCS_READ) {
+#else
+        if (*flags & DSI_CTRL_CMD_READ) {
+#endif
+/*MSCHANGE end*/
 		rc = dsi_message_rx(dsi_ctrl, msg, flags);
 		if (rc <= 0)
 			DSI_CTRL_ERR(dsi_ctrl, "read message failed read length, rc=%d\n",
